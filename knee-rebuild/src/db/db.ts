@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import type { AddedSlot, GateTest, IsoDateTime, Location, MorningCheck, ProgramOverride, Run, SessionMove, SetLog, Settings, Workout } from '../schema/index.ts'
+import type { AddedSlot, GateTest, HrSettings, IsoDateTime, Location, MorningCheck, ProgramOverride, Run, SessionMove, SetLog, Settings, Workout } from '../schema/index.ts'
 
 /**
  * The settings row, keyed so there is exactly one. It never holds `lastExportedAt`: the build
@@ -24,7 +24,11 @@ export interface ExportStampRow {
  * Shawn adds to a session, one row each, again with no upgrade callback; version 6 (metrics phase 1)
  * adds nothing to the store: runs may carry an RPE and workouts a session RPE and minutes, all
  * optional and unindexed, and the bump keeps the backup's schema version in step with this one
- * (src/db/backup.test.ts). Never edit a shipped version; add the next one, and keep every change additive.
+ * (src/db/backup.test.ts); version 7 (metrics phase 2) adds the one-row hrSettings table for
+ * Shawn's max and resting heart rate, again with no upgrade callback — the numbers live outside
+ * the settings row so older builds still read that row untouched (PROGRAM-QUESTIONS 132, 150) —
+ * and runs may carry an average and max heart rate, optional and unindexed. Never edit a shipped
+ * version; add the next one, and keep every change additive.
  */
 export class KneeRebuildDb extends Dexie {
   /** The settings row and, once this phone has exported, the export stamp's row. */
@@ -38,6 +42,8 @@ export class KneeRebuildDb extends Dexie {
   locations!: EntityTable<Location, 'id'>
   programOverrides!: EntityTable<ProgramOverride, 'slotId'>
   addedSlots!: EntityTable<AddedSlot, 'id'>
+  /** The one heart-rate settings row (metrics phase 2): outside the settings table's strict row, so a rollback still opens (PROGRAM-QUESTIONS 150). */
+  hrSettings!: EntityTable<HrSettings, 'id'>
 
   constructor() {
     super('knee-rebuild')
@@ -55,6 +61,7 @@ export class KneeRebuildDb extends Dexie {
     this.version(4).stores({ programOverrides: 'slotId' })
     this.version(5).stores({ addedSlots: 'id, templateId' })
     this.version(6).stores({})
+    this.version(7).stores({ hrSettings: 'id' })
   }
 }
 

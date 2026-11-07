@@ -56,6 +56,7 @@ import {
   trainingLoadReadout,
   trainingLoadTable,
   trainingLoadView,
+  hrWeekLine,
   trainingLoadWarning,
   notCountedLines,
   ratioWords,
@@ -888,7 +889,7 @@ describe('training load in words', () => {
   })
 
   it('says which way uncounted sessions and deload weeks push the ratio', () => {
-    const missing = (id: string, date: string): TrainingLoadEntry => ({ kind: 'run', id, date, runType: 'easy', rpe: 3, rpeSource: 'rated', minutes: null, load: null, missing: ['minutes'] })
+    const missing = (id: string, date: string): TrainingLoadEntry => ({ kind: 'run', id, date, runType: 'easy', rpe: 3, rpeSource: 'rated', minutes: null, load: null, hrLoad: null, hasHr: false, missing: ['minutes'] })
     const skewed = comparison({
       notCountedAcute: [missing('a', '2026-12-09')],
       notCountedChronic: [missing('b', '2026-11-12'), missing('c', '2026-11-13')],
@@ -909,10 +910,10 @@ describe('training load in words', () => {
 
   it('lists what isn’t counted, newest first, with why and what can fix it', () => {
     const entries: TrainingLoadEntry[] = [
-      { kind: 'workout', id: 'w1', date: '2026-11-03', templateId: 'p2-b', rpe: null, rpeSource: null, minutes: 40, load: null, missing: ['rpe'] },
-      { kind: 'workout', id: 'w2', date: '2026-11-05', templateId: 'p1-a', rpe: 7, rpeSource: 'session', minutes: null, load: null, missing: ['minutes'] },
-      { kind: 'run', id: 'r1', date: '2026-11-06', runType: 'mbr', rpe: 3, rpeSource: 'rated', minutes: null, load: null, missing: ['minutes'] },
-      { kind: 'run', id: 'r2', date: '2026-11-07', runType: 'easy', rpe: 3, rpeSource: 'rated', minutes: 30, load: 90, missing: [] },
+      { kind: 'workout', id: 'w1', date: '2026-11-03', templateId: 'p2-b', rpe: null, rpeSource: null, minutes: 40, load: null, hrLoad: null, hasHr: false, missing: ['rpe'] },
+      { kind: 'workout', id: 'w2', date: '2026-11-05', templateId: 'p1-a', rpe: 7, rpeSource: 'session', minutes: null, load: null, hrLoad: null, hasHr: false, missing: ['minutes'] },
+      { kind: 'run', id: 'r1', date: '2026-11-06', runType: 'mbr', rpe: 3, rpeSource: 'rated', minutes: null, load: null, hrLoad: null, hasHr: false, missing: ['minutes'] },
+      { kind: 'run', id: 'r2', date: '2026-11-07', runType: 'easy', rpe: 3, rpeSource: 'rated', minutes: 30, load: 90, hrLoad: null, hasHr: false, missing: [] },
     ]
     expect(notCountedLines(entries, templates)).toEqual([
       'Friday Nov 6 · Run: MBR · no time logged',
@@ -938,8 +939,8 @@ describe('trainingLoadView', () => {
     const records = attachChecks([{ ...workout('w1', '2026-11-05', 'finished', 'p1-a'), sessionRpe: 7, durationMinutes: 50 }], [], [])
     const view = trainingLoadView({ records, runs, startDate: START, today: '2026-11-11', templates })
     expect(view.weeks.slice(0, 2)).toEqual([
-      { week: 1, load: 90 + 180 + 350, sessions: 3, notCounted: 0, isDeload: false },
-      { week: 2, load: 0, sessions: 0, notCounted: 1, isDeload: false },
+      { week: 1, load: 90 + 180 + 350, sessions: 3, notCounted: 0, isDeload: false, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 2 },
+      { week: 2, load: 0, sessions: 0, notCounted: 1, isDeload: false, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 1 },
     ])
     expect(view.current).toBe(1)
     expect(view.any).toBe(true)
@@ -955,5 +956,63 @@ describe('trainingLoadView', () => {
     expect(table.rows[0]).toEqual(['1', '620', '3', '0', ''])
     expect(table.rows[1]).toEqual(['2', '0', '0', '1', 'this week'])
     expect(table.rows[3]).toEqual(['4', '0', '0', '0', 'deload'])
+  })
+
+  it('without the heart-rate settings the HR line is null: nothing is said, never 0 (metrics phase 2)', () => {
+    const runs = [{ ...run('r1', '2026-11-02', 3), rpe: 4, avgHr: 150, maxHr: 171 }]
+    expect(trainingLoadView({ records: [], runs, startDate: START, today: '2026-11-05', templates }).hrLine).toBeNull()
+    expect(trainingLoadView({ records: [], runs, startDate: START, today: '2026-11-05', templates, hrSettings: null }).hrLine).toBeNull()
+    // Half a row (one stepper touched) computes nothing either.
+    expect(trainingLoadView({ records: [], runs, startDate: START, today: '2026-11-05', templates, hrSettings: { id: 'heart-rate', maxHr: 190 } }).hrLine).toBeNull()
+  })
+
+  it('says this week’s HR load in words, counting the week’s runs and swaps as the denominator (lifts never have heart rate)', () => {
+    const hrSettings = { id: 'heart-rate' as const, maxHr: 190, restingHr: 50 }
+    const runs = [
+      { ...run('r1', '2026-11-02', 3), minutes: 40, rpe: 4, avgHr: 150, maxHr: 171 },
+      { ...run('r2', '2026-11-04', 0, 1, 'rower-swap' as const), minutes: 35, rpe: 4 },
+    ]
+    const records = attachChecks([{ ...workout('w1', '2026-11-03'), sessionRpe: 7, durationMinutes: 50 }], [], [])
+    const view = trainingLoadView({ records, runs, startDate: START, today: '2026-11-05', templates, hrSettings })
+    // 40 min at an average of 150 over 50–190 is TRIMP ≈ 72; the swap has no heart rate, the lift can't.
+    expect(view.hrLine).toBe('HR load this week: 72 (1 of 2 runs had heart rate)')
+    expect(view.weeks[0]).toMatchObject({ withHr: 1, runs: 2 })
+    // The warning still reads the sRPE load alone: the words name RPE × minutes sums, not TRIMP.
+    expect(view.warning.text).toBe('No comparison yet: it needs 4 weeks logged before the 7 days through yesterday. It starts Monday Dec 7.')
+  })
+
+  it('a week where HR and sRPE disagree still drives the warning from the sRPE load alone', () => {
+    const hrSettings = { id: 'heart-rate' as const, maxHr: 190, restingHr: 50 }
+    // Five easy weeks of history, then a quiet 7 days by RPE whose one run carries a sky-high heart rate.
+    const chronicRuns = ['2026-11-02', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'].map((date, i) => ({ ...run(`c${i}`, date, 3), minutes: 100, rpe: 5 }))
+    const acuteRun = { ...run('a', '2026-12-14', 3), minutes: 10, rpe: 1, avgHr: 189, maxHr: 190 }
+    const withHr = trainingLoadView({ records: [], runs: [...chronicRuns, acuteRun], startDate: START, today: '2026-12-15', templates, hrSettings })
+    const without = trainingLoadView({ records: [], runs: [...chronicRuns, acuteRun], startDate: START, today: '2026-12-15', templates })
+    expect(withHr.warning).toEqual(without.warning)
+    expect(withHr.warning.mark).toBe('↓ Low')
+    expect(withHr.hrLine).toContain('HR load this week:')
+  })
+
+  it('hrWeekLine: singular for one run, null with no week or no runs in it', () => {
+    const pair = { maxHr: 190, restingHr: 50 }
+    expect(hrWeekLine({ hrLoad: 72.4, withHr: 1, hrNotCounted: 0, runs: 1 }, pair)).toBe('HR load this week: 72 (1 of 1 run had heart rate)')
+    expect(hrWeekLine({ hrLoad: 310.2, withHr: 6, hrNotCounted: 0, runs: 7 }, pair)).toBe('HR load this week: 310 (6 of 7 runs had heart rate)')
+    expect(hrWeekLine({ hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 0 }, pair)).toBeNull()
+    expect(hrWeekLine(undefined, pair)).toBeNull()
+    expect(hrWeekLine({ hrLoad: 72, withHr: 1, hrNotCounted: 0, runs: 1 }, null)).toBeNull()
+  })
+
+  it('hrWeekLine: a run with heart rate but no time still counts as having heart rate, and the words name what blocks its load', () => {
+    const pair = { maxHr: 190, restingHr: 50 }
+    expect(hrWeekLine({ hrLoad: 0, withHr: 1, hrNotCounted: 1, runs: 1 }, pair)).toBe('HR load this week: 0 (1 of 1 run had heart rate; 1 has no time logged)')
+    expect(hrWeekLine({ hrLoad: 72.4, withHr: 3, hrNotCounted: 2, runs: 4 }, pair)).toBe('HR load this week: 72 (3 of 4 runs had heart rate; 2 have no time logged)')
+  })
+
+  it('a week whose only run has heart rate but no time: the view’s line says the heart rate was there and what is missing', () => {
+    const hrSettings = { id: 'heart-rate' as const, maxHr: 190, restingHr: 50 }
+    const runs = [{ ...run('r1', '2026-11-02', 3), minutes: 0, rpe: 4, avgHr: 150, maxHr: 171 }]
+    const view = trainingLoadView({ records: [], runs, startDate: START, today: '2026-11-05', templates, hrSettings })
+    expect(view.hrLine).toBe('HR load this week: 0 (1 of 1 run had heart rate; 1 has no time logged)')
+    expect(view.weeks[0]).toMatchObject({ withHr: 1, hrNotCounted: 1, runs: 1 })
   })
 })

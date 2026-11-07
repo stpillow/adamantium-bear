@@ -11,6 +11,11 @@ import { isLateEntry } from './retro.ts'
  * a cap or a gate: the guard (trainingLoad.guard.test.ts) holds every other rule module away from it
  * and from the fields it reads. "Load" on Progress already means weight lifted, so this is always
  * "training load". Computed, never stored (PROGRAM-QUESTIONS 143 to 149).
+ *
+ * Metrics phase 2 adds the HR load (Banister TRIMP, PROGRAM-QUESTIONS 151): shown BESIDE the sRPE
+ * load on Progress and the run logger's saved words, never summed into it. The acute:chronic
+ * warning reads the sRPE load alone (`acuteChronic` takes no HR input), so the two can disagree
+ * visibly without changing any behavior.
  */
 
 /** An older run's effort word as an RPE: the middle of its band, near enough for a sum. */
@@ -125,6 +130,48 @@ export function trainingLoadOf(rpe: number | null, minutes: number | null): numb
   return rpe * minutes
 }
 
+/** Banister's TRIMP weighting, for men: hrLoad = minutes × HRr × 0.64 × e^(1.92 × HRr). */
+const TRIMP_WEIGHT = 0.64
+const TRIMP_EXPONENT = 1.92
+
+/** The two Settings numbers TRIMP needs, both present and sane. */
+export interface HrPair {
+  maxHr: number
+  restingHr: number
+}
+
+/**
+ * The stored heart-rate settings as TRIMP takes them, or null: a half-filled row (one stepper
+ * touched stores one number, metrics phase 2) computes nothing, and a pair with resting at or
+ * above max is impossible and computes nothing either. The one place that check lives.
+ */
+export function hrPair(settings: { maxHr?: number; restingHr?: number } | null | undefined): HrPair | null {
+  if (!settings || settings.maxHr === undefined || settings.restingHr === undefined) return null
+  if (!(settings.restingHr < settings.maxHr)) return null
+  return { maxHr: settings.maxHr, restingHr: settings.restingHr }
+}
+
+/** Heart-rate reserve used, clamped to 0..1: an average below resting reads 0, above max reads 1. */
+export function hrReserve(avgHr: number, restingHr: number, maxHr: number): number {
+  return Math.min(1, Math.max(0, (avgHr - restingHr) / (maxHr - restingHr)))
+}
+
+/**
+ * The HR load (Banister TRIMP, PROGRAM-QUESTIONS 151): minutes × HRr × 0.64 × e^(1.92 × HRr), with
+ * HRr clamped to 0..1. Null unless the minutes are over 0, the average heart rate is set, and both
+ * Settings numbers are there with resting under max (a pure function: future callers feed it raw
+ * numbers, and resting at or over max would otherwise divide by zero or print plausible garbage).
+ * An average below resting returns a computed 0, a true zero, not null: effort below resting is no
+ * load, where null means no heart rate at all. Unrounded: screens round.
+ */
+export function hrLoadOf(minutes: number | null | undefined, avgHr: number | null | undefined, hr: HrPair | null): number | null {
+  if (hr === null || !(hr.restingHr < hr.maxHr)) return null
+  if (minutes === null || minutes === undefined || !(minutes > 0)) return null
+  if (avgHr === null || avgHr === undefined) return null
+  const reserve = hrReserve(avgHr, hr.restingHr, hr.maxHr)
+  return minutes * reserve * TRIMP_WEIGHT * Math.exp(TRIMP_EXPONENT * reserve)
+}
+
 export type Missing = 'rpe' | 'minutes'
 
 /** One session's or run's training load, or what it is missing. */
@@ -139,6 +186,10 @@ export interface TrainingLoadEntry {
   rpeSource: 'session' | 'sets' | 'rated' | 'word' | null
   minutes: number | null
   load: number | null
+  /** The HR load (TRIMP), shown beside `load`, never summed into it. Only a run with an average heart rate and both Settings numbers has one; a lift never does (Workout has no HR fields). */
+  hrLoad: number | null
+  /** Whether a heart rate was logged at all (a run's average HR), its own fact: a run can carry one and still have a null `hrLoad` for lack of time. Always false for a lift. */
+  hasHr: boolean
   missing: Missing[]
 }
 
@@ -148,25 +199,28 @@ const happened = (w: Workout) => w.status === 'finished' || w.status === 'abando
  * Every lift that happened (finished or ended early) and every run and swap, with its training load,
  * by date and then id. A lift's minutes are only what was stored from the stepper; a run's are its
  * logged time. Unknown is never 0: an entry missing its RPE or minutes has a null load and says which.
+ * `hr` is the Settings pair for the HR load (metrics phase 2); omitted or null, every entry's
+ * `hrLoad` is null, so phase-1 call sites read as before. Lifts never carry one: Workout has no HR.
  */
-export function trainingLoads(records: readonly WorkoutRecord[], runs: readonly Run[]): TrainingLoadEntry[] {
+export function trainingLoads(records: readonly WorkoutRecord[], runs: readonly Run[], hr: HrPair | null = null): TrainingLoadEntry[] {
   const lifts = records
     .filter((r) => happened(r.workout))
     .map(({ workout, sets }): TrainingLoadEntry => {
       const rated = workoutRpe(workout, sets)
       const minutes = workout.durationMinutes ?? null
-      return entryOf({ kind: 'workout', id: workout.id, date: workout.date, templateId: workout.templateId }, rated?.rpe ?? null, rated?.source ?? null, minutes)
+      return entryOf({ kind: 'workout', id: workout.id, date: workout.date, templateId: workout.templateId }, rated?.rpe ?? null, rated?.source ?? null, minutes, null, false)
     })
   const ran = runs.map((run): TrainingLoadEntry => {
     const rated = runRpe(run)
-    return entryOf({ kind: 'run', id: run.id, date: run.date, runType: run.type }, rated.rpe, rated.source, run.minutes > 0 ? run.minutes : null)
+    const minutes = run.minutes > 0 ? run.minutes : null
+    return entryOf({ kind: 'run', id: run.id, date: run.date, runType: run.type }, rated.rpe, rated.source, minutes, hrLoadOf(minutes, run.avgHr, hr), run.avgHr !== undefined)
   })
   return [...lifts, ...ran].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
 }
 
-function entryOf(base: Pick<TrainingLoadEntry, 'kind' | 'id' | 'date' | 'templateId' | 'runType'>, rpe: number | null, rpeSource: TrainingLoadEntry['rpeSource'], minutes: number | null): TrainingLoadEntry {
+function entryOf(base: Pick<TrainingLoadEntry, 'kind' | 'id' | 'date' | 'templateId' | 'runType'>, rpe: number | null, rpeSource: TrainingLoadEntry['rpeSource'], minutes: number | null, hrLoad: number | null, hasHr: boolean): TrainingLoadEntry {
   const missing: Missing[] = [...(rpe === null ? (['rpe'] as const) : []), ...(minutes === null ? (['minutes'] as const) : [])]
-  return { ...base, rpe, rpeSource, minutes, load: trainingLoadOf(rpe, minutes), missing }
+  return { ...base, rpe, rpeSource, minutes, load: trainingLoadOf(rpe, minutes), hrLoad, hasHr, missing }
 }
 
 export interface WindowTrainingLoad {
@@ -258,6 +312,14 @@ export interface TrainingLoadWeek {
   sessions: number
   notCounted: number
   isDeload: boolean
+  /** The week's HR load (TRIMP), summed over the entries that have one; 0 with none. Shown beside `load`, never added to it. */
+  hrLoad: number
+  /** How many of the week's entries carried a heart rate at all (`hasHr`), whether or not a load came of it: the words say "had heart rate", so this counts exactly that. */
+  withHr: number
+  /** Of `withHr`, how many have no HR load: heart rate logged, no time, so nothing computable. The words name it, as the sRPE side's "no time logged" does. */
+  hrNotCounted: number
+  /** The week's runs and swaps: the only entries that can carry an HR load, so the words' denominator ("2 of 3 runs had heart rate"). */
+  runs: number
 }
 
 /** Program weeks 1 to `weeks`, each with its training load; entries outside them are dropped. */
@@ -266,6 +328,17 @@ export function weeklyTrainingLoads(entries: readonly TrainingLoadEntry[], start
     const week = i + 1
     const own = entries.filter((e) => weekOf(e.date, startDate) === week)
     const counted = own.filter((e) => e.load !== null)
-    return { week, load: counted.reduce((sum, e) => sum + (e.load ?? 0), 0), sessions: counted.length, notCounted: own.length - counted.length, isDeload: isDeloadWeek(week) }
+    const withHr = own.filter((e) => e.hasHr)
+    return {
+      week,
+      load: counted.reduce((sum, e) => sum + (e.load ?? 0), 0),
+      sessions: counted.length,
+      notCounted: own.length - counted.length,
+      isDeload: isDeloadWeek(week),
+      hrLoad: own.reduce((sum, e) => sum + (e.hrLoad ?? 0), 0),
+      withHr: withHr.length,
+      hrNotCounted: withHr.filter((e) => e.hrLoad === null).length,
+      runs: own.filter((e) => e.kind === 'run').length,
+    }
   })
 }

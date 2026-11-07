@@ -1,4 +1,4 @@
-import type { IsoDate, RunType } from '../schema/index.ts'
+import { RUN_HR_MAX, RUN_HR_MIN, type IsoDate, type RunType } from '../schema/index.ts'
 
 /*
  * What an activity from Strava becomes in the app (Shawn's Nov 6 ask; PROGRAM-QUESTIONS 142). Strava
@@ -28,6 +28,10 @@ export interface StravaActivity {
   perceived_exertion?: number | null
   /** On a run: 0 default, 1 race, 2 long run, 3 workout. */
   workout_type?: number | null
+  /** The watch's whole-activity average heart rate, bpm, when Strava has one (metrics phase 2). */
+  average_heartrate?: number | null
+  /** The watch's max heart rate on the activity, bpm, when Strava has one. */
+  max_heartrate?: number | null
 }
 
 const METERS_PER_MILE = 1609.344
@@ -59,6 +63,26 @@ export function rpeFromExertion(exertion: number | null | undefined): number | n
   return Math.min(10, Math.max(1, Math.round(exertion)))
 }
 
+/** A watch heart rate as the run's whole-bpm field: rounded, or null when absent, not a number, or outside 30–250 after rounding (a misread is dropped, never clamped into a number nobody measured). */
+function hrValue(raw: number | null | undefined): number | null {
+  if (raw === null || raw === undefined || !Number.isFinite(raw)) return null
+  const rounded = Math.round(raw)
+  return rounded >= RUN_HR_MIN && rounded <= RUN_HR_MAX ? rounded : null
+}
+
+/**
+ * The heart-rate pair a draft carries (metrics phase 2): each number rounded and kept only inside
+ * 30–250 — one out of range drops alone, the other is kept — and a rounded average above the max
+ * drops BOTH: a garbage watch pair is never saved as typed, and optional HR never blocks Save, so
+ * dropping loses nothing.
+ */
+export function hrFromStrava(average: number | null | undefined, max: number | null | undefined): { avgHr: number | null; maxHr: number | null } {
+  const avgHr = hrValue(average)
+  const maxHr = hrValue(max)
+  if (avgHr !== null && maxHr !== null && avgHr > maxHr) return { avgHr: null, maxHr: null }
+  return { avgHr, maxHr }
+}
+
 const RUNS = new Set(['Run', 'TrailRun', 'VirtualRun'])
 const LIFTS = new Set(['WeightTraining', 'Workout', 'Crossfit'])
 
@@ -70,6 +94,10 @@ export interface RunDraft {
   minutes: number
   /** Effort as RPE 1 to 10, or null for Shawn to rate. */
   rpe: number | null
+  /** Average heart rate, whole bpm, when the watch had a usable one; null is "no heart rate", never 0 (metrics phase 2). */
+  avgHr: number | null
+  /** Max heart rate on the activity, same deal. */
+  maxHr: number | null
   stravaUrl: string
   notes: string
 }
@@ -112,6 +140,8 @@ export function classify(activity: StravaActivity, ctx: ClassifyContext): Candid
   if (isRun && activity.workout_type !== 2 && scheduled === null) guessed.push('type')
   // Strava's activity list carries no exertion (only a detailed activity does), so the effort nearly always waits for Shawn.
   const needs: ('max pain' | 'effort')[] = rpe === null ? ['max pain', 'effort'] : ['max pain']
+  // Heart rate never waits on Shawn: optional fields, filled when the watch had them (metrics phase 2).
+  const hr = hrFromStrava(activity.average_heartrate, activity.max_heartrate)
   return {
     kind: 'run',
     activityId,
@@ -121,6 +151,8 @@ export function classify(activity: StravaActivity, ctx: ClassifyContext): Candid
       miles: swap ? 0 : Math.round((activity.distance / METERS_PER_MILE) * 100) / 100,
       minutes: Math.round(activity.moving_time) / 60,
       rpe,
+      avgHr: hr.avgHr,
+      maxHr: hr.maxHr,
       stravaUrl: stravaActivityUrl(activityId),
       notes: name,
     },

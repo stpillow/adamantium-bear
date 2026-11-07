@@ -4,7 +4,7 @@ import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { Screen } from '../components/Screen.tsx'
-import { useHistory, useSettings } from '../db/hooks.ts'
+import { useHistory, useHrSettings, useSettings } from '../db/hooks.ts'
 import type { History } from '../db/repo.ts'
 import type { IsoDate, Settings } from '../schema/index.ts'
 import {
@@ -68,7 +68,9 @@ function ProgressBody({ today, settings, history }: { today: IsoDate; settings: 
   const [showAll, setShowAll] = useState(false)
   const chartRef = useRef<HTMLDivElement | null>(null)
 
-  const view = useMemo(() => progressView({ today, settings, history, program: PROGRAM }), [today, settings, history])
+  // Shawn's max and resting HR (metrics phase 2): only the HR-load line reads them; undefined while loading reads as none.
+  const hrSettings = useHrSettings()
+  const view = useMemo(() => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null }), [today, settings, history, hrSettings])
   const row = pickedRow(view.exercises, picked)
   const exercise = useMemo(
     () => (row ? exerciseView({ records: view.records, setLogs: history.setLogs, row, injuredSide: settings.injuredSide, catalog: PROGRAM.exercises }) : null),
@@ -232,19 +234,23 @@ function MilesSection({ miles }: { miles: MilesView }) {
  * 5. Weekly training load (metrics phase 1): RPE × minutes for every session and run, by program
  * week, and the warning when the 7 days through yesterday run well above or below the weeks before.
  * The warning is a word with an arrow, never a color, and plain text (no live region: the history
- * re-reads on every write, and a status line would announce again each time).
+ * re-reads on every write, and a status line would announce again each time). Metrics phase 2 adds
+ * this week's HR load (TRIMP) in words under the warning; the warning reads the RPE load alone, so
+ * the two can disagree visibly.
  */
 function TrainingLoadSection({ training }: { training: TrainingLoadView }) {
   return (
     <section aria-label="Weekly training load" className={SECTION}>
       <h2 className={HEADING}>Weekly training load</h2>
       <p className="text-small text-on-dark-muted">
-        RPE × minutes for every session and run, swaps included, by program week. A warning only: nothing here changes a prescription.
+        RPE × minutes for every session and run, swaps included, by program week. A warning only: nothing here changes a prescription. HR load (TRIMP) is shown beside the training load; the
+        warning reads the RPE load alone.
       </p>
       <p className="text-body text-on-dark">
         {training.warning.mark ? <span className="font-mono text-small uppercase tracking-[0.22em] text-on-dark">{training.warning.mark} · </span> : null}
         {training.warning.text}
       </p>
+      {training.hrLine ? <p className="text-body text-on-dark">{training.hrLine}</p> : null}
       {training.skews.map((line) => (
         <p key={line} className="text-small text-on-dark-dim">
           {line}

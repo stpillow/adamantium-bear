@@ -45,7 +45,12 @@ export async function stravaDisconnect(): Promise<boolean> {
   return body.revoked === true
 }
 
-/** Hands one activity to the run logger: kept for this visit only, and taken once. */
+/**
+ * Hands one activity to the run logger: kept for this visit only, and taken once. takeDraft doesn't
+ * validate, so a draft kept by a pre-phase-2 tab can lack the heart-rate keys (as an older one can
+ * lack `rpe`): `formFromDraft` defaults each missing key to null, the rpe/effort precedent
+ * (src/screens/RunLogger.helpers.ts).
+ */
 export function handDraft(draft: RunDraft): void {
   try {
     window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft))

@@ -61,8 +61,17 @@ describe('Strava pieces', () => {
     expect(scopeGranted('read')).toBe(false)
     expect(scopeGranted(null)).toBe(false)
   })
-  it('passes on only what the import reads: no map, no streams', () => {
-    expect(trim({ id: 1, name: 'R', sport_type: 'Run', distance: 1, moving_time: 2, start_date_local: 's', map: { polyline: 'xyz' }, average_heartrate: 150, athlete: { id: 9 } })).toEqual({ id: 1, name: 'R', sport_type: 'Run', distance: 1, moving_time: 2, start_date_local: 's' })
+  it('passes on only what the import reads: the summary heart-rate averages now survive; maps, athletes and streams still don’t (metrics phase 2)', () => {
+    expect(trim({ id: 1, name: 'R', sport_type: 'Run', distance: 1, moving_time: 2, start_date_local: 's', map: { polyline: 'xyz' }, average_heartrate: 150.4, max_heartrate: 171, athlete: { id: 9 } })).toEqual({
+      id: 1,
+      name: 'R',
+      sport_type: 'Run',
+      distance: 1,
+      moving_time: 2,
+      start_date_local: 's',
+      average_heartrate: 150.4,
+      max_heartrate: 171,
+    })
   })
   it('refreshes a token that expires within a minute, keeping the rotated refresh token', async () => {
     const { fetcher, calls } = fakeStrava({ 'https://www.strava.com/oauth/token': tokenResponse(tokens({ access_token: 'a2', refresh_token: 'r2', expires_at: NOW + 21600 })) })

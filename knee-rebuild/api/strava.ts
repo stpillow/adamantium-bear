@@ -109,9 +109,9 @@ export function scopeGranted(scope: string | null): boolean {
   return granted.has('activity:read_all') || granted.has('activity:read')
 }
 
-/** What the PWA needs of an activity, and nothing more (no maps, no GPS, no heart-rate streams). */
+/** What the PWA needs of an activity, and nothing more: the summary's average and max heart rate come through (metrics phase 2); maps, GPS and heart-rate streams still don't. */
 export function trim(a: Record<string, unknown>): Record<string, unknown> {
-  const keep = ['id', 'name', 'sport_type', 'type', 'distance', 'moving_time', 'elapsed_time', 'start_date_local', 'perceived_exertion', 'workout_type']
+  const keep = ['id', 'name', 'sport_type', 'type', 'distance', 'moving_time', 'elapsed_time', 'start_date_local', 'perceived_exertion', 'workout_type', 'average_heartrate', 'max_heartrate']
   return Object.fromEntries(keep.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]))
 }
 

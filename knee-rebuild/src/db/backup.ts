@@ -31,6 +31,7 @@ export async function readStored(): Promise<StoredContents> {
       locations: await db.locations.toArray(),
       programOverrides: await db.programOverrides.toArray(),
       addedSlots: await db.addedSlots.toArray(),
+      hrSettings: await db.hrSettings.toArray(),
     }
   })
 }

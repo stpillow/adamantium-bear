@@ -7,13 +7,25 @@ import { Screen } from '../components/Screen.tsx'
 import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
 import { exportBackup, markExported, readStored, replaceAll } from '../db/backup.ts'
-import { useSettings } from '../db/hooks.ts'
-import { defaultSettings, ensureSettings, getSettings, resetAll, saveSettings, saveSettingsAndMoves } from '../db/repo.ts'
+import { useHrSettings, useSettings } from '../db/hooks.ts'
+import { defaultSettings, ensureSettings, getSettings, resetAll, saveHrSettings, saveSettings, saveSettingsAndMoves } from '../db/repo.ts'
 import { backupFileName, backupText, lostOnImport, parseBackup, settingsOnImport, sizeProblem, summarize, type Backup, type BackupSummary, type BackupTable } from '../rules/backup.ts'
-import type { IsoDate, IsoDateTime, Settings as SettingsRecord } from '../schema/index.ts'
+import type { HrSettings, IsoDate, IsoDateTime, Settings as SettingsRecord } from '../schema/index.ts'
 import { forgetSlotDrafts } from './program/drafts.ts'
 import {
   DUMBBELLS_LINE,
+  HR_MAX_MAX,
+  HR_MAX_MIN,
+  HR_MAX_OPEN,
+  HR_RESTING_MAX,
+  HR_RESTING_MIN,
+  HR_RESTING_OPEN,
+  HR_SECTION_NOTE,
+  HR_STEP,
+  hrClearButtonWords,
+  hrSavePatch,
+  hrSetButtonWords,
+  hrUnsetWords,
   IMPORT_CONFIRM,
   PHASE_NOTE,
   REST_MAX,
@@ -44,6 +56,7 @@ import {
   startDateChange,
   weekLine,
   type FormHold,
+  type HrPatch,
   type StartDateCheck,
 } from './Settings.helpers.ts'
 
@@ -51,7 +64,7 @@ const TITLE = 'Settings'
 const FLASH_MS = 1500
 
 /** Which part of the screen a save, a Saved word or a problem belongs to. */
-type Field = 'injuredSide' | 'startDate' | 'restTimerSeconds' | 'painPerSet' | 'redFlag' | 'export'
+type Field = 'injuredSide' | 'startDate' | 'restTimerSeconds' | 'painPerSet' | 'heartRate' | 'redFlag' | 'export'
 type Problem = { field: Field; text: string } | null
 type ResetStep = 'idle' | 'confirm' | 'erasing'
 /** What a reset came to (`resetWords`), said in the Reset section where Yes was tapped. */
@@ -105,6 +118,11 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
   const [draft, setDraft] = useState(stored)
   const draftRef = useRef(stored)
   const storedRef = useRef(stored)
+  // The heart-rate numbers (metrics phase 2): a row of their own, so they never ride through save()/saveSettings
+  // and the settings row is never rewritten for them (PROGRAM-QUESTIONS 132, 150). Same draft/echo dance as the row.
+  const hrStored = useHrSettings()
+  const [hrDraft, setHrDraft] = useState<HrSettings | null>(null)
+  const hrRef = useRef<HrSettings | null>(null)
   const pending = useRef(0)
   const mounted = useRef(false)
   const [savedField, flashSaved] = useFlash()
@@ -146,6 +164,14 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
     }
   }, [stored])
 
+  // The heart-rate row, same rule: the store is the truth whenever no write of ours is in flight.
+  useEffect(() => {
+    if (pending.current === 0) {
+      hrRef.current = hrStored ?? null
+      setHrDraft(hrStored ?? null)
+    }
+  }, [hrStored])
+
   function adopt(next: SettingsRecord) {
     draftRef.current = next
     setDraft(next)
@@ -168,6 +194,34 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
     } catch (e) {
       adopt(storedRef.current)
       setProblem({ field, text: `That did not save (${errorWords(e)}); the screen shows what the phone still has.` })
+    } finally {
+      pending.current -= 1
+    }
+  }
+
+  /**
+   * Saves one touched heart-rate number into the row of its own (metrics phase 2), never through
+   * save()/saveSettings: the settings row is never rewritten for it. A null in the patch clears
+   * that number, back to "not set". It waits on an import or a reset like every other section,
+   * with the same refusal in words.
+   */
+  async function saveHr(patch: HrPatch): Promise<void> {
+    if (holdRef.current !== null) {
+      setProblem({ field: 'heartRate', text: heldWords(holdRef.current).refusal })
+      return
+    }
+    const next = hrSavePatch(hrRef.current, patch)
+    hrRef.current = next
+    setHrDraft(next)
+    setProblem(null)
+    pending.current += 1
+    try {
+      await saveHrSettings(next)
+      flashSaved('heartRate')
+    } catch (e) {
+      hrRef.current = hrStored ?? null
+      setHrDraft(hrStored ?? null)
+      setProblem({ field: 'heartRate', text: `That did not save (${errorWords(e)}); the screen shows what the phone still has.` })
     } finally {
       pending.current -= 1
     }
@@ -338,6 +392,30 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
         <Note>{painWords(draft.painPerSet)}</Note>
       </Section>
 
+      <Section label="Heart rate" saved={savedField === 'heartRate'} problem={problemFor('heartRate')} held={held}>
+        <HrNumber
+          label="Max heart rate"
+          value={hrDraft?.maxHr}
+          min={HR_MAX_MIN}
+          max={HR_MAX_MAX}
+          opensOn={HR_MAX_OPEN}
+          disabled={hold !== null}
+          onChange={(maxHr) => void saveHr({ maxHr })}
+          onClear={() => void saveHr({ maxHr: null })}
+        />
+        <HrNumber
+          label="Resting heart rate"
+          value={hrDraft?.restingHr}
+          min={HR_RESTING_MIN}
+          max={HR_RESTING_MAX}
+          opensOn={HR_RESTING_OPEN}
+          disabled={hold !== null}
+          onChange={(restingHr) => void saveHr({ restingHr })}
+          onClear={() => void saveHr({ restingHr: null })}
+        />
+        <Note>{HR_SECTION_NOTE}</Note>
+      </Section>
+
       <Section label="Phase" saved={false} problem={null}>
         <p className="text-body text-on-dark">{phase.title}</p>
         <p className="text-body text-on-dark-dim">{phase.entered}</p>
@@ -454,6 +532,54 @@ function Choice({
         </>
       )}
     </button>
+  )
+}
+
+/**
+ * One heart-rate number (metrics phase 2): unset says so in words with a button that names the
+ * number the stepper will start on — only that tap stores it, so the app never invents a value —
+ * and once set, a stepper on the schema's bounds that saves each change, with a clear below it
+ * that removes the number again, so "not set" stays reachable (the section's note offers unset
+ * as the way to no HR load, and an exploratory tap must not store 180 bpm for good).
+ */
+function HrNumber({
+  label,
+  value,
+  min,
+  max,
+  opensOn,
+  disabled,
+  onChange,
+  onClear,
+}: {
+  label: string
+  /** Undefined is "not set": no HR load is computed from it, and no number is shown that nobody chose. */
+  value: number | undefined
+  min: number
+  max: number
+  opensOn: number
+  disabled: boolean
+  onChange: (value: number) => void
+  /** Removes the stored number: the control goes back to its "not set" words. */
+  onClear: () => void
+}) {
+  if (value === undefined) {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-body text-on-dark-dim">{hrUnsetWords(label)}</p>
+        <Button wide disabled={disabled} onClick={() => onChange(opensOn)}>
+          {hrSetButtonWords(label, opensOn)}
+        </Button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <Stepper label={label} unit="bpm" value={value} step={HR_STEP} min={min} max={max} disabled={disabled} onChange={onChange} />
+      <Button variant="quiet" className="self-start" disabled={disabled} onClick={onClear}>
+        {hrClearButtonWords(label)}
+      </Button>
+    </div>
   )
 }
 

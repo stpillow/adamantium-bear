@@ -48,7 +48,12 @@ export function sessionRpeNote(rated: number | null, sets: readonly Pick<TimedSe
     : 'Not rated, and no set has an RPE: this session’s training load stays unknown until it is rated, here or from its summary.'
 }
 
-/** The Summary's line: "Session RPE 7 · 48 min · training load 336." */
+/**
+ * The Summary's line: "Session RPE 7 · 48 min · training load 336."
+ * Deliberately no HR load in metrics phase 2: only Run gained heart-rate fields, Workout did not,
+ * so a lift's Summary has no HR to read. If Shawn wants HR on lift summaries, Workout needs the
+ * fields too — a scope change, flagged in the phase 2 PR, not quietly built.
+ */
 export function sessionEffortLine(workout: Pick<Workout, 'sessionRpe' | 'durationMinutes'>, sets: readonly Pick<TimedSet, 'rpe'>[]): string {
   const rated = workoutRpe(workout, sets)
   const rpe = rated === null ? 'No RPE' : rated.source === 'session' ? `Session RPE ${rated.rpe}` : `RPE ${rated.rpe}, the sets’ average`

@@ -185,6 +185,10 @@ export const MorningCheck = z.strictObject({
 })
 export type MorningCheck = z.infer<typeof MorningCheck>
 
+/** A run's heart rate fields take whole beats per minute inside this range; anything outside is a watch misread, not a measurement (metrics phase 2). */
+export const RUN_HR_MIN = 30
+export const RUN_HR_MAX = 250
+
 /** Swaps count as the week's session but add no miles. */
 export const Run = z.strictObject({
   id,
@@ -199,6 +203,10 @@ export const Run = z.strictObject({
   effort: Effort,
   /** Effort as rated, 1 to 10 whole (metrics phase 1). Absent on runs logged before it. */
   rpe: WholeRpe.optional(),
+  /** Average heart rate, whole bpm, from a watch via Strava or typed (metrics phase 2). Absent means no heart rate, never 0. */
+  avgHr: z.number().int().min(RUN_HR_MIN).max(RUN_HR_MAX).optional(),
+  /** Max heart rate on the run, whole bpm, same sources (metrics phase 2). Absent means no heart rate, never 0. */
+  maxHr: z.number().int().min(RUN_HR_MIN).max(RUN_HR_MAX).optional(),
   maxPain: Pain,
   strides: z.boolean().default(false),
   tempo: z.boolean().default(false),
@@ -207,8 +215,33 @@ export const Run = z.strictObject({
   notes: z.string().optional(),
   /** Where a swap (elliptical or rower) was done. Absent means Planet Fitness, or a run outside. */
   locationId: id.optional(),
-})
+}).refine((r) => r.avgHr === undefined || r.maxHr === undefined || r.avgHr <= r.maxHr, { message: 'average heart rate is at or under max', path: ['avgHr'] })
 export type Run = z.infer<typeof Run>
+
+/** Shawn's max heart rate as Settings takes it, in whole bpm: the stepper's range, and all a stored row or a backup may hold (metrics phase 2). */
+export const HR_MAX_MIN = 120
+export const HR_MAX_MAX = 230
+/** Shawn's resting heart rate, same deal. Its top sits under HR_MAX_MIN, so any stored pair already has resting under max. */
+export const HR_RESTING_MIN = 25
+export const HR_RESTING_MAX = 100
+
+/**
+ * The heart-rate numbers TRIMP needs (metrics phase 2), in a one-row table of their own
+ * (src/db/db.ts, Dexie version 7), never on the settings row: older builds parse that row strictly
+ * on every read, so a new key there would brick a rollback (PROGRAM-QUESTIONS 132, 150). Both
+ * fields are optional: a stepper touch saves only the touched number, and the app never invents
+ * the other one. The HR load is computed only when both are set.
+ */
+export const HrSettings = z
+  .strictObject({
+    id: z.literal('heart-rate'),
+    /** Max heart rate, whole bpm. */
+    maxHr: z.number().int().min(HR_MAX_MIN).max(HR_MAX_MAX).optional(),
+    /** Resting heart rate, whole bpm. */
+    restingHr: z.number().int().min(HR_RESTING_MIN).max(HR_RESTING_MAX).optional(),
+  })
+  .refine((s) => s.maxHr === undefined || s.restingHr === undefined || s.restingHr < s.maxHr, { message: 'resting heart rate is under max', path: ['restingHr'] })
+export type HrSettings = z.infer<typeof HrSettings>
 
 /** A gate test entry. Hop tests store three trials per side and keep the best. */
 export const GateTest = z.strictObject({

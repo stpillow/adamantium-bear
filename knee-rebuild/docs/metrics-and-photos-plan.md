@@ -1,6 +1,6 @@
 # Performance metrics and photo import: the plan
 
-Decided with Shawn on Nov 6, 2026, one question at a time. Each phase lands as its own PR and is merged once green. Phase 1 is built (Nov 6); the rest is not.
+Decided with Shawn on Nov 6, 2026, one question at a time. Each phase lands as its own PR and is merged once green. Phases 1 and 2 are built (Nov 6 and 7); the rest is not.
 
 ## Decisions
 
@@ -30,8 +30,8 @@ Decided with Shawn on Nov 6, 2026, one question at a time. Each phase lands as i
 | Phase | Builds | Data change |
 |---|---|---|
 | 1 · **built** | RPE 1–10 on the run logger; session RPE and minutes at a lift's Finish (minutes on End too); training load per session; weekly training load and the warning on Progress; `src/rules/trainingLoad.ts` ("load" already means weight lifted on Progress). As built: PROGRAM-QUESTIONS 143 to 149 | Run gains optional `rpe`; Workout gains optional `sessionRpe` and `durationMinutes` (Dexie v6 with no store change, backup schema 6 with a 5→6 step) |
-| 2 | Average and max HR on runs, from the Strava import (the function stops dropping them), typed, or later a photo; max and resting HR in Settings; HR load beside RPE load | Run gains optional `avgHr`, `maxHr`; the two Settings numbers live in their own row of the settings table, so older builds still read the settings row |
-| 3 | VO2 max readings typed in; trend on Progress | New `vo2Readings` table (Dexie v7: phase 1 shipped v6 without it) |
+| 2 · **built** | Average and max HR on runs, from the Strava import (the function stops dropping them), typed, or later a photo; max and resting HR in Settings; HR load beside RPE load. As built: PROGRAM-QUESTIONS 150 to 152 | Run gains optional `avgHr`, `maxHr`; the two Settings numbers live in a one-row `hrSettings` table (Dexie v7, backup schema 7 with a 6→7 step), so older builds still read the settings row untouched — amended from “their own row of the settings table”, PROGRAM-QUESTIONS 150 |
+| 3 | VO2 max readings typed in; trend on Progress | New `vo2Readings` table (Dexie v8: phase 2 shipped v7 without it) |
 | 4 | Photo → run, elliptical or rowing: `api/photo.ts` sends the image to Claude with a strict JSON schema; the run logger opens filled in; pain still rated by hand | None (fills the existing form). Needs `ANTHROPIC_API_KEY` in Vercel, a monthly spend cap on the key, and a per-day request cap in the function |
 | 5 | Photo → strength session: sets, reps and loads matched to that day's slots by the catalog's names; each set confirmed in the runner's after-the-fact mode | None beyond phase 1 |
 | 6 | Cycling and cross-training: a new activity (type, minutes, RPE, HR, pain) that counts toward load and readings, never miles; photo and Strava (Ride, Swim, Hike…) map onto it | New `crossTraining` table; the morning check can read one; PROGRAM-QUESTIONS entry for how it reads |

@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest'
 import { IsoDate } from './enums.ts'
 import { REST_MAX, REST_MIN } from '../screens/Settings.helpers.ts'
-import { DEFAULT_KIT, DURATION_MAX, DURATION_MIN, EXTRA_TEXT_MAX, Location, MorningCheck, PLANET_FITNESS_LOCATION_ID, REST_TIMER_MAX, REST_TIMER_MIN, Run, SetLog, Settings, Workout, showsText } from './log.ts'
+import {
+  DEFAULT_KIT,
+  DURATION_MAX,
+  DURATION_MIN,
+  EXTRA_TEXT_MAX,
+  HR_MAX_MAX,
+  HR_MAX_MIN,
+  HR_RESTING_MAX,
+  HR_RESTING_MIN,
+  HrSettings,
+  Location,
+  MorningCheck,
+  PLANET_FITNESS_LOCATION_ID,
+  REST_TIMER_MAX,
+  REST_TIMER_MIN,
+  RUN_HR_MAX,
+  RUN_HR_MIN,
+  Run,
+  SetLog,
+  Settings,
+  Workout,
+  showsText,
+} from './log.ts'
 
 describe('IsoDate', () => {
   it('accepts real dates and rejects impossible ones', () => {
@@ -192,5 +214,61 @@ describe('metrics phase 1: a run’s RPE, a session’s RPE and minutes are opti
   it('still refuses a key it doesn’t know', () => {
     expect(Workout.safeParse({ ...workout, minutes: 40 }).success).toBe(false)
     expect(Run.safeParse({ ...run, sessionRpe: 4 }).success).toBe(false)
+  })
+})
+
+describe('metrics phase 2: a run’s heart rate is two optional whole numbers', () => {
+  const run = { id: 'r1', date: '2026-11-04', type: 'easy', miles: 3, minutes: 30, effort: 'easy', maxPain: 1 } as const
+  it('rows stored before it still parse, with nothing invented: absent means no heart rate, never 0', () => {
+    const parsed = Run.parse(run)
+    expect(parsed.avgHr).toBeUndefined()
+    expect(parsed.maxHr).toBeUndefined()
+  })
+  it('takes whole bpm from 30 to 250, and refuses 29, 251 and a half', () => {
+    expect([RUN_HR_MIN, RUN_HR_MAX]).toEqual([30, 250])
+    for (const hr of [RUN_HR_MIN, 150, RUN_HR_MAX]) {
+      expect(Run.safeParse({ ...run, avgHr: hr, maxHr: hr }).success, String(hr)).toBe(true)
+    }
+    for (const hr of [RUN_HR_MIN - 1, RUN_HR_MAX + 1, 150.5]) {
+      expect(Run.safeParse({ ...run, avgHr: hr }).success, String(hr)).toBe(false)
+      expect(Run.safeParse({ ...run, maxHr: hr }).success, String(hr)).toBe(false)
+    }
+  })
+  it('either field parses alone, and an average above the max is refused only when both are set', () => {
+    expect(Run.parse({ ...run, avgHr: 150 })).toMatchObject({ avgHr: 150 })
+    expect(Run.parse({ ...run, maxHr: 171 })).toMatchObject({ maxHr: 171 })
+    expect(Run.safeParse({ ...run, avgHr: 150, maxHr: 171 }).success).toBe(true)
+    expect(Run.safeParse({ ...run, avgHr: 150, maxHr: 150 }).success).toBe(true)
+    expect(Run.safeParse({ ...run, avgHr: 172, maxHr: 171 }).success).toBe(false)
+  })
+  it('keeps its shape readable after the refine: the Strava-link check and the backup’s field list read it', () => {
+    expect(Run.shape.stravaUrl.safeParse('https://www.strava.com/activities/1').success).toBe(true)
+    expect(Object.keys(Run.shape)).toContain('avgHr')
+    expect(Object.keys(Run.shape)).toContain('maxHr')
+  })
+})
+
+describe('metrics phase 2: the heart-rate settings row (its own table, never the settings row)', () => {
+  const row = { id: 'heart-rate' } as const
+  it('pins the bounds the Settings steppers use, resting always under max by construction', () => {
+    expect([HR_MAX_MIN, HR_MAX_MAX]).toEqual([120, 230])
+    expect([HR_RESTING_MIN, HR_RESTING_MAX]).toEqual([25, 100])
+    expect(HR_RESTING_MAX).toBeLessThan(HR_MAX_MIN)
+  })
+  it('takes whole bpm inside the bounds and refuses outside, halves included', () => {
+    expect(HrSettings.safeParse({ ...row, maxHr: 190, restingHr: 50 }).success).toBe(true)
+    for (const maxHr of [HR_MAX_MIN - 1, HR_MAX_MAX + 1, 190.5]) expect(HrSettings.safeParse({ ...row, maxHr }).success, String(maxHr)).toBe(false)
+    for (const restingHr of [HR_RESTING_MIN - 1, HR_RESTING_MAX + 1, 50.5]) expect(HrSettings.safeParse({ ...row, restingHr }).success, String(restingHr)).toBe(false)
+  })
+  it('each field parses alone, and a row with only its id parses: a touch saves only the touched number', () => {
+    expect(HrSettings.parse({ ...row, maxHr: 190 })).toEqual({ id: 'heart-rate', maxHr: 190 })
+    expect(HrSettings.parse({ ...row, restingHr: 50 })).toEqual({ id: 'heart-rate', restingHr: 50 })
+    expect(HrSettings.parse(row)).toEqual({ id: 'heart-rate' })
+  })
+  it('is strict: a key it doesn’t know, or another id, is refused; resting at or over max is the backup-import backstop', () => {
+    expect(HrSettings.safeParse({ ...row, vo2: 50 }).success).toBe(false)
+    expect(HrSettings.safeParse({ id: 'hr', maxHr: 190 }).success).toBe(false)
+    // Unreachable from the steppers (resting tops out under max's floor), kept so no hand-edited backup can store it.
+    expect(HrSettings.safeParse({ ...row, maxHr: 130, restingHr: 130 }).success).toBe(false)
   })
 })

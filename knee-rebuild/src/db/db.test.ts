@@ -63,8 +63,8 @@ describe('a week-1 version 2 database opened at version 3 and on', () => {
     await writeVersionTwo()
 
     await db.open()
-    expect(db.verno).toBe(6)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v2Rows), 'locations', 'programOverrides', 'addedSlots'].sort())
+    expect(db.verno).toBe(7)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v2Rows), 'locations', 'programOverrides', 'addedSlots', 'hrSettings'].sort())
     expect(await db.programOverrides.count()).toBe(0)
     const sorted = (rows: unknown[]) => [...rows].sort((a, b) => String((a as { id: string }).id).localeCompare(String((b as { id: string }).id)))
     const before = await rawRows()

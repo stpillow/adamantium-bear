@@ -17,6 +17,9 @@ import {
   milesWords,
   MILES_STEP,
   formFromDraft,
+  hrLoadWords,
+  hrProblem,
+  hrProblemWords,
   joinTime,
   splitTime,
   timeWords,
@@ -427,6 +430,13 @@ describe('formFromDraft (Strava import)', () => {
     expect(formFromDraft({ date: '2026-11-05', type: 'easy', miles: 3, minutes: 27, effort: null, stravaUrl: '', notes: '' }).rpe).toBeNull()
     expect(formFromDraft({ date: '2026-11-05', type: 'easy', miles: 3, minutes: 27, stravaUrl: '', notes: '' }).rpe).toBeNull()
   })
+  it('carries the watch’s heart rate in; a draft kept by a pre-phase-2 tab lacks the keys and opens on null (the rpe precedent)', () => {
+    const withHr = formFromDraft({ date: '2026-11-05', type: 'easy', miles: 3, minutes: 27, rpe: null, avgHr: 150, maxHr: 171, stravaUrl: '', notes: '' })
+    expect(withHr).toMatchObject({ avgHr: 150, maxHr: 171 })
+    const without = formFromDraft({ date: '2026-11-05', type: 'easy', miles: 3, minutes: 27, rpe: null, stravaUrl: '', notes: '' })
+    expect(without).toMatchObject({ avgHr: null, maxHr: null })
+    expect(formFromDraft({ date: '2026-11-05', type: 'easy', miles: 3, minutes: 27, rpe: null, avgHr: null, maxHr: null, stravaUrl: '', notes: '' })).toMatchObject({ avgHr: null, maxHr: null })
+  })
 })
 
 describe('time in minutes and seconds (Nov 6)', () => {
@@ -519,7 +529,7 @@ describe('stravaProblem', () => {
 })
 
 describe('toRun', () => {
-  const ready: ResolvedForm = { date: '2026-11-04', dateLost: null, type: 'easy', swap: false, miles: 3.25, minutes: 32, rpe: 2, effort: 'easy', maxPain: 2, strides: true, tempo: false, stravaUrl: '', notes: '' }
+  const ready: ResolvedForm = { date: '2026-11-04', dateLost: null, type: 'easy', swap: false, miles: 3.25, minutes: 32, rpe: 2, effort: 'easy', avgHr: null, maxHr: null, maxPain: 2, strides: true, tempo: false, stravaUrl: '', notes: '' }
   it('keeps Save disabled with words until max pain and effort are rated and a type is picked', () => {
     expect(toRun({ ...ready, maxPain: null }, 'r', GYM)).toEqual({ ok: false, blocker: 'Rate max pain first' })
     expect(toRun({ ...ready, type: null }, 'r', GYM)).toEqual({ ok: false, blocker: 'Pick the type first' })
@@ -581,6 +591,63 @@ describe('toRun', () => {
   })
   it('a run keeps its miles as the measure, so untouched minutes still save', () => {
     expect(toRun({ ...ready, minutes: 0 }, 'r', GYM).ok).toBe(true)
+  })
+
+  it('empty or valid heart-rate fields never block Save, and a saved run carries them only when set: absent stays absent, never 0', () => {
+    expect(toRun(ready, 'r', GYM)).toMatchObject({ ok: true })
+    const empty = toRun(ready, 'r', GYM)
+    expect(empty.ok && 'avgHr' in empty.run).toBe(false)
+    expect(empty.ok && 'maxHr' in empty.run).toBe(false)
+    const both = toRun({ ...ready, avgHr: 150, maxHr: 171 }, 'r', GYM)
+    expect(both.ok && both.run).toMatchObject({ avgHr: 150, maxHr: 171 })
+    if (both.ok) expect(Run.parse(both.run)).toEqual(both.run)
+    const alone = toRun({ ...ready, avgHr: 150 }, 'r', GYM)
+    expect(alone.ok && alone.run).toMatchObject({ avgHr: 150 })
+    expect(alone.ok && 'maxHr' in alone.run).toBe(false)
+    if (alone.ok) expect(Run.parse(alone.run)).toEqual(alone.run)
+  })
+
+  it('a typed heart rate out of bounds, or an average above the max, blocks Save in words, never as a raw schema error', () => {
+    expect(toRun({ ...ready, avgHr: 20 }, 'r', GYM)).toEqual({ ok: false, blocker: 'Fix the heart rate first: average heart rate is a whole number from 30 to 250' })
+    expect(toRun({ ...ready, avgHr: 300 }, 'r', GYM)).toMatchObject({ ok: false })
+    expect(toRun({ ...ready, maxHr: 300 }, 'r', GYM)).toEqual({ ok: false, blocker: 'Fix the heart rate first: max heart rate is a whole number from 30 to 250' })
+    expect(toRun({ ...ready, avgHr: 172, maxHr: 171 }, 'r', GYM)).toEqual({ ok: false, blocker: 'Fix the heart rate first: average is above max' })
+  })
+})
+
+describe('hrProblem and its words', () => {
+  it('an empty or valid field is never a problem; the pair check needs both set', () => {
+    expect(hrProblem(null, null)).toBeNull()
+    expect(hrProblem(150, null)).toBeNull()
+    expect(hrProblem(null, 171)).toBeNull()
+    expect(hrProblem(150, 171)).toBeNull()
+    expect(hrProblem(150, 150)).toBeNull()
+  })
+  it('refuses out-of-bounds, non-whole and inverted values in words', () => {
+    expect(hrProblem(29, null)).toBe('average heart rate is a whole number from 30 to 250')
+    expect(hrProblem(150.5, null)).toContain('average heart rate')
+    expect(hrProblem(null, 251)).toBe('max heart rate is a whole number from 30 to 250')
+    expect(hrProblem(172, 171)).toBe('average is above max')
+    expect(hrProblemWords(172, 171)).toBe('Average is above max. Fix it or clear the field to save.')
+    expect(hrProblemWords(150, 171)).toBeNull()
+  })
+})
+
+describe('hrLoadWords (the saved screen)', () => {
+  const hr = { maxHr: 190, restingHr: 50 }
+  it('says the HR load beside the sRPE words when the run has minutes and an average and Settings hold both numbers', () => {
+    expect(hrLoadWords({ minutes: 40, avgHr: 150 }, hr)).toBe('HR load 72, from an average of 150 over 40 minutes.')
+    expect(hrLoadWords({ minutes: 27 + 13 / 60, avgHr: 150 }, hr)).toBe('HR load 49, from an average of 150 over 27:13.')
+  })
+  it('says nothing rather than 0 when anything is missing: no average, no minutes, no settings, or half the settings', () => {
+    expect(hrLoadWords({ minutes: 40 }, hr)).toBeNull()
+    expect(hrLoadWords({ minutes: 0, avgHr: 150 }, hr)).toBeNull()
+    expect(hrLoadWords({ minutes: 40, avgHr: 150 }, null)).toBeNull()
+    expect(hrLoadWords({ minutes: 40, avgHr: 150 }, undefined)).toBeNull()
+    expect(hrLoadWords({ minutes: 40, avgHr: 150 }, { maxHr: 190 })).toBeNull()
+  })
+  it('an average below resting is a computed 0, said as 0, not silence: effort below resting is no load', () => {
+    expect(hrLoadWords({ minutes: 40, avgHr: 40 }, hr)).toBe('HR load 0, from an average of 40 over 40 minutes.')
   })
 })
 

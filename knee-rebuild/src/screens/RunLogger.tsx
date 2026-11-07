@@ -4,11 +4,12 @@ import { PROGRAM, availableAt } from '../app/session.ts'
 import { takeDraft } from '../app/strava.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
+import { NumberField } from '../components/NumberField.tsx'
 import { PAIN_SCALE, RPE_1_10, ScalePicker } from '../components/ScalePicker.tsx'
 import { Screen } from '../components/Screen.tsx'
 import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
-import { useActiveLocation, useHistory, useLocations, useSettings } from '../db/hooks.ts'
+import { useActiveLocation, useHistory, useHrSettings, useLocations, useSettings } from '../db/hooks.ts'
 import { addRun, deleteRun, type History } from '../db/repo.ts'
 import { runSwapGym } from '../rules/gymDay.ts'
 import { listedLocations } from '../rules/locations.ts'
@@ -27,6 +28,8 @@ import {
   dayChoiceWords,
   dayChoicesNote,
   errorWords,
+  hrLoadWords,
+  hrProblemWords,
   isSwapType,
   leadWords,
   loggedDate,
@@ -104,6 +107,8 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
   const [saved, setSaved] = useState<Run | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Shawn's max and resting HR (metrics phase 2): only the saved screen's HR-load line reads them here.
+  const hrSettings = useHrSettings()
 
   // A swap is judged and stored at the gym it was done at: today's at the active gym; an earlier day's
   // at the gym picked for it, else that day's lift's gym, else the active one (runSwapGym).
@@ -130,8 +135,11 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
   }
 
   if (saved) {
+    const hrLine = hrLoadWords(saved, hrSettings ?? null)
     return (
       <Screen title={TITLE} lead={loggedWords(saved, today, history.morningChecks)}>
+        {/* The HR load (TRIMP) beside the sRPE words, only when the run and Settings can compute one; absent says nothing, never 0. */}
+        {hrLine ? <p className="text-body text-on-dark">{hrLine}</p> : null}
         <p role="status" className="text-body text-on-dark">
           {weekLine(view.summary, null)}
         </p>
@@ -243,6 +251,17 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
       <Section label="Pain">
         <ScalePicker label="Max pain during the run" value={resolved.maxPain} options={PAIN_SCALE} onChange={(maxPain) => set({ maxPain })} />
         <Note>Required: an unrated run is unknown, and unknown is not clean.</Note>
+      </Section>
+
+      <Section label="Heart rate">
+        <NumberField label="Average" unit="bpm" placeholder="—" value={resolved.avgHr} onChange={(avgHr) => set({ avgHr })} />
+        <NumberField label="Max" unit="bpm" placeholder="—" value={resolved.maxHr} onChange={(maxHr) => set({ maxHr })} />
+        <Note>Optional, from a watch. Leave empty for no heart rate; it never blocks Save. Filled in when a Strava activity has it.</Note>
+        {hrProblemWords(resolved.avgHr, resolved.maxHr) ? (
+          <p role="alert" className="text-body text-on-dark">
+            {hrProblemWords(resolved.avgHr, resolved.maxHr)}
+          </p>
+        ) : null}
       </Section>
 
       {resolved.swap ? null : (

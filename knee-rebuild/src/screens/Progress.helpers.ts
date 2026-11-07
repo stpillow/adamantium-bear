@@ -2,9 +2,9 @@ import type { History } from '../db/repo.ts'
 import { addDays, daysBetween, weekOf } from '../rules/calendar.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { awaitingMorningCheck, consecutiveCleanDays, loadSeries, milesSeries, symmetryLeftOut, symmetrySeries, type LoadPoint, type MilesWeek, type SymmetryLeftOut, type SymmetryPoint } from '../rules/progress.ts'
-import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, trainingLoads, weeklyTrainingLoads, type AcuteChronic, type Band, type TrainingLoadEntry, type TrainingLoadWeek } from '../rules/trainingLoad.ts'
+import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrainingLoads, type AcuteChronic, type Band, type HrPair, type TrainingLoadEntry, type TrainingLoadWeek } from '../rules/trainingLoad.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, IsoDate, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side } from '../schema/index.ts'
+import type { Exercise, Gate, HrSettings, IsoDate, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -1048,6 +1048,22 @@ export function notCountedLines(entries: readonly TrainingLoadEntry[], templates
     })
 }
 
+/**
+ * This week's HR load (TRIMP) in words, e.g. "HR load this week: 310 (2 of 3 runs had heart
+ * rate)" — the denominator counts the week's runs and swaps, the only entries that can carry one
+ * (lifts never can: Workout has no HR fields), and the numerator the runs that logged a heart
+ * rate, whether or not a load came of it. One with heart rate but no time has no computable load,
+ * and the words say so ("1 has no time logged"), as the sRPE side's notCountedLines does: the
+ * number printed is then a sum over fewer runs, never a claim that the heart rate wasn't there.
+ * Null with no Settings pair, no current week, or no runs this week: nothing is said rather than 0.
+ */
+export function hrWeekLine(week: Pick<TrainingLoadWeek, 'hrLoad' | 'withHr' | 'hrNotCounted' | 'runs'> | undefined, pair: HrPair | null): string | null {
+  if (pair === null || week === undefined || week.runs === 0) return null
+  const had = `${week.withHr} of ${week.runs} ${week.runs === 1 ? 'run' : 'runs'} had heart rate`
+  const blocked = week.hrNotCounted > 0 ? `; ${week.hrNotCounted} ${week.hrNotCounted === 1 ? 'has' : 'have'} no time logged` : ''
+  return `HR load this week: ${trainingLoadNumber(week.hrLoad)} (${had}${blocked})`
+}
+
 export interface TrainingLoadView {
   /** Program weeks 1 to 12, or to this week once past 12. */
   weeks: TrainingLoadWeek[]
@@ -1063,11 +1079,22 @@ export interface TrainingLoadView {
   notCounted: string[]
   /** Said when an older run's effort word stands in for its RPE. */
   olderRuns: string | null
+  /** This week's HR load in words (metrics phase 2); null with no Settings numbers or nothing this week. The warning above reads the sRPE load alone. */
+  hrLine: string | null
 }
 
-export function trainingLoadView(input: { records: readonly WorkoutRecord[]; runs: readonly Run[]; startDate: IsoDate; today: IsoDate; templates: readonly SessionTemplate[] }): TrainingLoadView {
+export function trainingLoadView(input: {
+  records: readonly WorkoutRecord[]
+  runs: readonly Run[]
+  startDate: IsoDate
+  today: IsoDate
+  templates: readonly SessionTemplate[]
+  /** The stored heart-rate numbers (metrics phase 2); omitted or null, no HR load is computed anywhere. */
+  hrSettings?: HrSettings | null
+}): TrainingLoadView {
   const { startDate, today } = input
-  const entries = trainingLoads(input.records, input.runs)
+  const pair = hrPair(input.hrSettings)
+  const entries = trainingLoads(input.records, input.runs, pair)
   const week = weekOf(today, startDate)
   const weeks = weeklyTrainingLoads(entries, startDate, Math.max(12, week))
   const i = weeks.findIndex((w) => w.week === week)
@@ -1090,6 +1117,7 @@ export function trainingLoadView(input: { records: readonly WorkoutRecord[]; run
       input.templates,
     ),
     olderRuns: entries.some((e) => e.rpeSource === 'word') ? 'Runs logged before effort was rated 1 to 10 read their effort word as RPE 3, 5 or 8.' : null,
+    hrLine: hrWeekLine(current === null ? undefined : weeks[current], pair),
   }
 }
 
@@ -1143,7 +1171,7 @@ export interface ProgressView {
 }
 
 /** Everything the screen shows that doesn't depend on the exercise picked. */
-export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): ProgressView {
+export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null }): ProgressView {
   const { today, settings, history, program } = input
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
@@ -1152,7 +1180,7 @@ export function progressView(input: { today: IsoDate; settings: Settings; histor
     exercises: loggedExercises(records, program.exercises),
     refs: symmetryRefs(program.gates),
     miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),
-    training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates }),
+    training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
     records,
   }
 }

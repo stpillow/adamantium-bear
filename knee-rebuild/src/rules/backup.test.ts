@@ -91,7 +91,7 @@ function tables(): BackupTables {
       { id: 'mc-2026-11-12', date: '2026-11-12', appliesTo: null, stiffnessUnder30Min: false, worseThanYesterday: true, visibleSwelling: false, warmth: true, painChangePoints: 2, redFlags: ['locking'], notes: 'Caught on the stairs “twice”\nthen fine' },
     ],
     runs: [
-      { id: 'run-2026-11-02', date: '2026-11-02', type: 'mbr', miles: 3, minutes: 33, effort: 'easy', rpe: 3, maxPain: 1, strides: true, tempo: false, stravaUrl: 'https://www.strava.com/activities/1', notes: 'Windy' },
+      { id: 'run-2026-11-02', date: '2026-11-02', type: 'mbr', miles: 3, minutes: 33, effort: 'easy', rpe: 3, avgHr: 150, maxHr: 171, maxPain: 1, strides: true, tempo: false, stravaUrl: 'https://www.strava.com/activities/1', notes: 'Windy' },
       { id: 'run-2026-11-11', date: '2026-11-11', type: 'rower-swap', miles: 0, minutes: 35, effort: 'moderate', maxPain: 1, strides: false, tempo: true, locationId: 'loc-1' },
     ],
     gateTests: [
@@ -109,6 +109,7 @@ function tables(): BackupTables {
       { id: 'added-a1', templateId: 'p1-a', exerciseId: 'db-bench-press', sets: 3, repsMin: 8, repsMax: 10, addedOn: '2026-11-18' },
       { id: 'added-a2', templateId: 'p1-b', exerciseId: 'wall-sit', sets: 2, repsMin: 30, repsMax: 45, addedOn: '2026-11-19' },
     ],
+    hrSettings: [{ id: 'heart-rate', maxHr: 190, restingHr: 50 }],
   }
 }
 
@@ -157,7 +158,7 @@ describe('the export file', () => {
 
   it('is two-space JSON with a final newline, named for the day it is written', () => {
     const text = backupText(built())
-    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 6,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
+    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 7,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
     expect(text.endsWith('}\n')).toBe(true)
     expect(backupFileName('2026-11-21')).toBe('knee-rebuild-2026-11-21.json')
   })
@@ -184,10 +185,10 @@ describe('reading a file back', () => {
   })
 
   it('refuses a newer schema version, saying how to get an app that reads it, in the update prompt’s own words', () => {
-    expect(parseBackup(fileText({ ...built(), schemaVersion: 7 }))).toEqual({
+    expect(parseBackup(fileText({ ...built(), schemaVersion: 8 }))).toEqual({
       ok: false,
       refusal:
-        'This backup is from a newer version of the app (schema version 7; this one reads up to 6). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
+        'This backup is from a newer version of the app (schema version 8; this one reads up to 7). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
     })
     // The prompt the refusal sends Shawn to is the one the app shows (src/App.tsx): its sentence and its button.
     expect(appSource).toContain('<span>A new version is ready. It will not reload on its own.</span>')
@@ -308,7 +309,7 @@ describe('older files carried forward', () => {
       workouts: t.workouts.map((w) => without(without(without(w, 'locationId'), 'sessionRpe'), 'durationMinutes')),
       setLogs: t.setLogs.map((s) => without(s, 'rackCapped')),
       morningChecks: t.morningChecks,
-      runs: t.runs.map((r) => without(without(r, 'locationId'), 'rpe')),
+      runs: t.runs.map((r) => without(without(without(without(r, 'locationId'), 'rpe'), 'avgHr'), 'maxHr')),
       gateTests: t.gateTests,
       sessionMoves: t.sessionMoves,
     }
@@ -316,16 +317,19 @@ describe('older files carried forward', () => {
   const v3 = () => ({ ...v2(), schemaVersion: 3, settings: without(settings, 'lastExportedAt'), workouts: tables().workouts.map((w) => without(without(w, 'sessionRpe'), 'durationMinutes')), locations: tables().locations })
   // Version 5 as the build before metrics phase 1 wrote it: every list, and runs and sessions without their RPE or minutes.
   const v5 = () => ({ ...v3(), schemaVersion: 5, programOverrides: tables().programOverrides, addedSlots: tables().addedSlots })
+  // Version 6 as the build before metrics phase 2 wrote it: sessions with their RPE and minutes, runs with their RPE but no heart rate, and no heart-rate settings list.
+  const v6 = () => ({ ...v5(), schemaVersion: 6, workouts: tables().workouts, runs: tables().runs.map((r) => without(without(r, 'avgHr'), 'maxHr')) })
 
   it('has a step for every version from the oldest up to this one', () => {
     for (let v = OLDEST_SCHEMA_VERSION; v < BACKUP_SCHEMA_VERSION; v++) expect(MIGRATIONS[v], `version ${v}`).toBeTypeOf('function')
   })
 
-  it('version 2 gains an empty gyms list, version 3 an empty Program edits list, version 4 an empty added exercises list, version 5 nothing', () => {
+  it('version 2 gains an empty gyms list, version 3 an empty Program edits list, version 4 an empty added exercises list, version 5 nothing, version 6 an empty heart-rate settings list', () => {
     expect(MIGRATIONS[2]?.(v2())).toEqual({ ...v2(), schemaVersion: 3, locations: [] })
     expect(MIGRATIONS[3]?.(v3())).toEqual({ ...v3(), schemaVersion: 4, programOverrides: [] })
     expect(MIGRATIONS[4]?.({ ...v3(), schemaVersion: 4, programOverrides: [] })).toEqual({ ...v3(), schemaVersion: 5, programOverrides: [], addedSlots: [] })
     expect(MIGRATIONS[5]?.(v5())).toEqual({ ...v5(), schemaVersion: 6 })
+    expect(MIGRATIONS[6]?.(v6())).toEqual({ ...v6(), schemaVersion: 7, hrSettings: [] })
   })
 
   it('a step leaves a list the file already has for the schema to judge', () => {
@@ -365,16 +369,28 @@ describe('older files carried forward', () => {
     ])
   })
 
+  it('reads a version 6 file with an empty heart-rate settings list, and invents no heart rate on its runs', () => {
+    const read = parseBackup(fileText(v6()))
+    expect(read).toMatchObject({ ok: true, migratedFrom: 6 })
+    if (!read.ok) return
+    expect(read.backup.hrSettings).toEqual([])
+    expect(read.backup.runs.map((r) => [r.avgHr, r.maxHr])).toEqual([
+      [undefined, undefined],
+      [undefined, undefined],
+    ])
+    expect(read.backup.runs.map((r) => r.rpe)).toEqual([3, undefined])
+  })
+
   it('a version with no step can’t be carried', () => {
     expect(() => migrateForward({ schemaVersion: 1 })).toThrow('no step carries a version 1 backup forward')
-    expect(migrateForward({ schemaVersion: 6, a: 1 })).toEqual({ schemaVersion: 6, a: 1 })
+    expect(migrateForward({ schemaVersion: 7, a: 1 })).toEqual({ schemaVersion: 7, a: 1 })
   })
 })
 
 describe('what a file holds', () => {
   it('counts each table, the archived gyms, and the days logged', () => {
     expect(summarize(tables())).toEqual({
-      counts: { workouts: 2, setLogs: 5, morningChecks: 2, runs: 2, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 3, addedSlots: 2 },
+      counts: { workouts: 2, setLogs: 5, morningChecks: 2, runs: 2, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 3, addedSlots: 2, hrSettings: 1 },
       archivedGyms: 1,
       first: '2026-11-02',
       last: '2026-11-14',
@@ -391,12 +407,15 @@ describe('what a file holds', () => {
     phone.workouts.push({ ...phone.workouts[0]!, id: '2026-11-12-p1-b', date: '2026-11-12', templateId: 'p1-b' })
     phone.setLogs.push({ ...phone.setLogs[0]!, id: 'a' }, { ...phone.setLogs[0]!, id: 'b' })
     phone.programOverrides.push({ slotId: 'p1c-1', cues: ['New'], editedOn: '2026-11-21' })
+    // A pre-phase-2 file has no heart-rate row, so an import from one erases the phone's: named as "1 heart rate setting" (the row holds both numbers; accepted wording, PROGRAM-QUESTIONS 150).
+    file.hrSettings = []
     // A row on the same key that changed is replaced, not lost.
     phone.runs[0] = { ...phone.runs[0]!, notes: 'edited' }
     expect(lostOnImport(phone, file)).toEqual([
       { table: 'workouts', count: 1 },
       { table: 'setLogs', count: 2 },
       { table: 'programOverrides', count: 1 },
+      { table: 'hrSettings', count: 1 },
     ])
     expect(lostOnImport(file, phone)).toEqual([])
   })

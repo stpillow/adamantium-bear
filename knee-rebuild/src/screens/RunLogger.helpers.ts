@@ -8,9 +8,9 @@ import { isSwap } from '../rules/mileage.ts'
 import { morningCheckApplies, morningReading } from '../rules/reading.ts'
 import { progressionSuspended, stopMessage } from '../rules/redFlags.ts'
 import { phaseWeekOf } from '../rules/session.ts'
-import { EFFORT_RPE, effortFromRpe } from '../rules/trainingLoad.ts'
+import { EFFORT_RPE, effortFromRpe, hrLoadOf, hrPair } from '../rules/trainingLoad.ts'
 import { runTypeFor, runsInWeek, suggestRun, weekMilesSummary, type RunSuggestion, type WeekMiles } from '../rules/weekPlan.ts'
-import { Effort, Run, RunType, type Day, type DaySession, type IsoDate, type MorningCheck, type Program, type ReadingResult, type Settings } from '../schema/index.ts'
+import { Effort, RUN_HR_MAX, RUN_HR_MIN, Run, RunType, type Day, type DaySession, type HrSettings, type IsoDate, type MorningCheck, type Program, type ReadingResult, type Settings } from '../schema/index.ts'
 import { dateWords, noSwapMachineWords, runLabel, sessionLabel, shortDateWords } from './Today.helpers.ts'
 
 /**
@@ -351,6 +351,10 @@ export interface RunForm {
   minutes: number
   /** Effort as RPE 1 to 10; null until rated: like max pain, Save waits for it (metrics phase 1). */
   rpe: number | null
+  /** Average heart rate from a watch, optional (metrics phase 2): null is "no heart rate", never 0, and an empty field never blocks Save. */
+  avgHr: number | null
+  /** Max heart rate on the run, same deal. */
+  maxHr: number | null
   /** Null until rated: max pain is required, and unknown is not clean. */
   maxPain: number | null
   strides: boolean | null
@@ -362,7 +366,7 @@ export interface RunForm {
 }
 
 export function emptyForm(): RunForm {
-  return { date: null, type: null, miles: null, minutes: 0, rpe: null, maxPain: null, strides: null, tempo: null, stravaUrl: '', notes: '', gymPick: null }
+  return { date: null, type: null, miles: null, minutes: 0, rpe: null, avgHr: null, maxHr: null, maxPain: null, strides: null, tempo: null, stravaUrl: '', notes: '', gymPick: null }
 }
 
 /**
@@ -375,13 +379,26 @@ export function openForm(today: IsoDate): RunForm {
 
 /**
  * The form opened from a Strava activity (src/rules/stravaImport.ts): its day, type, miles, time,
- * effort when Strava had one, link and name, with max pain left unrated so Save waits on it, and
- * strides and tempo following the type as on any run. A draft a tab kept from before RPE carries an
- * effort word instead (takeDraft doesn't validate): it opens on that word as 3, 5 or 8.
+ * effort when Strava had one, the watch's heart rate when it had that (metrics phase 2), link and
+ * name, with max pain left unrated so Save waits on it, and strides and tempo following the type as
+ * on any run. A draft a tab kept from before RPE carries an effort word instead (takeDraft doesn't
+ * validate): it opens on that word as 3, 5 or 8; one from before phase 2 lacks the heart-rate keys
+ * and opens on null, the same precedent.
  */
-export function formFromDraft(draft: { date: IsoDate; type: RunType; miles: number; minutes: number; rpe?: number | null; effort?: Effort | null; stravaUrl: string; notes: string }): RunForm {
+export function formFromDraft(draft: {
+  date: IsoDate
+  type: RunType
+  miles: number
+  minutes: number
+  rpe?: number | null
+  effort?: Effort | null
+  avgHr?: number | null
+  maxHr?: number | null
+  stravaUrl: string
+  notes: string
+}): RunForm {
   const rpe = draft.rpe ?? (draft.effort ? EFFORT_RPE[draft.effort] : null)
-  return { ...emptyForm(), date: draft.date, type: draft.type, miles: draft.miles, minutes: draft.minutes, rpe, stravaUrl: draft.stravaUrl, notes: draft.notes }
+  return { ...emptyForm(), date: draft.date, type: draft.type, miles: draft.miles, minutes: draft.minutes, rpe, avgHr: draft.avgHr ?? null, maxHr: draft.maxHr ?? null, stravaUrl: draft.stravaUrl, notes: draft.notes }
 }
 
 /** The form with every "follow" filled in: what the screen shows and what Save would log. */
@@ -396,6 +413,9 @@ export interface ResolvedForm {
   rpe: number | null
   /** The RPE's band, for the words; null until rated. */
   effort: Effort | null
+  /** As typed or imported, never clamped: `hrProblem` refuses a bad value in words (metrics phase 2). */
+  avgHr: number | null
+  maxHr: number | null
   maxPain: number | null
   strides: boolean
   tempo: boolean
@@ -415,6 +435,8 @@ export function resolveForm(form: RunForm, view: { date: IsoDate; dateLost?: Iso
     minutes: form.minutes,
     rpe: form.rpe,
     effort: form.rpe === null ? null : effortFromRpe(form.rpe),
+    avgHr: form.avgHr,
+    maxHr: form.maxHr,
     maxPain: form.maxPain,
     strides: swap ? false : (form.strides ?? view.suggestion?.strides ?? false),
     tempo: swap ? false : (form.tempo ?? view.suggestion?.tempo ?? false),
@@ -429,6 +451,38 @@ export function stravaProblem(text: string): string | null {
   if (link.length === 0) return null
   if (Run.shape.stravaUrl.safeParse(link).success) return null
   return 'That Strava link was refused: it has to be an https address on strava.com, like https://www.strava.com/activities/123. Fix it or clear it to save.'
+}
+
+/**
+ * What is wrong with the heart-rate fields, as a lowercase fragment, or null: an empty or valid
+ * field is never a problem ("never blocks Save" means that), a typed number outside 30–250 or not
+ * whole is refused here, in words, before the schema would refuse it raw, and an average above the
+ * max is refused only when both are set (metrics phase 2).
+ */
+export function hrProblem(avgHr: number | null, maxHr: number | null): string | null {
+  const bad = (n: number) => !Number.isInteger(n) || n < RUN_HR_MIN || n > RUN_HR_MAX
+  if (avgHr !== null && bad(avgHr)) return `average heart rate is a whole number from ${RUN_HR_MIN} to ${RUN_HR_MAX}`
+  if (maxHr !== null && bad(maxHr)) return `max heart rate is a whole number from ${RUN_HR_MIN} to ${RUN_HR_MAX}`
+  if (avgHr !== null && maxHr !== null && avgHr > maxHr) return 'average is above max'
+  return null
+}
+
+/** `hrProblem` as the sentence beside the fields; null with nothing wrong. */
+export function hrProblemWords(avgHr: number | null, maxHr: number | null): string | null {
+  const problem = hrProblem(avgHr, maxHr)
+  if (problem === null) return null
+  return `${problem.charAt(0).toUpperCase()}${problem.slice(1)}. Fix it or clear the field to save.`
+}
+
+/**
+ * The saved screen's HR-load line (Banister TRIMP, src/rules/trainingLoad.ts), e.g.
+ * "HR load 72, from an average of 150 over 40 minutes." — null when the run has no minutes or no
+ * average heart rate, or Settings don't hold both numbers: the screen then says nothing, never 0.
+ */
+export function hrLoadWords(run: Pick<Run, 'minutes' | 'avgHr'>, settings: Pick<HrSettings, 'maxHr' | 'restingHr'> | null | undefined): string | null {
+  const load = hrLoadOf(run.minutes > 0 ? run.minutes : null, run.avgHr ?? null, hrPair(settings))
+  if (load === null || run.avgHr === undefined) return null
+  return `HR load ${Math.round(load)}, from an average of ${run.avgHr} over ${timeWords(run.minutes)}.`
 }
 
 export type RunDraft = { ok: true; run: Run } | { ok: false; blocker: string }
@@ -451,6 +505,9 @@ export function toRun(form: ResolvedForm, id: string, locationId: string): RunDr
   // A swap logs no miles, so its minutes are all it measures: an untouched 0 would store a session as nothing.
   if (form.swap && form.minutes === 0) return { ok: false, blocker: 'Set the time first' }
   if (stravaProblem(form.stravaUrl)) return { ok: false, blocker: 'Fix or clear the Strava link first' }
+  // Empty or valid heart-rate fields never block; a typed bad value does, in words, never as a raw schema error (metrics phase 2).
+  const hr = hrProblem(form.avgHr, form.maxHr)
+  if (hr) return { ok: false, blocker: `Fix the heart rate first: ${hr}` }
   const link = form.stravaUrl.trim()
   const notes = form.notes.trim()
   return {
@@ -464,6 +521,9 @@ export function toRun(form: ResolvedForm, id: string, locationId: string): RunDr
       // The only writer of a run's effort: always the RPE's band, so the two never disagree.
       effort: effortFromRpe(rpe),
       rpe,
+      // Absent stays absent, never 0: an empty field is "no heart rate" (metrics phase 2).
+      ...(form.avgHr !== null ? { avgHr: form.avgHr } : {}),
+      ...(form.maxHr !== null ? { maxHr: form.maxHr } : {}),
       maxPain,
       strides: form.swap ? false : form.strides,
       tempo: form.swap ? false : form.tempo,

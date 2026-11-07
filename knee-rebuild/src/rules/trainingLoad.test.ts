@@ -11,6 +11,9 @@ import {
   clockMinutes,
   effortFromRpe,
   estimateMinutes,
+  hrLoadOf,
+  hrPair,
+  hrReserve,
   minutesPreset,
   runRpe,
   setsRpe,
@@ -169,6 +172,102 @@ describe('training load: RPE × minutes', () => {
   })
 })
 
+describe('HR load: Banister TRIMP, shown beside the sRPE load (metrics phase 2)', () => {
+  const hr = { maxHr: 190, restingHr: 50 }
+
+  it('hrPair needs both Settings numbers: one stepper touched computes nothing, and an impossible pair computes nothing', () => {
+    expect(hrPair({ maxHr: 190, restingHr: 50 })).toEqual({ maxHr: 190, restingHr: 50 })
+    expect(hrPair({ maxHr: 190 })).toBeNull()
+    expect(hrPair({ restingHr: 50 })).toBeNull()
+    expect(hrPair({})).toBeNull()
+    expect(hrPair(null)).toBeNull()
+    expect(hrPair(undefined)).toBeNull()
+    expect(hrPair({ maxHr: 100, restingHr: 100 })).toBeNull()
+    expect(hrPair({ maxHr: 100, restingHr: 120 })).toBeNull()
+  })
+
+  it('minutes × HRr × 0.64 × e^(1.92 × HRr): 40 minutes at an average of 150 over 50–190 is about 72, unrounded', () => {
+    const reserve = (150 - 50) / (190 - 50)
+    expect(hrReserve(150, 50, 190)).toBeCloseTo(reserve, 10)
+    expect(hrLoadOf(40, 150, hr)).toBeCloseTo(40 * reserve * 0.64 * Math.exp(1.92 * reserve), 10)
+    expect(hrLoadOf(40, 150, hr)).toBeCloseTo(72.1, 0)
+  })
+
+  it('clamps the reserve to 0..1: below resting is a computed 0 — a true zero, not null — and above max reads as 1', () => {
+    expect(hrReserve(40, 50, 190)).toBe(0)
+    expect(hrReserve(250, 50, 190)).toBe(1)
+    expect(hrLoadOf(40, 40, hr)).toBe(0)
+    expect(hrLoadOf(40, 250, hr)).toBeCloseTo(40 * 0.64 * Math.exp(1.92), 10)
+  })
+
+  it('is null when the minutes are missing or 0, the average is missing, or the settings are missing or impossible', () => {
+    expect(hrLoadOf(null, 150, hr)).toBeNull()
+    expect(hrLoadOf(0, 150, hr)).toBeNull()
+    expect(hrLoadOf(undefined, 150, hr)).toBeNull()
+    expect(hrLoadOf(40, null, hr)).toBeNull()
+    expect(hrLoadOf(40, undefined, hr)).toBeNull()
+    expect(hrLoadOf(40, 150, null)).toBeNull()
+    // Resting at max would divide by zero (NaN survives the clamp); resting above it would print plausible garbage. Both are null.
+    expect(hrLoadOf(40, 150, { maxHr: 150, restingHr: 150 })).toBeNull()
+    expect(hrLoadOf(40, 150, { maxHr: 100, restingHr: 120 })).toBeNull()
+  })
+
+  it('trainingLoads with the hr parameter omitted compiles and yields a null hrLoad everywhere (phase-1 call sites safe)', () => {
+    const runs = [run('r-hr', '2026-11-04', 40, { avgHr: 150, maxHr: 171 })]
+    const records = attachChecks([workout('w1', '2026-11-03', { sessionRpe: 7, durationMinutes: 48 })], [], [])
+    expect(trainingLoads(records, runs).map((e) => e.hrLoad)).toEqual([null, null])
+    expect(trainingLoads(records, runs, null).map((e) => e.hrLoad)).toEqual([null, null])
+  })
+
+  it('computes an hrLoad only for a run with minutes and an average heart rate; a lift never carries one, even with settings present', () => {
+    const runs = [run('r-hr', '2026-11-04', 40, { avgHr: 150, maxHr: 171 }), run('r-plain', '2026-11-05', 30), run('r-zero', '2026-11-06', 0, { avgHr: 150 })]
+    const records = attachChecks([workout('w1', '2026-11-03', { sessionRpe: 7, durationMinutes: 48 })], [], [])
+    const entries = trainingLoads(records, runs, hr)
+    expect(entries.map((e) => [e.id, e.hrLoad === null ? null : Math.round(e.hrLoad)])).toEqual([
+      ['w1', null],
+      ['r-hr', 72],
+      ['r-plain', null],
+      ['r-zero', null],
+    ])
+    // Whether the entry carried a heart rate at all is its own fact: r-zero logged one, time or no time.
+    expect(entries.map((e) => [e.id, e.hasHr])).toEqual([
+      ['w1', false],
+      ['r-hr', true],
+      ['r-plain', false],
+      ['r-zero', true],
+    ])
+    // The sRPE load is untouched beside it.
+    expect(entries.find((e) => e.id === 'r-hr')).toMatchObject({ load: 200 })
+  })
+
+  it('sums the week’s HR load and counts the runs that had one, beside the sRPE sums', () => {
+    const runs = [run('r1', '2026-11-02', 40, { avgHr: 150, maxHr: 171 }), run('r2', '2026-11-04', 30)]
+    const records = attachChecks([workout('w1', '2026-11-03', { sessionRpe: 7, durationMinutes: 48 })], [], [])
+    const weeks = weeklyTrainingLoads(trainingLoads(records, runs, hr), '2026-11-02', 2)
+    expect(weeks[0]).toMatchObject({ week: 1, load: 200 + 150 + 336, sessions: 3, withHr: 1, hrNotCounted: 0, runs: 2 })
+    expect(weeks[0]?.hrLoad).toBeCloseTo(72.06, 1)
+    expect(weeks[1]).toMatchObject({ week: 2, load: 0, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 0 })
+  })
+
+  it('a run with heart rate but no time still counts as having heart rate; hrNotCounted says its load could not be computed', () => {
+    const runs = [run('r-zero', '2026-11-02', 0, { avgHr: 150 }), run('r-hr', '2026-11-04', 40, { avgHr: 150, maxHr: 171 })]
+    const weeks = weeklyTrainingLoads(trainingLoads([], runs, hr), '2026-11-02', 1)
+    expect(weeks[0]).toMatchObject({ withHr: 2, hrNotCounted: 1, runs: 2 })
+    expect(weeks[0]?.hrLoad).toBeCloseTo(72.06, 1)
+  })
+
+  it('the acute:chronic warning reads the sRPE load alone: a disagreeing HR load changes nothing (structural: its signature takes no HR)', () => {
+    const today = '2026-12-15'
+    const startDate = '2026-06-01'
+    const entries = [entry('c1', '2026-11-10', 100), entry('c2', '2026-11-17', 100), entry('c3', '2026-11-24', 100), entry('c4', '2026-12-07', 100), entry('a', '2026-12-08', 200)]
+    const disagreeing = entries.map((e) => ({ ...e, hrLoad: 5000 }))
+    const plain = acuteChronic(entries, today, startDate)
+    const withHr = acuteChronic(disagreeing, today, startDate)
+    expect([withHr.band, withHr.acute, withHr.chronicWeek, withHr.ratio]).toEqual([plain.band, plain.acute, plain.chronicWeek, plain.ratio])
+    expect(plain.band).toBe('high')
+  })
+})
+
 const entry = (id: string, date: string, load: number | null): TrainingLoadEntry => ({
   kind: 'run',
   id,
@@ -178,6 +277,8 @@ const entry = (id: string, date: string, load: number | null): TrainingLoadEntry
   rpeSource: 'rated',
   minutes: load,
   load,
+  hrLoad: null,
+  hasHr: false,
   missing: load === null ? ['minutes'] : [],
 })
 
@@ -253,10 +354,10 @@ describe('weekly training load, by program week', () => {
   it('sums each week, counts what is counted and what isn’t, marks the deloads, and drops what falls outside', () => {
     const entries = [entry('pre', '2026-11-01', 999), entry('a', '2026-11-02', 100), entry('b', '2026-11-08', 50), entry('c', '2026-11-08', null), entry('d', '2026-11-23', 70), entry('late', '2026-12-01', 5)]
     expect(weeklyTrainingLoads(entries, '2026-11-02', 4)).toEqual([
-      { week: 1, load: 150, sessions: 2, notCounted: 1, isDeload: false },
-      { week: 2, load: 0, sessions: 0, notCounted: 0, isDeload: false },
-      { week: 3, load: 0, sessions: 0, notCounted: 0, isDeload: false },
-      { week: 4, load: 70, sessions: 1, notCounted: 0, isDeload: true },
+      { week: 1, load: 150, sessions: 2, notCounted: 1, isDeload: false, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 3 },
+      { week: 2, load: 0, sessions: 0, notCounted: 0, isDeload: false, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 0 },
+      { week: 3, load: 0, sessions: 0, notCounted: 0, isDeload: false, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 0 },
+      { week: 4, load: 70, sessions: 1, notCounted: 0, isDeload: true, hrLoad: 0, withHr: 0, hrNotCounted: 0, runs: 1 },
     ])
   })
 })

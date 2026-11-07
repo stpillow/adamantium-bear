@@ -1,12 +1,17 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAddedSlots, getLocations, getProgramOverrides, getSettings, loadHistory, type History } from './repo.ts'
+import { getAddedSlots, getHrSettings, getLocations, getProgramOverrides, getSettings, loadHistory, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
-import type { AddedSlot, Location, ProgramOverride, SetLog, Settings, Workout } from '../schema/index.ts'
+import type { AddedSlot, HrSettings, Location, ProgramOverride, SetLog, Settings, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
 export function useSettings(): Settings | null | undefined {
   return useLiveQuery(async () => (await getSettings()) ?? null, [])
+}
+
+/** The heart-rate numbers (metrics phase 2). Undefined while loading; null until a stepper has been touched. */
+export function useHrSettings(): HrSettings | null | undefined {
+  return useLiveQuery(async () => (await getHrSettings()) ?? null, [])
 }
 
 export function useWorkout(id: string | null): Workout | null | undefined {

@@ -109,12 +109,22 @@ Done when a run is rated 1–10, a lift's Finish asks its RPE and minutes, and P
 - [x] Run RPE 1–10 on the run logger, unrated until tapped; session RPE (optional) and minutes on Finish, minutes on End, Add effort and minutes on the Summary; training load and the 7-days-through-yesterday warning on Progress (`src/rules/trainingLoad.ts`, Dexie v6, backup schema 6; PROGRAM-QUESTIONS 143 to 149)
 - [x] Adversarial review: three lenses (rules and data, screens, test honesty), two skeptics per finding; six candidates, none survived. `npm run e2e` 16 of 16. Checked in a browser at 390 px: Save waits on effort, a 28-minute RPE 4 run reads 112 on Progress
 
+### Metrics, phase 2 · heart rate (docs/metrics-and-photos-plan.md)
+Done when a run can carry its average and max heart rate (typed or from Strava), Settings hold Shawn's max and resting HR, and Progress shows the week's HR load (TRIMP) in words beside the training load.
+
+- [x] Optional average and max HR on the run logger (never blocks Save; absent is "no heart rate", never 0) and from the Strava import (the function stops dropping the summary averages; out-of-range or inverted pairs dropped, never clamped)
+- [x] Heart rate section in Settings: max and resting HR steppers over a one-row `hrSettings` table outside the settings row, each touch saving only the touched number (PROGRAM-QUESTIONS 150)
+- [x] HR load (Banister TRIMP) in `src/rules/trainingLoad.ts` beside the sRPE load, under the same guard; shown on the run logger's saved words and as Progress's weekly line in words; the acute:chronic warning reads the sRPE load alone (PROGRAM-QUESTIONS 151, 152)
+- [x] Dexie v7 (additive, no upgrade callback) and backup schema 7 with a 6→7 step; v6-build rollback re-proved (`src/db/db.v6.test.ts`)
+- [x] Adversarial review: three lenses (rules and storage, screens, test honesty), two skeptics per finding; three low findings confirmed (HR week-line miscount for a run with heart rate but no time, twice found; no way back to "not set") and fixed test-first. Checked in a browser at 390 px: Set/Clear on both numbers, a 40-minute run at avg 150 saves "HR load 72", Progress carries the HR line
+
 **Definition of done for v1:** Shawn runs week 1 of the program entirely from the app, on his phone, with morning check-ins deciding the loads for week 2.
 
 ## Decisions log
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-11-07 | Metrics phase 2: the heart-rate settings live in their own one-row `hrSettings` table, outside the Settings schema (Dexie v7 additive, backup schema 7); phase 3's `vo2Readings` moves to Dexie v8 | The settings row stays byte-identical for older builds (PROGRAM-QUESTIONS 132), and the backup's `checkCovered` throws until a new table is carried, which a second settings-table row would have slipped past (PROGRAM-QUESTIONS 150; amends the plan doc's "their own row of the settings table") |
 | 2026-11-06 | Metrics phase 1 adds fields only (Dexie v6 with no store change, backup schema 6); a session's minutes are a stored field (`durationMinutes`), and phase 3's `vo2Readings` takes Dexie v7 | Shawn delegated the open questions (PROGRAM-QUESTIONS 143 to 149). Older builds still open the database (149) |
 | 2026-11-06 | Strava import on tap, through one Vercel function (`api/strava.ts`) that holds the client secret and keeps nothing; logging after the fact up to 14 days back | Shawn's Nov 6 ask. Amends PROMPT sections 2, 7 and 8, CLAUDE.md and the review plan's security pass. Max pain is never imported: an activity opens the run logger filled in. Barriers and setup in docs/integrations.md |
 | 2026-11-02 | A read-only session preview (`#/preview/:date`): any day's session with the sets, reps and loads the engine would prescribe from what's logged so far, at the gym it would run at; from Week's lift days and Today | Shawn: "I want to be able to see the workouts before I get to them." It plans with the same `planSession` call the runner opens with, so its numbers are Start's if nothing is logged in between |

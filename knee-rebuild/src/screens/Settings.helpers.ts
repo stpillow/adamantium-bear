@@ -2,7 +2,7 @@ import { DAYS, DELOAD_WEEKS, addDays, dayOf, daysBetween, isDeloadWeek, isMonday
 import { rebaseMoves, rebaseWeekNumber } from '../rules/moves.ts'
 import { clearRedFlag, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
 import { TABLE_WORDS, daysSinceExport, exportDay, type BackupSummary, type BackupTable, type SettingChange, type SettingsOnImport } from '../rules/backup.ts'
-import { IsoDate, REST_TIMER_MAX, REST_TIMER_MIN, type Day, type IsoDateTime, type Phase, type RedFlag, type SessionMove, type Settings, type Side } from '../schema/index.ts'
+import { HR_MAX_MAX, HR_MAX_MIN, HR_RESTING_MAX, HR_RESTING_MIN, IsoDate, REST_TIMER_MAX, REST_TIMER_MIN, type Day, type HrSettings, type IsoDateTime, type Phase, type RedFlag, type SessionMove, type Settings, type Side } from '../schema/index.ts'
 
 /**
  * Pure helpers for the Settings screen: words for dates, the start-date check, the red-flag state
@@ -49,6 +49,55 @@ export const PHASE_NOTE = 'Read-only here. The Gates screen advances the phase o
 export const REST_STEP = 15
 export const REST_MIN = REST_TIMER_MIN
 export const REST_MAX = REST_TIMER_MAX
+
+/** Heart rate (metrics phase 2): the steppers' limits are the schema's, so the form and an import refuse the same values. Resting's top sits under max's floor, so no on-screen pair can have resting at or over max. */
+export const HR_STEP = 1
+export { HR_MAX_MAX, HR_MAX_MIN, HR_RESTING_MAX, HR_RESTING_MIN }
+
+/**
+ * What an unset heart-rate stepper opens on at the first touch: a starting point for the thumb,
+ * named on the button, and stored only when that button is tapped — the app never writes a number
+ * Shawn didn't touch (the RPE-picker precedent, PROGRAM-QUESTIONS 145a).
+ */
+export const HR_MAX_OPEN = 180
+export const HR_RESTING_OPEN = 60
+
+/** Under the Heart rate section: what the numbers feed, that unset means no HR load, and that a change rewrites history (the load is computed, never stored). */
+export const HR_SECTION_NOTE = 'Feeds the HR load on Progress and the run logger; leave unset for no HR load. The HR load is always computed from the numbers here, never stored, so a change here changes past weeks too.'
+
+/** "Max heart rate: not set." — the unset state in words, never an empty control. */
+export function hrUnsetWords(label: string): string {
+  return `${label}: not set.`
+}
+
+/** The set button's words: the starting number is named before it is tapped, since tapping stores it. */
+export function hrSetButtonWords(label: string, opensOn: number): string {
+  return `Set ${label.toLowerCase()} (starts at ${opensOn})`
+}
+
+/** The clear button's words: where a set number goes back to — the "not set" state the section's note offers for no HR load. */
+export function hrClearButtonWords(label: string): string {
+  return `Clear ${label.toLowerCase()} (back to not set)`
+}
+
+/** A change to one heart-rate number: a value from the stepper, or null to clear it — the field leaves the row, back to "not set". */
+export type HrPatch = { maxHr?: number | null; restingHr?: number | null }
+
+/**
+ * The row a touched heart-rate control saves: only the touched number changes; the other stays
+ * exactly as stored, and is never invented (PROGRAM-QUESTIONS 150). A null clears its field from
+ * the row — the schema allows a row with only its id — so "not set" stays reachable after a tap,
+ * as the section's note promises. The repo parses it again before writing.
+ */
+export function hrSavePatch(stored: Pick<HrSettings, 'maxHr' | 'restingHr'> | null | undefined, patch: HrPatch): HrSettings {
+  const maxHr = patch.maxHr === null ? undefined : (patch.maxHr ?? stored?.maxHr)
+  const restingHr = patch.restingHr === null ? undefined : (patch.restingHr ?? stored?.restingHr)
+  return {
+    id: 'heart-rate',
+    ...(maxHr !== undefined ? { maxHr } : {}),
+    ...(restingHr !== undefined ? { restingHr } : {}),
+  }
+}
 
 /** The Monday on or before a date and the Monday after it: the two a start date can snap to. */
 export function mondaysAround(date: IsoDate): [IsoDate, IsoDate] {

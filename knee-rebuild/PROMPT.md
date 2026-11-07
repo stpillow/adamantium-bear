@@ -44,11 +44,11 @@ Model it the way the program is written: a program has phases, a phase has three
 | Workout | date, templateId, phase, week, isDeload, startedAt, finishedAt, maxPainDuring, sessionRpe (1–10, optional), durationMinutes (optional), notes, status | One per lift day |
 | SetLog | workoutId, slotId, setNumber, side (left, right, both), load, reps or seconds, rpe, painDuring (0–10), stopped | side is required on unilateral slots; the injured side is logged first |
 | MorningCheck | date, appliesTo (workoutId or runId), stiffnessUnder30Min, worseThanYesterday, visibleSwelling, warmth, painChangePoints, redFlags[], notes | Four taps plus an optional note |
-| Run | date, type (mbr, easy, long, elliptical-swap, rower-swap), miles, minutes, rpe (1–10; optional on older runs), effort (easy, moderate, hard, written from rpe: 1–3, 4–6, 7–10), maxPain, strides, tempo, stravaUrl | Swaps count as the week's session but add no miles |
+| Run | date, type (mbr, easy, long, elliptical-swap, rower-swap), miles, minutes, rpe (1–10; optional on older runs), effort (easy, moderate, hard, written from rpe: 1–3, 4–6, 7–10), avgHr and maxHr (optional whole bpm, 30–250, from a watch via Strava or typed; absent is no heart rate, never 0), maxPain, strides, tempo, stravaUrl | Swaps count as the week's session but add no miles |
 | MileagePlan | week (1–12), targetMiles, isDown | Seeded from program.md |
 | GateTest | date, gate (1–3), item, valueInjured, valueOther, pass, manual | Hop tests store three trials per side and keep the best |
 | Reading (computed, never stored) | subject (workout, run or exercise), result (clean, hold, back-off), reasons[] | Derived from SetLogs and the matching MorningCheck |
-| Settings | injuredSide, startDate, dumbbellMax (75 or 60), restTimerSeconds, painPerSet (bool) | Also holds the export and import controls |
+| Settings | injuredSide, startDate, dumbbellMax (75 or 60), restTimerSeconds, painPerSet (bool) | Also holds the export and import controls. Shawn's max and resting heart rate are stored beside the settings row, not in it (their own one-row table), so older builds still read the row |
 
 ## 4. Rules engine
 
@@ -83,12 +83,12 @@ Nine screens behind a bottom tab bar (Today, Week, Progress, Gates, More). Each 
 | Today | Show the scheduled session (A, B, C, a run, or off), phase and week, a deload badge when it applies, yesterday's reading in words, and one button: Start. Red-flag state replaces all of it with the stop message |
 | Session runner | List the slots in order with cues visible. Per set: load, reps or seconds, RPE and pain as steppers prefilled from the engine's prescription; a side toggle on unilateral slots that starts on the injured side and shows the healthy side's rep budget; paired slots grouped as a superset; a rest timer that starts when a set is marked done; a Swap button listing the slot's substitutions in order; a Stop this exercise control that records the reason. Finish asks for max pain during the session, the whole session's RPE (optional, stored only if tapped) and its minutes (a stepper preset from the sets' times, or an estimate for a late entry), and shows a summary |
 | Morning check | Four taps (stiffness under 30 min, worse than yesterday, visible swelling, warmth), a pain-change stepper, a red-flag checklist, an optional note. On save, show the reading and what changes in the next session, one sentence each |
-| Run logger | Type, miles, minutes, effort as RPE 1–10 (unrated until tapped; Save waits for it, as for max pain), max pain, strides and tempo toggles, optional Strava link. Shows the week's miles against target as you log |
+| Run logger | Type, miles, minutes, effort as RPE 1–10 (unrated until tapped; Save waits for it, as for max pain), optional average and max heart rate (never blocks Save; filled from a Strava activity when it has them), max pain, strides and tempo toggles, optional Strava link. Shows the week's miles against target as you log |
 | Week | Seven-day strip with each day's session and its reading in words, the deload badge, miles logged against target, and a move-session action |
-| Progress | Per-exercise load over time (one chart at a time, picked from a list), symmetry per unilateral exercise as a percent over time, weekly miles actual against plan across the 12 weeks, weekly training load (RPE × minutes) with the warning in words, and a count of consecutive clean days |
+| Progress | Per-exercise load over time (one chart at a time, picked from a list), symmetry per unilateral exercise as a percent over time, weekly miles actual against plan across the 12 weeks, weekly training load (RPE × minutes) with the warning in words and the week's HR load (TRIMP) in words beside it (the warning reads the RPE load alone), and a count of consecutive clean days |
 | Gates | The current gate's checklist with auto items evaluated live and manual items as toggles, a hop-test entry form (three trials per side, best kept, symmetry shown), and an Advance phase button that enables only when every item passes |
 | Program | Read-only view of the current phase's sessions, an editor for cues and substitutions, and program.md rendered as reference |
-| Settings | Injured side, start date, dumbbell max, rest timer length, pain per set or per exercise, export JSON, import JSON, clear red-flag state, reset all data |
+| Settings | Injured side, start date, dumbbell max, rest timer length, pain per set or per exercise, max and resting heart rate (optional; unset means no HR load), export JSON, import JSON, clear red-flag state, reset all data |
 
 ## 6. Build plan
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityDate, candidates, classify, rpeFromExertion, importedStravaIds, stravaActivityUrl, stravaIdFromUrl, syncAfter, type ClassifyContext, type StravaActivity } from './stravaImport.ts'
+import { activityDate, candidates, classify, hrFromStrava, rpeFromExertion, importedStravaIds, stravaActivityUrl, stravaIdFromUrl, syncAfter, type ClassifyContext, type StravaActivity } from './stravaImport.ts'
 
 const DATES = ['2026-11-04', '2026-11-05', '2026-11-06']
 const ctx: ClassifyContext = { dates: DATES, scheduledRun: (d) => (d === '2026-11-05' ? 'mbr' : null) }
@@ -42,7 +42,7 @@ describe('classify', () => {
     expect(c).toEqual({
       kind: 'run',
       activityId: '1234567890',
-      draft: { date: '2026-11-05', type: 'mbr', miles: 3.11, minutes: 1633 / 60, rpe: null, stravaUrl: 'https://www.strava.com/activities/1234567890', notes: 'Morning Run' },
+      draft: { date: '2026-11-05', type: 'mbr', miles: 3.11, minutes: 1633 / 60, rpe: null, avgHr: null, maxHr: null, stravaUrl: 'https://www.strava.com/activities/1234567890', notes: 'Morning Run' },
       needs: ['max pain', 'effort'],
       guessed: [],
     })
@@ -62,6 +62,35 @@ describe('classify', () => {
     expect(classify(act({ sport_type: 'Elliptical', distance: 4000 }), ctx)).toMatchObject({ kind: 'run', draft: { type: 'elliptical-swap', miles: 0 } })
     expect(classify(act({ sport_type: 'Rowing' }), ctx)).toMatchObject({ kind: 'run', draft: { type: 'rower-swap', miles: 0 } })
     expect(classify(act({ sport_type: 'VirtualRow' }), ctx)).toMatchObject({ kind: 'run', draft: { type: 'rower-swap', miles: 0 } })
+  })
+
+  it('carries the watch’s heart rate into the draft, rounded to whole bpm, on runs and swaps alike (metrics phase 2)', () => {
+    expect(classify(act({ average_heartrate: 154.6, max_heartrate: 171.2 }), ctx)).toMatchObject({ draft: { avgHr: 155, maxHr: 171 } })
+    expect(classify(act({ sport_type: 'Elliptical', average_heartrate: 130, max_heartrate: 150 }), ctx)).toMatchObject({ draft: { type: 'elliptical-swap', avgHr: 130, maxHr: 150 } })
+    expect(classify(act({ sport_type: 'Rowing', average_heartrate: 128.4 }), ctx)).toMatchObject({ draft: { type: 'rower-swap', avgHr: 128, maxHr: null } })
+  })
+
+  it('heart rate never waits on Shawn and never blocks: absent reads as null, and needs and guessed are untouched by it', () => {
+    expect(classify(act({ average_heartrate: null, max_heartrate: null }), ctx)).toMatchObject({ draft: { avgHr: null, maxHr: null }, needs: ['max pain', 'effort'], guessed: [] })
+    expect(classify(act({ average_heartrate: 150, max_heartrate: 171 }), ctx)).toMatchObject({ needs: ['max pain', 'effort'], guessed: [] })
+  })
+
+  it('drops an out-of-range number to null, never clamps it, and keeps the other of the pair: when max alone is garbage, the average survives', () => {
+    expect(hrFromStrava(12, 150)).toEqual({ avgHr: null, maxHr: 150 })
+    expect(hrFromStrava(150, 260)).toEqual({ avgHr: 150, maxHr: null })
+    expect(hrFromStrava(260.4, 150)).toEqual({ avgHr: null, maxHr: 150 })
+    expect(hrFromStrava(29, 251)).toEqual({ avgHr: null, maxHr: null })
+    expect(hrFromStrava(Number.NaN, 150)).toEqual({ avgHr: null, maxHr: 150 })
+    expect(hrFromStrava(undefined, undefined)).toEqual({ avgHr: null, maxHr: null })
+    // 29.5 rounds to 30, the floor; 250.4 rounds to 250, the ceiling: rounding happens before the bounds.
+    expect(hrFromStrava(29.5, 250.4)).toEqual({ avgHr: 30, maxHr: 250 })
+  })
+
+  it('drops BOTH numbers when the rounded average is above the max: a garbage watch pair is never saved as typed', () => {
+    expect(hrFromStrava(171, 150)).toEqual({ avgHr: null, maxHr: null })
+    expect(hrFromStrava(150.6, 150)).toEqual({ avgHr: null, maxHr: null })
+    expect(hrFromStrava(150.4, 150)).toEqual({ avgHr: 150, maxHr: 150 })
+    expect(classify(act({ average_heartrate: 171, max_heartrate: 150 }), ctx)).toMatchObject({ draft: { avgHr: null, maxHr: null } })
   })
 
   it('reads the older type field when sport_type is absent, and treadmill and trail runs as runs', () => {

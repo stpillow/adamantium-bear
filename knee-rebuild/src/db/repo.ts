@@ -21,6 +21,7 @@ import { overrideProblems } from '../rules/overrides.ts'
 import {
   AddedSlot,
   GateTest,
+  HrSettings,
   Location,
   MorningCheck,
   ProgramOverride,
@@ -137,6 +138,20 @@ export async function saveSettingsAndMoves<T extends { moves: readonly SessionMo
     await db.sessionMoves.bulkPut(moves)
     return result
   })
+}
+
+/** The key of the one heart-rate settings row (metrics phase 2), in its own table so no older build's settings read sees it (PROGRAM-QUESTIONS 150). */
+export const HR_SETTINGS_ID = 'heart-rate' as const
+
+/** Shawn's max and resting heart rate as stored, parsed; undefined until a stepper is touched. Not part of `loadHistory`: no rule reads it. */
+export async function getHrSettings(): Promise<HrSettings | undefined> {
+  const row = await db.hrSettings.get(HR_SETTINGS_ID)
+  return row ? HrSettings.parse(row) : undefined
+}
+
+/** Saves the heart-rate numbers, parsed first like every write. A touch saves only the touched number; the app never invents the other one. */
+export async function saveHrSettings(row: HrSettings): Promise<void> {
+  await db.hrSettings.put(HrSettings.parse(row))
 }
 
 /** Seed on first run: create the settings row if it is missing, and return it. */

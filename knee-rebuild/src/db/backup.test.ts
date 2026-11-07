@@ -7,6 +7,7 @@ import { afterMorningCheck, stopMessage } from '../rules/redFlags.ts'
 import {
   AddedSlot,
   GateTest,
+  HrSettings,
   Location,
   MorningCheck,
   PLANET_FITNESS_LOCATION_ID,
@@ -41,6 +42,7 @@ import {
   putWorkout,
   resetAll,
   saveAddedSlot,
+  saveHrSettings,
   saveProgramOverride,
   saveSettings,
   setDumbbellMax,
@@ -133,6 +135,8 @@ async function seedHistory(): Promise<void> {
           effort: type === 'long' ? 'moderate' : 'easy',
           // Runs from week 5 on carry their RPE (metrics phase 1); the earlier ones only the word, as older builds logged them.
           ...(week >= 5 ? { rpe: type === 'long' ? 5 : 3 } : {}),
+          // From week 6 the watch is on, so those runs carry both heart-rate numbers (metrics phase 2).
+          ...(week >= 6 && !swap ? { avgHr: 140 + week, maxHr: 170 + week } : {}),
           maxPain: week % 3,
           strides: type === 'easy' && week > 2,
           tempo: type === 'long' && week === 6,
@@ -259,6 +263,8 @@ async function seedHistory(): Promise<void> {
   await saveProgramOverride({ slotId: 'p2c-1', substitutionIds: [], editedOn: '2026-12-01' } as ProgramOverride, program)
   await saveProgramOverride({ slotId: 'p2b-7', cues: ['Hips forward'], editedOn: '2026-12-02' } as ProgramOverride, program)
   await saveAddedSlot({ id: 'added-k1', templateId: 'p2-a', exerciseId: 'db-bench-press', sets: 3, repsMin: 8, repsMax: 10, addedOn: '2026-12-03' }, program)
+  // Both heart-rate numbers set (metrics phase 2), so the fieldsUsed check covers the whole row.
+  await saveHrSettings({ id: 'heart-rate', maxHr: 190, restingHr: 50 })
 }
 
 /** The keys every row of a table uses, across the table: every field of the schema shows up somewhere. */
@@ -275,6 +281,7 @@ const SHAPES: Record<keyof BackupTables, readonly string[]> = {
   locations: Object.keys(Location.shape),
   programOverrides: Object.keys(ProgramOverride.shape),
   addedSlots: Object.keys(AddedSlot.shape),
+  hrSettings: Object.keys(HrSettings.shape),
 }
 
 describe('the backup carries the whole database', () => {
@@ -350,8 +357,8 @@ describe('import is all or nothing', () => {
     await seedHistory()
     const { backup } = await exportBackup(T1)
     const before = await rawDump()
-    const newer = { ...backup, schemaVersion: 7 } as unknown as Backup
-    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 7; this one reads up to 6).')
+    const newer = { ...backup, schemaVersion: 8 } as unknown as Backup
+    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 8; this one reads up to 7).')
     const twice = { ...backup, runs: [...backup.runs, ...backup.runs.slice(0, 1)] }
     await expect(replaceAll(twice, program, TODAY)).rejects.toThrow('twice')
     expect(await rawDump()).toEqual(before)

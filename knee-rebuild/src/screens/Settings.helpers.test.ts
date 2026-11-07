@@ -3,6 +3,18 @@ import type { BackupSummary } from '../rules/backup.ts'
 import type { SessionMove, Settings } from '../schema/index.ts'
 import {
   DUMBBELLS_LINE,
+  HR_MAX_MAX,
+  HR_MAX_MIN,
+  HR_MAX_OPEN,
+  HR_RESTING_MAX,
+  HR_RESTING_MIN,
+  HR_RESTING_OPEN,
+  HR_SECTION_NOTE,
+  HR_STEP,
+  hrClearButtonWords,
+  hrSavePatch,
+  hrSetButtonWords,
+  hrUnsetWords,
   IMPORT_CONFIRM,
   PHASE_NOTE,
   exportedOnWords,
@@ -86,6 +98,48 @@ describe('sides and limits', () => {
 describe('dumbbells (M4b)', () => {
   it("points at Where you train, where each gym's rack is set", () => {
     expect(DUMBBELLS_LINE).toBe('Dumbbells are set per gym in Where you train.')
+  })
+})
+
+describe('heart rate (metrics phase 2)', () => {
+  it('keeps the steppers on the schema’s bounds, 1 bpm steps, with resting’s top under max’s floor', () => {
+    expect(HR_STEP).toBe(1)
+    expect([HR_MAX_MIN, HR_MAX_MAX]).toEqual([120, 230])
+    expect([HR_RESTING_MIN, HR_RESTING_MAX]).toEqual([25, 100])
+    expect(HR_RESTING_MAX).toBeLessThan(HR_MAX_MIN)
+  })
+  it('opens an unset stepper on a named number inside its bounds, stored only on the tap, and says the unset state in words', () => {
+    expect(HR_MAX_OPEN).toBe(180)
+    expect(HR_RESTING_OPEN).toBe(60)
+    expect(HR_MAX_OPEN).toBeGreaterThanOrEqual(HR_MAX_MIN)
+    expect(HR_MAX_OPEN).toBeLessThanOrEqual(HR_MAX_MAX)
+    expect(HR_RESTING_OPEN).toBeGreaterThanOrEqual(HR_RESTING_MIN)
+    expect(HR_RESTING_OPEN).toBeLessThanOrEqual(HR_RESTING_MAX)
+    expect(hrUnsetWords('Max heart rate')).toBe('Max heart rate: not set.')
+    expect(hrSetButtonWords('Max heart rate', HR_MAX_OPEN)).toBe('Set max heart rate (starts at 180)')
+    expect(hrSetButtonWords('Resting heart rate', HR_RESTING_OPEN)).toBe('Set resting heart rate (starts at 60)')
+  })
+  it('a touch saves only the touched number: the other stays as stored and is never invented', () => {
+    expect(hrSavePatch(null, { maxHr: 180 })).toEqual({ id: 'heart-rate', maxHr: 180 })
+    expect(hrSavePatch(undefined, { restingHr: 60 })).toEqual({ id: 'heart-rate', restingHr: 60 })
+    expect(hrSavePatch({ maxHr: 190 }, { restingHr: 50 })).toEqual({ id: 'heart-rate', maxHr: 190, restingHr: 50 })
+    expect(hrSavePatch({ maxHr: 190, restingHr: 50 }, { maxHr: 185 })).toEqual({ id: 'heart-rate', maxHr: 185, restingHr: 50 })
+    expect(hrSavePatch({ restingHr: 50 }, { restingHr: 55 })).toEqual({ id: 'heart-rate', restingHr: 55 })
+  })
+  it('a clear (null) removes only that number from the row, so unset stays reachable, as the section’s note promises', () => {
+    expect(hrSavePatch({ maxHr: 190, restingHr: 50 }, { maxHr: null })).toEqual({ id: 'heart-rate', restingHr: 50 })
+    expect(hrSavePatch({ maxHr: 190, restingHr: 50 }, { restingHr: null })).toEqual({ id: 'heart-rate', maxHr: 190 })
+    // Clearing the only number leaves a row with just its id, which the schema allows (log.test.ts pins it).
+    expect(hrSavePatch({ maxHr: 180 }, { maxHr: null })).toEqual({ id: 'heart-rate' })
+    expect(hrSavePatch(null, { restingHr: null })).toEqual({ id: 'heart-rate' })
+  })
+  it('the clear button says where it goes in words: back to not set', () => {
+    expect(hrClearButtonWords('Max heart rate')).toBe('Clear max heart rate (back to not set)')
+    expect(hrClearButtonWords('Resting heart rate')).toBe('Clear resting heart rate (back to not set)')
+  })
+  it('the section’s note says what the numbers feed and that a change rewrites past weeks (the load is computed, never stored)', () => {
+    expect(HR_SECTION_NOTE).toContain('leave unset for no HR load')
+    expect(HR_SECTION_NOTE).toContain('changes past weeks too')
   })
 })
 
@@ -336,7 +390,7 @@ describe('settingsOnImportWords', () => {
 
 describe('backup words (M6)', () => {
   const summary = (over: Partial<BackupSummary> = {}): BackupSummary => ({
-    counts: { workouts: 24, setLogs: 312, morningChecks: 30, runs: 41, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 0, addedSlots: 0 },
+    counts: { workouts: 24, setLogs: 312, morningChecks: 30, runs: 41, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 0, addedSlots: 0, hrSettings: 0 },
     archivedGyms: 0,
     first: '2026-11-02',
     last: '2026-12-20',
@@ -364,15 +418,15 @@ describe('backup words (M6)', () => {
       headline: '312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20',
       also: 'Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.',
     })
-    const one = summary({ counts: { workouts: 1, setLogs: 1, morningChecks: 0, runs: 1, gateTests: 0, sessionMoves: 0, locations: 2, programOverrides: 3, addedSlots: 0 }, archivedGyms: 1, first: '2026-11-03', last: '2026-11-03' })
+    const one = summary({ counts: { workouts: 1, setLogs: 1, morningChecks: 0, runs: 1, gateTests: 0, sessionMoves: 0, locations: 2, programOverrides: 3, addedSlots: 0, hrSettings: 0 }, archivedGyms: 1, first: '2026-11-03', last: '2026-11-03' })
     expect(holdsWords(one)).toEqual({ headline: '1 set, 1 run, 1 gym, on Nov 3', also: 'Also 1 session, 3 Program edits and 1 archived gym.' })
-    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0 }, first: null, last: null })
+    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0 }, first: null, last: null })
     expect(holdsWords(empty)).toEqual({ headline: '0 sets, 0 runs, 1 gym; nothing logged yet', also: null })
   })
 
   it('says what a file holds as one sentence, and what an import did, by the file’s name', () => {
     expect(holdsLine(summary())).toBe('312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20. Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.')
-    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0 }, first: null, last: null })
+    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0 }, first: null, last: null })
     expect(holdsLine(empty)).toBe('0 sets, 0 runs, 1 gym; nothing logged yet.')
     expect(importedWords('knee-rebuild-2026-12-20.json', summary())).toBe(
       'Imported knee-rebuild-2026-12-20.json. This phone now holds what the file holds: 312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20. Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.',
@@ -388,6 +442,8 @@ describe('backup words (M6)', () => {
   it('names what an import would erase, or nothing', () => {
     expect(lostWords([])).toBeNull()
     expect(lostWords([{ table: 'setLogs', count: 8 }])).toBe('It would erase 8 sets on this phone that the file doesn’t have.')
+    // The one heart-rate row holds both numbers; "1 heart rate setting" is the accepted wording (PROGRAM-QUESTIONS 150).
+    expect(lostWords([{ table: 'hrSettings', count: 1 }])).toBe('It would erase 1 heart rate setting on this phone that the file doesn’t have.')
     expect(lostWords([{ table: 'workouts', count: 1 }, { table: 'setLogs', count: 8 }, { table: 'runs', count: 1 }])).toBe(
       'It would erase 1 session, 8 sets and 1 run on this phone that the file doesn’t have.',
     )
