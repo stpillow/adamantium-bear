@@ -9,7 +9,9 @@ import { TabBar } from './components/TabBar.tsx'
 import { useActiveLocation, useSettings } from './db/hooks.ts'
 import { defaultSettings, ensureLocations, ensureSettings, requestPersistentStorage } from './db/repo.ts'
 import { program } from './program/program.ts'
+import { AclRsi } from './screens/AclRsi.tsx'
 import { Gates } from './screens/Gates.tsx'
+import { Koos } from './screens/Koos.tsx'
 import { LocationEditor } from './screens/LocationEditor.tsx'
 import { Locations } from './screens/Locations.tsx'
 import { MorningCheck } from './screens/MorningCheck.tsx'
@@ -134,6 +136,10 @@ function Shell({ updateReady }: { updateReady: boolean }) {
               return <Program />
             case 'strava':
               return <Strava result={route.result} />
+            case 'koos':
+              return <Koos />
+            case 'acl-rsi':
+              return <AclRsi />
           }
         })()}
       </ErrorBoundary>

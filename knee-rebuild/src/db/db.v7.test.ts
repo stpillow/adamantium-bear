@@ -13,7 +13,8 @@ import { deleteVo2Reading, ensureLocations, getVo2Readings, saveVo2Reading } fro
  * same day replaces that day's reading. The rollback half re-proves PROGRAM-QUESTIONS 149 and 150
  * for version 8 and pins what 153 records: a version 7 declaration opens the version 8 database
  * with its own schema (no vo2Readings table), so the rolled-back build's settings reads, export and
- * import keep working, and a stale reading waits to resurface under version 8.
+ * import keep working, and a stale reading waits to resurface under version 8. Version 9's own
+ * rollback is re-proved in src/db/db.v8.test.ts.
  */
 
 // Version 7 exactly as shipped (src/db/db.ts): opened here with plain Dexie, as the phone has it.
@@ -88,8 +89,8 @@ describe('a version 7 database opened at version 8', () => {
     await writeVersionSeven()
 
     await db.open()
-    expect(db.verno).toBe(8)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v7Rows), 'vo2Readings'].sort())
+    expect(db.verno).toBe(9)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v7Rows), 'vo2Readings', 'koosEntries', 'aclRsiEntries'].sort())
     expect(db.vo2Readings.schema.primKey.keyPath).toBe('date')
     expect(await db.vo2Readings.count()).toBe(0)
     const before = await rawRows()

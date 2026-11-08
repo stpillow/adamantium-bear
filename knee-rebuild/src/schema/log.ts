@@ -261,6 +261,57 @@ export const Vo2Reading = z.strictObject({
 })
 export type Vo2Reading = z.infer<typeof Vo2Reading>
 
+/** A KOOS item's answer: the ticked box, 0 to 4 left to right, as the published form scores it (Batch A). */
+export const KOOS_MIN = 0
+export const KOOS_MAX = 4
+
+/** One KOOS item: answered 0 to 4, or skipped (the published missing-data rule absorbs skips). */
+const koosItem = z.number().int().min(KOOS_MIN).max(KOOS_MAX).optional()
+
+/**
+ * One KOOS questionnaire entry (Batch A; PROGRAM-QUESTIONS 156 to 160): the validated 42-item
+ * form, answered over the last week, one entry per day keyed by its date in the `koosEntries`
+ * table (src/db/db.ts, Dexie version 9), so saving again the same day replaces. The fields are
+ * flat so the backup's fieldsUsed check sees every item: Pain `p1..p9`, Symptoms `sy1..sy7`
+ * (S1 to S5 and the two stiffness items), ADL `a1..a17`, Sport/Rec `sp1..sp5`, QOL `q1..q4`,
+ * each the ticked box 0 to 4. An item may be skipped; a subscale scores only with at least half
+ * its items answered (src/rules/koos.ts). Out of range is refused in words, never clamped
+ * (the 152/154 precedent). Scoring lives in src/rules/koos.ts, never here.
+ */
+export const KoosEntry = z.strictObject({
+  date: IsoDate,
+  p1: koosItem, p2: koosItem, p3: koosItem, p4: koosItem, p5: koosItem, p6: koosItem, p7: koosItem, p8: koosItem, p9: koosItem,
+  sy1: koosItem, sy2: koosItem, sy3: koosItem, sy4: koosItem, sy5: koosItem, sy6: koosItem, sy7: koosItem,
+  a1: koosItem, a2: koosItem, a3: koosItem, a4: koosItem, a5: koosItem, a6: koosItem, a7: koosItem, a8: koosItem, a9: koosItem,
+  a10: koosItem, a11: koosItem, a12: koosItem, a13: koosItem, a14: koosItem, a15: koosItem, a16: koosItem, a17: koosItem,
+  sp1: koosItem, sp2: koosItem, sp3: koosItem, sp4: koosItem, sp5: koosItem,
+  q1: koosItem, q2: koosItem, q3: koosItem, q4: koosItem,
+})
+export type KoosEntry = z.infer<typeof KoosEntry>
+
+/** An ACL-RSI item's answer: 0 to 10 on the published anchors, higher always reading readier (Batch A). */
+export const ACL_RSI_MIN = 0
+export const ACL_RSI_MAX = 10
+
+/** One ACL-RSI item: required — the published scale has no missing-data rule, so the form takes all 12. */
+const aclRsiItem = z.number().int().min(ACL_RSI_MIN).max(ACL_RSI_MAX)
+
+/**
+ * One ACL-RSI questionnaire entry (Batch A; PROGRAM-QUESTIONS 156): the 12-item scale
+ * (Webster, Feller & Lambros 2008), each item 0 to 10 on the published anchors — the negatively
+ * phrased items are anchored by the form itself so higher always reads readier; nothing is
+ * reverse-scored in code. One entry per day keyed by its date in the `aclRsiEntries` table
+ * (src/db/db.ts, Dexie version 9), so saving again the same day replaces. The overall score is
+ * mean × 10 (src/rules/aclRsi.ts), read ONLY by the gates rule: gate 3 requires the latest
+ * entry to reach 76 (src/rules/aclRsi.guard.test.ts pins the readers).
+ */
+export const AclRsiEntry = z.strictObject({
+  date: IsoDate,
+  i1: aclRsiItem, i2: aclRsiItem, i3: aclRsiItem, i4: aclRsiItem, i5: aclRsiItem, i6: aclRsiItem,
+  i7: aclRsiItem, i8: aclRsiItem, i9: aclRsiItem, i10: aclRsiItem, i11: aclRsiItem, i12: aclRsiItem,
+})
+export type AclRsiEntry = z.infer<typeof AclRsiEntry>
+
 /** A gate test entry. Hop tests store three trials per side and keep the best. */
 export const GateTest = z.strictObject({
   id,

@@ -87,8 +87,8 @@ describe('a version 6 database opened at version 7', () => {
     await writeVersionSix()
 
     await db.open()
-    expect(db.verno).toBe(8)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v6Rows), 'hrSettings', 'vo2Readings'].sort())
+    expect(db.verno).toBe(9)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v6Rows), 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries'].sort())
     expect(db.hrSettings.schema.primKey.keyPath).toBe('id')
     expect(await db.hrSettings.count()).toBe(0)
     const before = await rawRows()

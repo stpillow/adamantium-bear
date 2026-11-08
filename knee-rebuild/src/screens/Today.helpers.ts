@@ -11,8 +11,10 @@ import { runsInWeek, suggestRun, targetForWeek, type RunSuggestion } from '../ru
 import { weekMiles } from '../rules/mileage.ts'
 import { stopMessage } from '../rules/redFlags.ts'
 import { exportNudge, loggedRange } from '../rules/backup.ts'
+import { koosDue } from '../rules/koos.ts'
 import type {
   IsoDateTime,
+  KoosEntry,
   Run,
   Day,
   DaySession,
@@ -578,4 +580,18 @@ export function exportLine(lastExportedAt: IsoDateTime | undefined, today: IsoDa
   const nudge = exportNudge(lastExportedAt, today, loggedRange(history).first)
   if (!nudge) return null
   return nudge.kind === 'since-export' ? `No export in ${nudge.days} days` : `No export yet; the logs go back ${nudge.days} days`
+}
+
+// ---- The KOOS due line (Batch A): monthly means 28 days, PROGRAM-QUESTIONS 158 ----
+
+/**
+ * Today's one quiet line about the questionnaire, in the export line's shape: "A KOOS check is
+ * due" once the latest entry is 28 or more days old, or none is stored yet (src/rules/koos.ts
+ * `koosDue`); null otherwise, and while the entries are still loading — a line that flashes
+ * before the read lands would say something wrong. It routes to the form and carries NO score:
+ * scores show on Progress only.
+ */
+export function koosLine(entries: readonly KoosEntry[] | undefined, today: IsoDate): string | null {
+  if (entries === undefined) return null
+  return koosDue(entries, today) ? 'A KOOS check is due' : null
 }

@@ -23,6 +23,10 @@ export type Route =
   | { name: 'preview'; date: string }
   /** Strava import (Nov 6): connect, then pick activities to log. The function's redirect lands here with `?result=`. */
   | { name: 'strava'; result?: string }
+  /** The KOOS questionnaire (Batch A): from Today's due line, Progress's section and the Gates offer. */
+  | { name: 'koos' }
+  /** The ACL-RSI questionnaire (Batch A): from gate 3's item row. */
+  | { name: 'acl-rsi' }
 
 /** The editor's id segment that means a gym not made yet. Stored gyms are `planet-fitness` and `loc-N` (src/rules/locations.ts), never this. */
 const NEW = 'new'
@@ -75,6 +79,8 @@ export function parseHash(hash: string): Route {
     case 'more':
     case 'locations':
     case 'next-update':
+    case 'koos':
+    case 'acl-rsi':
       return { name: head }
     case 'strava': {
       const result = new URLSearchParams(query).get('result')

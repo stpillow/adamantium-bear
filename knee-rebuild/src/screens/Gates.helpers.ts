@@ -7,8 +7,8 @@ import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
 import { advanceWaitsFor, awaitingMorningCheck, loadTestPrefill, phaseEntryWeek, type LoadTestPrefill, type LoadTestSession } from '../rules/progress.ts'
 import { progressionSuspended, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
 import { phaseLogsBothSides, phaseRunsExercise } from '../rules/session.ts'
-import { bestOfTrials, meetsSymmetry, symmetryPercent } from '../rules/unilateral.ts'
-import type { Exercise, Gate, GateItem, GateTest, IsoDate, Location, Phase, Program, SessionTemplate, Settings, Side } from '../schema/index.ts'
+import { bestOfTrials, fastestOfTrials, meetsSymmetry, meetsTimedSymmetry, symmetryPercent, timedSymmetryPercent } from '../rules/unilateral.ts'
+import type { AclRsiEntry, Exercise, Gate, GateItem, GateTest, IsoDate, Location, Phase, Program, SessionTemplate, Settings, Side } from '../schema/index.ts'
 import { dateWords, runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -25,6 +25,11 @@ export type ProgramLike = Pick<Program, 'gates' | 'phases' | 'exercises' | 'redF
 
 /** Which catalog exercises count as the single-leg calf raise for gate 2 (the M5 brief). */
 export const CALF_RAISE_EXERCISE_IDS: readonly string[] = ['single-leg-calf-raise-step']
+
+/** Generous ceilings: a triple hop runs past 200 in., a single-leg press stack past 300 lb; a 6-meter hop is 1.5 to 3 s, so 60 s is far past any real trial. */
+export const TRIAL_MAX_IN = 600
+export const TRIAL_MAX_S = 60
+export const LOAD_MAX = 1000
 
 /** The line a symmetry item reads against, as evaluateGate reads it (every seeded item states its own). */
 export function lineOf(item: Pick<GateItem, 'threshold'>): number {
@@ -59,8 +64,13 @@ export function newGateTestId(stamp: string, key: string, taken: readonly string
   return `${base}-${n}`
 }
 
-/** Everything evaluateGate reads, from what is logged: no field here is typed in on the Gates screen except the tests. */
-export function gateContext(input: { today: IsoDate; settings: Pick<Settings, 'injuredSide'>; history: HistoryLike; records?: readonly WorkoutRecord[] }): GateContext {
+/**
+ * Everything evaluateGate reads, from what is logged: no field here is typed in on the Gates
+ * screen except the tests. The ACL-RSI entries come in explicitly (the calfRaiseExerciseIds
+ * pattern), never through History, so the gates rule stays their one rule-level reader
+ * (src/rules/aclRsi.guard.test.ts).
+ */
+export function gateContext(input: { today: IsoDate; settings: Pick<Settings, 'injuredSide'>; history: HistoryLike; records?: readonly WorkoutRecord[]; aclRsiEntries: readonly AclRsiEntry[] }): GateContext {
   const { today, settings, history } = input
   const records = input.records ?? attachChecks(history.workouts, history.setLogs, history.morningChecks)
   return {
@@ -73,6 +83,7 @@ export function gateContext(input: { today: IsoDate; settings: Pick<Settings, 'i
     workouts: history.workouts,
     setLogs: history.setLogs,
     calfRaiseExerciseIds: CALF_RAISE_EXERCISE_IDS,
+    aclRsiEntries: input.aclRsiEntries,
   }
 }
 
@@ -201,22 +212,29 @@ export function enteredValues(values: readonly Trial[]): number[] {
   return values.filter((v): v is number => v !== null)
 }
 
-function bestEntered(values: readonly Trial[]): number | null {
+function bestEntered(values: readonly Trial[], timed = false): number | null {
   const entered = enteredValues(values)
-  return entered.length === 0 ? null : bestOfTrials(entered)
-}
-
-/** Each side's best: the best of the entered trials for a hop test (bestOfTrials), the one value otherwise. */
-export function formBest(form: SymmetryForm): FormBest {
-  return { injured: bestEntered(form.injured), other: bestEntered(form.other) }
+  if (entered.length === 0) return null
+  return timed ? Math.min(...entered) : bestOfTrials(entered)
 }
 
 /**
- * Where Enter puts a value that isn't entered yet: a hop trial at 0, since 0 is a trial (a hop he
- * couldn't do, PROGRAM-QUESTIONS 108); a load at the exercise's first step, since a load test needs
- * a load on each side and 0 lb can't be saved.
+ * Each side's best: the best of the entered trials for a hop test (bestOfTrials; the FASTEST —
+ * lowest — for a timed hop, an entered 0 included so the zero-refusal words can point at it),
+ * the one value otherwise.
  */
-export function enterStart(entry: { trials: number | null; step: number }): number {
+export function formBest(form: SymmetryForm, timed = false): FormBest {
+  return { injured: bestEntered(form.injured, timed), other: bestEntered(form.other, timed) }
+}
+
+/**
+ * Where Enter puts a value that isn't entered yet: a distance hop trial at 0, since 0 is a trial
+ * (a hop he couldn't do, PROGRAM-QUESTIONS 108); a TIMED hop trial at 1 s, never 0 — 0 isn't a
+ * time and the form refuses it (PROGRAM-QUESTIONS 157); a load at the exercise's first step,
+ * since a load test needs a load on each side and 0 lb can't be saved.
+ */
+export function enterStart(entry: { trials: number | null; step: number; timed?: boolean }): number {
+  if (entry.timed) return 1
   return entry.trials !== null ? 0 : entry.step
 }
 
@@ -239,29 +257,56 @@ export function enterWords(label: string, start: number, unit: string): string {
   return `Enter ${label.toLowerCase()}, starting at ${start} ${unit}`
 }
 
-/** A side's best, kept and shown: "Best 56 in" ("Best 0 in" when he couldn't hop), or that nothing is entered yet. */
-export function bestWords(best: number | null, unit: string): string {
-  return best === null ? 'Best: nothing entered yet' : `Best ${best} ${unit}`
+/**
+ * A side's best, kept and shown: "Best 56 in" ("Best 0 in" when he couldn't hop), or that nothing
+ * is entered yet; a timed hop says "Fastest 2.1 s", since its best is the lowest time.
+ */
+export function bestWords(best: number | null, unit: string, timed = false): string {
+  const word = timed ? 'Fastest' : 'Best'
+  return best === null ? `${word}: nothing entered yet` : `${word} ${best} ${unit}`
 }
 
 /** Why a load test with a 0 on a side can't save: the line and the Save button say the same. */
 export const ZERO_LOAD_BLOCKER = 'A load test needs a load on each side, so 0 can’t be saved'
 
+/** Why a timed hop with a 0 on a trial can't save: 0 isn't a time (PROGRAM-QUESTIONS 157 rereads 108 for seconds). */
+export const ZERO_TIME_BLOCKER = 'A time reads in seconds; 0 isn’t a time — leave the trial empty if the hop didn’t happen'
+
 /**
  * The live symmetry against the gate's line, from the two bests: "90.3% · the line is 90%: passes".
- * On a hop test 0 on the injured side reads 0%, and 0 on the other side is no percent at all, and
- * the line says so. On a load test (`loadTest`) a 0 on either side can't be saved, so the line says
- * what Save says rather than a percent beside a refusal.
+ * On a distance hop test 0 on the injured side reads 0%, and 0 on the other side is no percent at
+ * all, and the line says so. On a load test (`loadTest`) a 0 on either side can't be saved, so the
+ * line says what Save says rather than a percent beside a refusal. On a TIMED hop (`timed`) the
+ * ratio inverts — the other side's time over the injured side's — and a 0 isn't a time, so the
+ * line carries the zero-refusal words instead of the distance hops' "0 reads 0%" sentence.
  */
-export function symmetryLine(best: FormBest, threshold: number, loadTest = false): string {
+export function symmetryLine(best: FormBest, threshold: number, loadTest = false, timed = false): string {
   const { injured, other } = best
   if (injured === null && other === null) return 'Enter both sides to see the symmetry.'
   if (injured === null) return 'Enter the injured side to see the symmetry.'
   if (other === null) return 'Enter the other side to see the symmetry.'
+  if (timed) {
+    if (!(injured > 0 && other > 0)) return `${ZERO_TIME_BLOCKER}.`
+    const inverted = timedSymmetryPercent(injured, other)
+    return `${inverted}% · the line is ${lineWords(threshold)}: ${meetsTimedSymmetry(injured, other, threshold) ? 'passes' : 'not yet'}`
+  }
   if (loadTest && !(injured > 0 && other > 0)) return `${ZERO_LOAD_BLOCKER}.`
   const pct = symmetryPercent(injured, other)
   if (pct === null) return injured === 0 ? 'Both sides are 0, so there is no percent.' : 'The other side is 0, so there is no percent.'
   return `${pct}% · the line is ${lineWords(threshold)}: ${meetsSymmetry(injured, other, threshold) ? 'passes' : 'not yet'}`
+}
+
+/**
+ * The line over a hop form's trials: what counts, and what a 0 means there. Distance hops keep
+ * the "0 is a hop he couldn't do" reading (PROGRAM-QUESTIONS 108); the timed hop replaces it with
+ * the zero-refusal words and says the ratio's direction (PROGRAM-QUESTIONS 157).
+ */
+export function trialsIntro(entry: Pick<SymmetryEntry, 'trials' | 'timed'>): string {
+  const trials = entry.trials ?? 3
+  if (entry.timed) {
+    return `Up to ${trials} trials per side, in seconds to a tenth; the fastest of each side counts, and the line reads the other side’s time over the injured side’s, so a slower injured side reads under 100%. ${ZERO_TIME_BLOCKER}.`
+  }
+  return `Up to ${trials} trials per side, in inches; the best of each side counts, and one trial a side is enough to save. A hop you couldn’t do is 0; a trial left not entered doesn’t count.`
 }
 
 /** Two forms hold the same values, side by side and trial by trial (not entered included). */
@@ -274,15 +319,22 @@ export function sameForm(a: SymmetryForm, b: SymmetryForm): boolean {
 export const SAVED_BLOCKER = 'Saved; change a value to save another'
 
 /**
- * Why the form can't be saved yet, in words, or null when it can. A hop test saves with at least
- * one trial entered on each side, a 0 included (Shawn, Nov 2), but not when the other side's best
- * is 0: that is no percent. A load test needs a load on each side. Right after a save the form
- * keeps what was saved (`lastSaved`), and Save waits until a value changes, so a second tap never
- * writes the same test twice, or a prefill no test lifted.
+ * Why the form can't be saved yet, in words, or null when it can. A distance hop test saves with
+ * at least one trial entered on each side, a 0 included (Shawn, Nov 2), but not when the other
+ * side's best is 0: that is no percent. A TIMED hop refuses a 0 anywhere — 0 isn't a time
+ * (PROGRAM-QUESTIONS 157) — and saves with a positive time on each side. A load test needs a load
+ * on each side. Right after a save the form keeps what was saved (`lastSaved`), and Save waits
+ * until a value changes, so a second tap never writes the same test twice, or a prefill no test
+ * lifted.
  */
-export function formBlocker(form: SymmetryForm, trials: number | null, lastSaved: SymmetryForm | null = null): string | null {
+export function formBlocker(form: SymmetryForm, trials: number | null, lastSaved: SymmetryForm | null = null, timed = false): string | null {
   if (lastSaved && sameForm(form, lastSaved)) return SAVED_BLOCKER
-  const best = formBest(form)
+  const best = formBest(form, timed)
+  if (timed) {
+    if ([...form.injured, ...form.other].some((v) => v !== null && !(v > 0))) return ZERO_TIME_BLOCKER
+    if (best.injured === null || best.other === null) return 'Enter at least one trial on each side to save'
+    return null
+  }
   if (trials !== null) {
     if (best.injured === null || best.other === null) return 'Enter at least one trial on each side to save'
     if (symmetryPercent(best.injured, best.other) === null) return best.injured === 0 ? 'Both sides are 0, so there is no percent to save' : 'The other side is 0, so there is no percent to save'
@@ -296,19 +348,23 @@ export function formBlocker(form: SymmetryForm, trials: number | null, lastSaved
 export type TestDraft = { ok: true; test: GateTest } | { ok: false; blocker: string }
 
 /**
- * The GateTest a symmetry form saves: the best of each side as the values, the entered trials when
- * the item has trials (a trial not entered isn't stored), and the pass from meetsSymmetry against
- * the item's line. Never manual.
+ * The GateTest a symmetry form saves: the best of each side as the values (the fastest for a
+ * timed hop), the entered trials when the item has trials (a trial not entered isn't stored),
+ * the optional one-line "how it looked" note on hop tests — quality is noted in words, never
+ * pretended to be measured — and the pass from meetsSymmetry (meetsTimedSymmetry for a timed
+ * item) against the item's line. Never manual.
  */
-export function buildTest(input: { gate: Pick<Gate, 'number'>; item: GateItem; form: SymmetryForm; today: IsoDate; id: string; lastSaved?: SymmetryForm | null }): TestDraft {
+export function buildTest(input: { gate: Pick<Gate, 'number'>; item: GateItem; form: SymmetryForm; today: IsoDate; id: string; lastSaved?: SymmetryForm | null; note?: string }): TestDraft {
   const { gate, item, form, today, id } = input
   if (!item.testItem) return { ok: false, blocker: 'This item has no test key in the program data' }
   const trials = item.trials ?? null
-  const blocker = formBlocker(form, trials, input.lastSaved ?? null)
+  const timed = item.timed === true
+  const blocker = formBlocker(form, trials, input.lastSaved ?? null, timed)
   if (blocker) return { ok: false, blocker }
-  const { injured, other } = formBest(form)
+  const { injured, other } = formBest(form, timed)
   // formBlocker has already said no to a side with nothing entered; this only narrows the types.
   if (injured === null || other === null) return { ok: false, blocker: 'Enter both sides to save' }
+  const note = input.note?.trim() ?? ''
   return {
     ok: true,
     test: {
@@ -319,7 +375,8 @@ export function buildTest(input: { gate: Pick<Gate, 'number'>; item: GateItem; f
       valueInjured: injured,
       valueOther: other,
       ...(trials !== null ? { trialsInjured: enteredValues(form.injured), trialsOther: enteredValues(form.other) } : {}),
-      pass: meetsSymmetry(injured, other, lineOf(item)),
+      ...(trials !== null && note !== '' ? { notes: note } : {}),
+      pass: timed ? meetsTimedSymmetry(injured, other, lineOf(item)) : meetsSymmetry(injured, other, lineOf(item)),
       manual: false,
     },
   }
@@ -337,25 +394,39 @@ export interface EarlierTest {
   values: string
   pass: boolean
   word: string
+  /** The "how it looked" note the test carried, or null: words beside the numbers, never a measurement. */
+  note: string | null
 }
 
-/** The item's tests so far, newest first: date, percent, the values compared and whether it reached the line. */
-export function earlierTests(tests: readonly GateTest[], gate: number, key: string, threshold: number, unit: string): EarlierTest[] {
+/**
+ * The item's tests so far, newest first: date, percent, the values compared, whether it reached
+ * the line, and the note it carried. A timed item recomputes with the inverted direction: the
+ * fastest of each side, the other side's time over the injured side's.
+ */
+export function earlierTests(tests: readonly GateTest[], gate: number, key: string, threshold: number, unit: string, timed = false): EarlierTest[] {
   return orderedTests(tests.filter((t) => t.gate === gate && t.item === key && !t.manual))
     .reverse()
     .map((t) => {
+      const base = (word: { percent: string; pass: boolean }, injured: number, other: number): EarlierTest => ({
+        id: t.id,
+        when: dateInWords(t.date),
+        percent: word.percent,
+        values: `${injured} vs ${other} ${unit}`,
+        pass: word.pass,
+        word: word.pass ? '✓ passes' : '○ not yet',
+        note: t.notes?.trim() ? t.notes.trim() : null,
+      })
+      if (timed) {
+        const injured = t.trialsInjured?.length ? fastestOfTrials(t.trialsInjured) : t.valueInjured > 0 ? t.valueInjured : null
+        const other = t.trialsOther?.length ? fastestOfTrials(t.trialsOther) : t.valueOther > 0 ? t.valueOther : null
+        if (injured === null || other === null) return base({ percent: 'no percent (no usable time)', pass: false }, injured ?? 0, other ?? 0)
+        const pct = timedSymmetryPercent(injured, other)
+        return base({ percent: `${pct}%`, pass: meetsTimedSymmetry(injured, other, threshold) }, injured, other)
+      }
       const injured = t.trialsInjured?.length ? bestOfTrials(t.trialsInjured) : t.valueInjured
       const other = t.trialsOther?.length ? bestOfTrials(t.trialsOther) : t.valueOther
       const pct = symmetryPercent(injured, other)
-      const pass = meetsSymmetry(injured, other, threshold)
-      return {
-        id: t.id,
-        when: dateInWords(t.date),
-        percent: pct === null ? 'no percent (the other side was 0)' : `${pct}%`,
-        values: `${injured} vs ${other} ${unit}`,
-        pass,
-        word: pass ? '✓ passes' : '○ not yet',
-      }
+      return base({ percent: pct === null ? 'no percent (the other side was 0)' : `${pct}%`, pass: meetsSymmetry(injured, other, threshold) }, injured, other)
     })
 }
 
@@ -534,8 +605,12 @@ export interface SymmetryEntry {
   threshold: number
   /** Trials per side for a hop test; null for a one-value load test. */
   trials: number | null
+  /** A timed hop (Batch A): seconds, fastest kept, the line reads other ÷ injured, 0 refused in words. */
+  timed: boolean
   unit: string
   step: number
+  /** The Stepper's ceiling: 600 in. for distance hops, 60 s for the timed hop, 1000 lb for loads. */
+  max: number
   prefill: LoadPrefill | null
   /** What the form shows with nothing typed: not entered for a hop test; for a load test, openLoadForm's pick. */
   opening: SymmetryForm
@@ -555,7 +630,12 @@ interface ItemBase {
   detail: string
 }
 
-export type ItemView = (ItemBase & { kind: 'auto' }) | (ItemBase & { kind: 'manual' }) | (ItemBase & { kind: 'symmetry'; entry: SymmetryEntry })
+export type ItemView =
+  | (ItemBase & { kind: 'auto' })
+  | (ItemBase & { kind: 'manual' })
+  | (ItemBase & { kind: 'symmetry'; entry: SymmetryEntry })
+  /** The ACL-RSI item (Batch A): auto, the latest score and date already in its detail words, the questionnaire a tap away. */
+  | (ItemBase & { kind: 'acl-rsi' })
 
 export type GatesView =
   | { kind: 'no-gate'; line: string }
@@ -566,6 +646,8 @@ export type GatesView =
       countLine: string
       items: ItemView[]
       advance: AdvanceState
+      /** The standing KOOS offer (KOOS_OFFER): plain routing words, never a score. */
+      koosOffer: string
       /** The program week Yes, advance enters the next phase in (phaseEntryWeek). */
       entryWeek: number
       question: string
@@ -605,7 +687,24 @@ function symmetryEntry(item: GateItem, gate: Gate, history: HistoryLike, records
   const trials = item.trials ?? null
   const sides = sideNames(injuredSide)
   if (trials !== null) {
-    return { key, threshold, trials, unit: 'in', step: 1, prefill: null, opening: openForm(trials, null), openingSaved: false, prefillLine: null, earlier: key ? earlierTests(history.gateTests, gate.number, key, threshold, 'in') : [], sides }
+    // A timed hop enters seconds to a tenth (the first decimal trial field; PROGRAM-QUESTIONS 157); distance hops keep whole inches.
+    const timed = item.timed === true
+    const unit = timed ? 's' : 'in'
+    return {
+      key,
+      threshold,
+      trials,
+      timed,
+      unit,
+      step: timed ? 0.1 : 1,
+      max: timed ? TRIAL_MAX_S : TRIAL_MAX_IN,
+      prefill: null,
+      opening: openForm(trials, null),
+      openingSaved: false,
+      prefillLine: null,
+      earlier: key ? earlierTests(history.gateTests, gate.number, key, threshold, unit, timed) : [],
+      sides,
+    }
   }
   // The program data names the exercise whose sets prefill a load test (PROGRAM-QUESTIONS 25: "prefilled
   // from the latest SetLogs per side"); hop tests have no logged exercise to start from.
@@ -626,8 +725,10 @@ function symmetryEntry(item: GateItem, gate: Gate, history: HistoryLike, records
     key,
     threshold,
     trials: null,
+    timed: false,
     unit,
     step: exercise && exercise.increment > 0 ? exercise.increment : 5,
+    max: LOAD_MAX,
     prefill,
     opening: opening.form,
     openingSaved: opening.saved,
@@ -651,20 +752,31 @@ function itemView(r: GateItemResult, gate: Gate, today: IsoDate, history: Histor
   const base: ItemBase = { item: r.item, pass: r.pass, ...stateWords(r.pass), detail }
   if (r.item.evaluator === 'manual') return { ...base, kind: 'manual' }
   if (r.item.evaluator === 'symmetry') return { ...base, kind: 'symmetry', entry: symmetryEntry(r.item, gate, history, records, injuredSide, program, gyms) }
+  if (r.item.evaluator === 'acl-rsi') return { ...base, kind: 'acl-rsi' }
   return { ...base, kind: 'auto' }
 }
 
 /**
+ * The KOOS offer on the Gates screen (Batch A): opening Gates is attempting the gate, so the
+ * offer is a standing line that routes to the questionnaire (PROGRAM-QUESTIONS 158). It carries
+ * NO score and never will: the koos guard bars this file from src/rules/koos.ts, so a dipping
+ * subscale cannot read as an extra gate requirement — scores live on Progress alone.
+ */
+export const KOOS_OFFER = 'Attempting a gate? A KOOS check goes with it: fill the questionnaire in when you test. Scores show on Progress, never here.'
+
+/**
  * What the Gates screen shows: the current gate evaluated live, item by item, and whether it may
  * advance. `locations` lets a prefill line name a gym away from the one Today plans at.
+ * `aclRsiEntries` rides through to the gate rule (gateContext); the screen hands them in from
+ * useAclRsiEntries, never through History.
  */
-export function gatesView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; locations?: readonly Location[] }): GatesView {
+export function gatesView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; locations?: readonly Location[]; aclRsiEntries: readonly AclRsiEntry[] }): GatesView {
   const { today, settings, history, program } = input
   const gyms: Gyms = { locations: input.locations ?? [], activeId: settings.activeLocationId }
   const gate = currentGate(program.gates, settings.currentPhase)
   if (!gate) return { kind: 'no-gate', line: noGateWords(program.gates, settings.currentPhase) }
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
-  const result = evaluateGate(gate, gateContext({ today, settings, history, records }))
+  const result = evaluateGate(gate, gateContext({ today, settings, history, records, aclRsiEntries: input.aclRsiEntries }))
   const entryWeek = phaseEntryWeek({ today, startDate: settings.startDate, template: program.weeklyTemplate, moves: history.sessionMoves, workouts: history.workouts })
   return {
     kind: 'gate',
@@ -677,6 +789,7 @@ export function gatesView(input: { today: IsoDate; settings: Settings; history: 
       settings.redFlag,
       advanceWaitsFor(history.workouts).map((w) => ({ label: workoutLabel(w, program.templates), dateWords: dateWords(w.date) })),
     ),
+    koosOffer: KOOS_OFFER,
     entryWeek,
     question: advanceQuestion(gate, program.phases, entryWeek, weekOf(today, settings.startDate)),
     stop: stopMessage(settings.redFlag, program.redFlags),

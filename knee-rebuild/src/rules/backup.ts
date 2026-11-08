@@ -1,10 +1,12 @@
 import { daysBetween, todayIn } from './calendar.ts'
 import type { RedFlagState } from './redFlags.ts'
 import {
+  AclRsiEntry,
   AddedSlot,
   GateTest,
   HrSettings,
   IsoDateTime,
+  KoosEntry,
   Location,
   MorningCheck,
   ProgramOverride,
@@ -31,7 +33,7 @@ export const BACKUP_APP = 'knee-rebuild'
  * The shape of the file's tables: the Dexie version they were read from (src/db/db.ts). A test in
  * src/db/backup.test.ts holds the two together, so a new Dexie version has to bring a step here.
  */
-export const BACKUP_SCHEMA_VERSION = 8
+export const BACKUP_SCHEMA_VERSION = 9
 
 /**
  * The oldest shape a file can be carried forward from. Version 1 was the empty M0 database. No file
@@ -44,7 +46,7 @@ export const OLDEST_SCHEMA_VERSION = 2
 export const BACKUP_MAX_BYTES = 10 * 1024 * 1024
 
 /** The tables a file carries besides settings, in the order the file lists them. */
-export const BACKUP_TABLES = ['workouts', 'setLogs', 'morningChecks', 'runs', 'gateTests', 'sessionMoves', 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings'] as const
+export const BACKUP_TABLES = ['workouts', 'setLogs', 'morningChecks', 'runs', 'gateTests', 'sessionMoves', 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries'] as const
 export type BackupTable = (typeof BACKUP_TABLES)[number]
 
 /** Settings as a file carries them: every field but `lastExportedAt`, which is the phone's own (an import stamps the file's `exportedAt`). */
@@ -63,6 +65,8 @@ export interface BackupTables {
   addedSlots: AddedSlot[]
   hrSettings: HrSettings[]
   vo2Readings: Vo2Reading[]
+  koosEntries: KoosEntry[]
+  aclRsiEntries: AclRsiEntry[]
 }
 
 /** The file, in the order its keys are written. */
@@ -94,6 +98,8 @@ export const TABLE_WORDS: Record<BackupTable, { many: string; one: string }> = {
   addedSlots: { many: 'added exercises', one: 'added exercise' },
   hrSettings: { many: 'heart rate settings', one: 'heart rate setting' },
   vo2Readings: { many: 'VO2 max readings', one: 'VO2 max reading' },
+  koosEntries: { many: 'KOOS entries', one: 'KOOS entry' },
+  aclRsiEntries: { many: 'ACL-RSI entries', one: 'ACL-RSI entry' },
 }
 
 interface Issue {
@@ -121,6 +127,8 @@ const TABLES: { [K in BackupTable]: { schema: RowSchema<BackupTables[K][number]>
   addedSlots: { schema: AddedSlot, key: (r) => r.id },
   hrSettings: { schema: HrSettings, key: (r) => r.id },
   vo2Readings: { schema: Vo2Reading, key: (r) => r.date },
+  koosEntries: { schema: KoosEntry, key: (r) => r.date },
+  aclRsiEntries: { schema: AclRsiEntry, key: (r) => r.date },
 }
 
 /** A row's stored key (its id, or a Program edit's slot id). */
@@ -216,6 +224,8 @@ export function buildBackup(stored: StoredContents, exportedAt: IsoDateTime): Ex
     addedSlots: table('addedSlots'),
     hrSettings: table('hrSettings'),
     vo2Readings: table('vo2Readings'),
+    koosEntries: table('koosEntries'),
+    aclRsiEntries: table('aclRsiEntries'),
   }
   return { backup, unreadable }
 }
@@ -257,7 +267,9 @@ export function sizeProblem(bytes: number): string | null {
  * effort word, which training load reads as 3, 5 or 8); version 6's are version 7's without the
  * heart-rate settings list (metrics phase 2: a run's average and max heart rate are optional
  * fields, and no heart rate is ever invented); version 7's tables are version 8's without the VO2
- * max readings list (metrics phase 3; no reading is ever invented). A list the file already has is
+ * max readings list (metrics phase 3; no reading is ever invented); version 8's tables are
+ * version 9's without the KOOS and ACL-RSI questionnaire lists (Batch A; both lists in the one
+ * step, and no questionnaire entry is ever invented). A list the file already has is
  * left for the schema to judge, never replaced.
  */
 export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObject>> = {
@@ -267,6 +279,7 @@ export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObjec
   5: (file) => ({ ...file, schemaVersion: 6 }),
   6: (file) => ({ ...withList(file, 'hrSettings'), schemaVersion: 7 }),
   7: (file) => ({ ...withList(file, 'vo2Readings'), schemaVersion: 8 }),
+  8: (file) => ({ ...withList(withList(file, 'koosEntries'), 'aclRsiEntries'), schemaVersion: 9 }),
 }
 
 function withList(file: FileObject, key: BackupTable): FileObject {
@@ -357,6 +370,8 @@ export function backupFrom(raw: unknown): BackupRead {
     addedSlots: tables.addedSlots ?? [],
     hrSettings: tables.hrSettings ?? [],
     vo2Readings: tables.vo2Readings ?? [],
+    koosEntries: tables.koosEntries ?? [],
+    aclRsiEntries: tables.aclRsiEntries ?? [],
   }
   return { ok: true, backup, migratedFrom: version === BACKUP_SCHEMA_VERSION ? null : version }
 }
