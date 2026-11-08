@@ -6,10 +6,10 @@ import { Button } from '../components/Button.tsx'
 import { Screen } from '../components/Screen.tsx'
 import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
-import { useHistory, useLocations, useSettings } from '../db/hooks.ts'
+import { useAclRsiEntries, useHistory, useLocations, useSettings } from '../db/hooks.ts'
 import { addGateTest, saveSettings, type History } from '../db/repo.ts'
 import { advancePhase } from '../rules/progress.ts'
-import type { GateItem, IsoDate, Location, Settings } from '../schema/index.ts'
+import type { AclRsiEntry, GateItem, IsoDate, Location, Settings } from '../schema/index.ts'
 import {
   advanceErrorSentence,
   advancedWords,
@@ -29,6 +29,7 @@ import {
   testErrorSentence,
   tickErrorSentence,
   trialName,
+  trialsIntro,
   withoutKey,
   type ConfirmClose,
   type GatesView,
@@ -42,9 +43,6 @@ const TITLE = 'Gates'
 const LABEL = 'font-mono text-small font-normal uppercase tracking-[0.22em] text-on-dark-muted'
 const HEADING = 'font-sans text-h3 font-medium text-on-dark'
 const SECTION = 'flex flex-col gap-3'
-/** Generous ceilings: a triple hop runs past 200 in., a single-leg press stack past 300 lb. */
-const MAX_INCHES = 600
-const MAX_LOAD = 1000
 
 type GateBody = Extract<GatesView, { kind: 'gate' }>
 type Side = 'injured' | 'other'
@@ -60,8 +58,10 @@ export function Gates() {
   const settings = useSettings()
   const history = useHistory()
   const locations = useLocations()
+  // The ACL-RSI entries ride into the gate rule through gatesView, never through History (Batch A).
+  const aclRsiEntries = useAclRsiEntries()
 
-  if (settings === undefined || history === undefined || locations === undefined) {
+  if (settings === undefined || history === undefined || locations === undefined || aclRsiEntries === undefined) {
     return (
       <Screen title={TITLE} lead="Opening storage…">
         <p className="text-body text-on-dark-dim">Reading the sessions, runs, morning checks and tests logged on this phone.</p>
@@ -78,10 +78,10 @@ export function Gates() {
       </Screen>
     )
   }
-  return <GateScreen today={today} settings={settings} history={history} locations={locations} />
+  return <GateScreen today={today} settings={settings} history={history} locations={locations} aclRsiEntries={aclRsiEntries} />
 }
 
-function GateScreen({ today, settings, history, locations }: { today: IsoDate; settings: Settings; history: History; locations: readonly Location[] }) {
+function GateScreen({ today, settings, history, locations, aclRsiEntries }: { today: IsoDate; settings: Settings; history: History; locations: readonly Location[]; aclRsiEntries: readonly AclRsiEntry[] }) {
   /** Symmetry forms being typed, by gate item id; an item with no draft shows its opening form. */
   const [drafts, setDrafts] = useState<Record<string, SymmetryForm>>({})
   /** The write in flight, so only the control that made it says "Saving…". */
@@ -90,6 +90,8 @@ function GateScreen({ today, settings, history, locations }: { today: IsoDate; s
   const [errors, setErrors] = useState<Record<string, string>>({})
   /** The last saved test's line, by gate item id, until its form is touched again. */
   const [saved, setSaved] = useState<Record<string, string>>({})
+  /** The optional one-line "how it looked" note being typed, by gate item id (hop tests only): words, never a measurement. */
+  const [notes, setNotes] = useState<Record<string, string>>({})
   /**
    * The form each item last saved, by gate item id. A saved form stays on screen as its draft, never
    * back to the session prefill, and Save waits until a value changes (formBlocker), so a double tap
@@ -119,7 +121,7 @@ function GateScreen({ today, settings, history, locations }: { today: IsoDate; s
     </p>
   )
 
-  const view = gatesView({ today, settings, history, program: PROGRAM, locations })
+  const view = gatesView({ today, settings, history, program: PROGRAM, locations, aclRsiEntries })
   const takenIds = history.gateTests.map((t) => t.id)
   const setError = (key: string, text: string | null) => setErrors((all) => (text === null ? withoutKey(all, key) : { ...all, [key]: text }))
 
@@ -167,17 +169,18 @@ function GateScreen({ today, settings, history, locations }: { today: IsoDate; s
   async function saveTest(item: GateItem, entry: SymmetryEntry) {
     if (pending) return
     const form = formFor(item.id, entry)
-    const draft = buildTest({ gate, item, form, today, id: newGateTestId(new Date().toISOString(), entry.key ?? item.id, takenIds), lastSaved: savedFor(item.id, entry) })
+    const draft = buildTest({ gate, item, form, today, id: newGateTestId(new Date().toISOString(), entry.key ?? item.id, takenIds), lastSaved: savedFor(item.id, entry), note: notes[item.id] ?? '' })
     if (!draft.ok) return
     setPending({ kind: 'test', itemId: item.id })
     setError(item.id, null)
     setConfirming(false)
     try {
       await addGateTest(draft.test)
-      // The fields keep what was saved, and Save waits on them, until a value changes.
+      // The fields keep what was saved, and Save waits on them, until a value changes; the note went with the test.
       setDrafts((all) => ({ ...all, [item.id]: form }))
       setLastSaved((all) => ({ ...all, [item.id]: form }))
-      setSaved((all) => ({ ...all, [item.id]: `Saved. ${symmetryLine(formBest(form), entry.threshold)}` }))
+      setNotes((all) => withoutKey(all, item.id))
+      setSaved((all) => ({ ...all, [item.id]: `Saved. ${symmetryLine(formBest(form, entry.timed), entry.threshold, entry.trials === null, entry.timed)}` }))
     } catch (e: unknown) {
       setError(item.id, testErrorSentence(e))
     } finally {
@@ -240,6 +243,8 @@ function GateScreen({ today, settings, history, locations }: { today: IsoDate; s
               saved={saved[row.item.id] ?? null}
               form={row.kind === 'symmetry' ? formFor(row.item.id, row.entry) : null}
               lastSaved={row.kind === 'symmetry' ? savedFor(row.item.id, row.entry) : null}
+              note={notes[row.item.id] ?? ''}
+              onNote={(text) => setNotes((all) => ({ ...all, [row.item.id]: text }))}
               onTick={(value) => void tick(row.item, value)}
               onEdit={(side, index, value) => {
                 if (row.kind === 'symmetry') edit(row.item.id, row.entry, side, index, value)
@@ -250,6 +255,15 @@ function GateScreen({ today, settings, history, locations }: { today: IsoDate; s
             />
           ))}
         </ol>
+      </section>
+
+      {/* The KOOS offer (Batch A): plain routing words, never a score — scores live on Progress alone (PROGRAM-QUESTIONS 158). */}
+      <section aria-label="KOOS check" className={SECTION}>
+        <h2 className={HEADING}>KOOS check</h2>
+        <p className="text-small text-on-dark-muted">{view.koosOffer}</p>
+        <Button wide onClick={() => navigate({ name: 'koos' })}>
+          Open the KOOS questionnaire
+        </Button>
       </section>
 
       <AdvanceBlock
@@ -280,6 +294,8 @@ function ItemRow({
   saved,
   form,
   lastSaved,
+  note,
+  onNote,
   onTick,
   onEdit,
   onSave,
@@ -290,6 +306,8 @@ function ItemRow({
   saved: string | null
   form: SymmetryForm | null
   lastSaved: SymmetryForm | null
+  note: string
+  onNote: (text: string) => void
   onTick: (value: boolean) => void
   onEdit: (side: Side, index: number, value: Trial) => void
   onSave: () => void
@@ -317,14 +335,29 @@ function ItemRow({
           {error}
         </p>
       ) : null}
+      {row.kind === 'acl-rsi' ? (
+        // The questionnaire is a tap away; the row itself carries only the latest score and date, in its detail words.
+        <Button onClick={() => navigate({ name: 'acl-rsi' })}>Open the ACL-RSI questionnaire</Button>
+      ) : null}
       {row.kind === 'symmetry' && form ? (
-        <SymmetryBlock entry={row.entry} form={form} lastSaved={lastSaved} saving={pending?.kind === 'test' && pending.itemId === row.item.id} busy={pending !== null} saved={saved} onEdit={onEdit} onSave={onSave} />
+        <SymmetryBlock
+          entry={row.entry}
+          form={form}
+          lastSaved={lastSaved}
+          saving={pending?.kind === 'test' && pending.itemId === row.item.id}
+          busy={pending !== null}
+          saved={saved}
+          note={note}
+          onNote={onNote}
+          onEdit={onEdit}
+          onSave={onSave}
+        />
       ) : null}
     </li>
   )
 }
 
-/** The inline entry form: trials or one value per side, the best kept, the symmetry live against the line, and the tests so far. */
+/** The inline entry form: trials or one value per side, the best kept (the fastest on a timed hop), the symmetry live against the line, the optional note, and the tests so far. */
 function SymmetryBlock({
   entry,
   form,
@@ -332,6 +365,8 @@ function SymmetryBlock({
   saving,
   busy,
   saved,
+  note,
+  onNote,
   onEdit,
   onSave,
 }: {
@@ -341,23 +376,22 @@ function SymmetryBlock({
   saving: boolean
   busy: boolean
   saved: string | null
+  note: string
+  onNote: (text: string) => void
   onEdit: (side: Side, index: number, value: Trial) => void
   onSave: () => void
 }) {
-  const best = formBest(form)
-  const blocker = entry.key === null ? 'This item has no test key in the program data' : formBlocker(form, entry.trials, lastSaved)
+  const best = formBest(form, entry.timed)
+  const blocker = entry.key === null ? 'This item has no test key in the program data' : formBlocker(form, entry.trials, lastSaved, entry.timed)
   return (
     <div className="flex flex-col gap-4 border-l-2 border-on-dark-faint pl-3">
-      <p className="text-small text-on-dark-muted">
-        {entry.trials !== null
-          ? `Up to ${entry.trials} trials per side, in inches; the best of each side counts, and one trial a side is enough to save. A hop you couldn’t do is 0; a trial left not entered doesn’t count.`
-          : entry.prefillLine}
-      </p>
+      <p className="text-small text-on-dark-muted">{entry.trials !== null ? trialsIntro(entry) : entry.prefillLine}</p>
       <SideFields label={entry.sides.injured} side="injured" values={form.injured} best={best.injured} entry={entry} onEdit={onEdit} />
       <SideFields label={entry.sides.other} side="other" values={form.other} best={best.other} entry={entry} onEdit={onEdit} />
       <p role="status" aria-live="polite" className="text-body text-on-dark">
-        {symmetryLine(best, entry.threshold, entry.trials === null)}
+        {symmetryLine(best, entry.threshold, entry.trials === null, entry.timed)}
       </p>
+      {entry.trials !== null ? <NoteField itemKey={entry.key ?? 'test'} note={note} onNote={onNote} /> : null}
       <Button wide disabled={blocker !== null || busy} onClick={onSave}>
         {saving ? 'Saving…' : (blocker ?? 'Save this test')}
       </Button>
@@ -367,6 +401,19 @@ function SymmetryBlock({
         </p>
       ) : null}
       <EarlierTests entry={entry} />
+    </div>
+  )
+}
+
+/** The optional one-line "how it looked" note on a hop test: quality is noted in words, never pretended to be measured. */
+function NoteField({ itemKey, note, onNote }: { itemKey: string; note: string; onNote: (text: string) => void }) {
+  const id = `hop-note-${itemKey}`
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-small text-on-dark-dim">
+        How it looked (optional, one line): saved with the test, in words
+      </label>
+      <input id={id} type="text" autoComplete="off" enterKeyHint="done" value={note} onChange={(e) => onNote(e.target.value)} className="tap w-full rounded-sm bg-ink px-3 text-body text-on-dark" />
     </div>
   )
 }
@@ -388,15 +435,15 @@ function SideFields({
 }) {
   if (entry.trials === null) {
     // Not entered is words, as on a hop trial, never a 0 the form then refuses (a load test needs a load on each side).
-    return <TrialField label={label} name={label} unit={entry.unit} step={entry.step} start={enterStart(entry)} max={MAX_LOAD} value={values[0] ?? null} onChange={(v) => onEdit(side, 0, v)} />
+    return <TrialField label={label} name={label} unit={entry.unit} step={entry.step} start={enterStart(entry)} max={entry.max} value={values[0] ?? null} onChange={(v) => onEdit(side, 0, v)} />
   }
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className={`${LABEL} pb-2`}>{label}</legend>
       {values.map((value, i) => (
-        <TrialField key={i} label={`Trial ${i + 1}`} context={label} name={trialName(label, i)} unit={entry.unit} step={entry.step} start={enterStart(entry)} max={MAX_INCHES} value={value} onChange={(v) => onEdit(side, i, v)} />
+        <TrialField key={i} label={`Trial ${i + 1}`} context={label} name={trialName(label, i)} unit={entry.unit} step={entry.step} start={enterStart(entry)} max={entry.max} value={value} onChange={(v) => onEdit(side, i, v)} />
       ))}
-      <p className="text-body text-on-dark-dim">{bestWords(best, entry.unit)}</p>
+      <p className="text-body text-on-dark-dim">{bestWords(best, entry.unit, entry.timed)}</p>
     </fieldset>
   )
 }
@@ -522,6 +569,7 @@ function EarlierTests({ entry }: { entry: SymmetryEntry }) {
             <span className="text-small text-on-dark-dim">
               {t.values} · {t.word}
             </span>
+            {t.note ? <span className="text-small text-on-dark-muted">“{t.note}”</span> : null}
           </li>
         ))}
       </ul>

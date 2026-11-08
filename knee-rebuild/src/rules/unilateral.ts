@@ -44,3 +44,31 @@ export function bestOfTrials(trials: readonly number[]): number {
   if (trials.length === 0) return 0
   return Math.max(...trials)
 }
+
+/**
+ * Timed hops keep the FASTEST trial: lower is better, in seconds (the 6-meter timed hop, Batch A).
+ * A hop he couldn't do has no time — 0 would read as the fastest trial and the inverted ratio
+ * would divide by it, so non-positive values are ignored here as rules-level defense (the form
+ * refuses them in words first; PROGRAM-QUESTIONS 157, which rereads 108 for a time). Null when no
+ * usable time exists.
+ */
+export function fastestOfTrials(trials: readonly number[]): number | null {
+  const usable = trials.filter((t) => t > 0)
+  return usable.length === 0 ? null : Math.min(...usable)
+}
+
+/**
+ * A timed hop's symmetry: the OTHER side's best time over the INJURED side's, as a percent to one
+ * decimal rounded down, so a slower injured side reads under 100% and a ratio just under a gate's
+ * line never reads the line (the 188/209 discipline of PROGRAM-QUESTIONS 110, inverted). The same
+ * tenths as symmetryPercent with the arguments swapped, so words and verdict agree. Null without
+ * a positive injured-side time.
+ */
+export function timedSymmetryPercent(injured: number, other: number): number | null {
+  return symmetryPercent(other, injured)
+}
+
+/** Whether a timed hop reaches the gate's line, decided on the same rounded-down tenths timedSymmetryPercent shows. */
+export function meetsTimedSymmetry(injured: number, other: number, threshold: number): boolean {
+  return meetsSymmetry(other, injured, threshold)
+}

@@ -5,9 +5,9 @@ import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { NumberField } from '../components/NumberField.tsx'
 import { Screen } from '../components/Screen.tsx'
-import { useHistory, useHrSettings, useSettings, useVo2Readings } from '../db/hooks.ts'
+import { useHistory, useHrSettings, useKoosEntries, useSettings, useVo2Readings } from '../db/hooks.ts'
 import { deleteVo2Reading, saveVo2Reading, type History } from '../db/repo.ts'
-import type { IsoDate, Settings, Vo2Reading } from '../schema/index.ts'
+import type { IsoDate, KoosEntry, Settings, Vo2Reading } from '../schema/index.ts'
 import {
   LIST_LIMIT,
   exerciseView,
@@ -23,6 +23,7 @@ import {
   type ExerciseView,
   type MilesView,
   type SymmetryRef,
+  type KoosView,
   type TrainingLoadView,
   type Vo2View,
 } from './Progress.helpers.ts'
@@ -47,8 +48,10 @@ export function Progress() {
   const history = useHistory()
   // The VO2 readings load with the history, so the section never says "No readings yet" before the read lands (metrics phase 3).
   const vo2Readings = useVo2Readings()
+  // The KOOS entries the same way (Batch A): they come in on their own, never through History.
+  const koosEntries = useKoosEntries()
 
-  if (settings === undefined || history === undefined || vo2Readings === undefined) {
+  if (settings === undefined || history === undefined || vo2Readings === undefined || koosEntries === undefined) {
     return (
       <Screen title={TITLE} lead="Opening storage…">
         <p className="text-body text-on-dark-dim">Reading the logged sessions, runs and morning checks from the phone.</p>
@@ -65,17 +68,20 @@ export function Progress() {
       </Screen>
     )
   }
-  return <ProgressBody today={today} settings={settings} history={history} vo2Readings={vo2Readings} />
+  return <ProgressBody today={today} settings={settings} history={history} vo2Readings={vo2Readings} koosEntries={koosEntries} />
 }
 
-function ProgressBody({ today, settings, history, vo2Readings }: { today: IsoDate; settings: Settings; history: History; vo2Readings: Vo2Reading[] }) {
+function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { today: IsoDate; settings: Settings; history: History; vo2Readings: Vo2Reading[]; koosEntries: KoosEntry[] }) {
   const [picked, setPicked] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const chartRef = useRef<HTMLDivElement | null>(null)
 
   // Shawn's max and resting HR (metrics phase 2): only the HR-load line reads them; undefined while loading reads as none.
   const hrSettings = useHrSettings()
-  const view = useMemo(() => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings }), [today, settings, history, hrSettings, vo2Readings])
+  const view = useMemo(
+    () => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings, koosEntries }),
+    [today, settings, history, hrSettings, vo2Readings, koosEntries],
+  )
   const row = pickedRow(view.exercises, picked)
   const exercise = useMemo(
     () => (row ? exerciseView({ records: view.records, setLogs: history.setLogs, row, injuredSide: settings.injuredSide, catalog: PROGRAM.exercises }) : null),
@@ -90,13 +96,14 @@ function ProgressBody({ today, settings, history, vo2Readings }: { today: IsoDat
   }
 
   return (
-    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load and VO2 max.">
+    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max and KOOS.">
       <CleanDays clean={view.clean} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
       <MilesSection miles={view.miles} />
       <TrainingLoadSection training={view.training} />
       <Vo2Section vo2={view.vo2} readings={vo2Readings} today={today} />
+      <KoosSection koos={view.koos} />
     </Screen>
   )
 }
@@ -317,6 +324,39 @@ function Vo2Section({ vo2, readings, today }: { vo2: Vo2View; readings: Vo2Readi
         {saving ? 'Saving…' : entry.saveLabel}
       </Button>
       {vo2.trend.length > 0 ? <Vo2TrendList rows={vo2.trend} /> : null}
+    </section>
+  )
+}
+
+/**
+ * 7. KOOS (Batch A): the five subscale trends in words and numbers, in the style of the VO2 and
+ * training-load sections. The scores show HERE ONLY, never on the Gates screen (Shawn, Nov 8),
+ * and they inform and change nothing; the form itself is its own screen, a tap away. The due
+ * words surface here too, the same line Today carries.
+ */
+function KoosSection({ koos }: { koos: KoosView }) {
+  return (
+    <section aria-label="KOOS" className={SECTION}>
+      <h2 className={HEADING}>KOOS</h2>
+      <p className="text-small text-on-dark-muted">
+        The knee in its own words, 42 questions over the last week, scored 0 to 100 per subscale (100 = no problems). It informs; nothing here changes a prescription or a gate.
+      </p>
+      {koos.due ? <p className="text-body text-on-dark">{koos.due}</p> : null}
+      {koos.rows.length > 0 ? (
+        <ul className="flex flex-col">
+          {koos.rows.map((row) => (
+            <li key={row.name} className="flex flex-col border-t border-on-dark-faint py-1 first:border-t-0">
+              <span className="text-body text-on-dark">{row.name}</span>
+              <span className="text-small text-on-dark-dim">{row.words}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-body text-on-dark-dim">{koos.empty}</p>
+      )}
+      <Button wide onClick={() => navigate({ name: 'koos' })}>
+        Open the KOOS form
+      </Button>
     </section>
   )
 }

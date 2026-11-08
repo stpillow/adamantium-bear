@@ -62,6 +62,7 @@ import {
   ratioWords,
   skewLines,
   visibleRows,
+  koosView,
   vo2Entry,
   vo2View,
   waitingWords,
@@ -1081,5 +1082,62 @@ describe('the VO2 max section (metrics phase 3)', () => {
     expect(view.vo2.latest).toEqual({ value: 45, when: 'from the watch, Nov 14' })
     const bare = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG } })
     expect(bare.vo2).toEqual({ latest: null, trend: [], empty: 'No readings yet. Type the number from the watch when it changes.' })
+  })
+})
+
+describe('the KOOS section (Batch A): five subscale trends in words, scores on Progress only', () => {
+  // Oct 11: Pain 5 of 9 answered, all 1 → 75; Symptoms 4 of 7, all 0 → 100; QOL 2 of 4, both 2 → 50; Sport 3 of 5, all 2 → 50; ADL unanswered.
+  const earlier = { date: '2026-10-11', p1: 1, p2: 1, p3: 1, p4: 1, p5: 1, sy1: 0, sy2: 0, sy3: 0, sy4: 0, q1: 2, q2: 2, sp1: 2, sp2: 2, sp3: 2 }
+  // Nov 8: Pain 75 (unchanged); Symptoms 75 (down); ADL 9 of 17, all 0 → 100 (first score); Sport 75 (up); QOL only 1 of 4 answered → not scored, the Oct 11 score still stands.
+  const latest = { date: '2026-11-08', p1: 1, p2: 1, p3: 1, p4: 1, p5: 1, sy1: 1, sy2: 1, sy3: 1, sy4: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, a6: 0, a7: 0, a8: 0, a9: 0, sp1: 1, sp2: 1, sp3: 1, q1: 3 }
+
+  it('with nothing stored: no rows, the empty words, and the due line says none entered yet', () => {
+    expect(koosView({ entries: [], today: '2026-11-08' })).toEqual({
+      rows: [],
+      due: 'A KOOS check is due — none entered yet.',
+      empty: 'No questionnaire entries yet. The KOOS asks 42 questions about the knee over the last week; its five subscales trend here, 100 meaning no problems.',
+    })
+  })
+
+  it('each subscale against the scored entry before it, in words and numbers with dates, whatever order the rows came in', () => {
+    const view = koosView({ entries: [latest, earlier], today: '2026-11-08' })
+    expect(view.rows).toEqual([
+      { name: 'Pain', words: '75 — Nov 8, unchanged from 75 on Oct 11' },
+      { name: 'Symptoms', words: '75 — Nov 8, down from 100 on Oct 11' },
+      { name: 'Daily living', words: '100 — Nov 8' },
+      { name: 'Sport and recreation', words: '75 — Nov 8, up from 50 on Oct 11' },
+      { name: 'Quality of life', words: 'not scored Nov 8 — too few answers; last 50 on Oct 11' },
+    ])
+    expect(view.due).toBeNull()
+  })
+
+  it('a subscale never scored is said in words, never guessed; a fractional score keeps its one decimal', () => {
+    // QOL both answered → 100; Pain 5 of 9 at mixed values: sum 4 over 5 → mean 0.8 → 80; the rest under half answered.
+    const one = { date: '2026-11-08', q1: 0, q2: 0, p1: 1, p2: 1, p3: 1, p4: 1, p5: 0 }
+    const view = koosView({ entries: [one], today: '2026-11-08' })
+    expect(view.rows).toEqual([
+      { name: 'Pain', words: '80 — Nov 8' },
+      { name: 'Symptoms', words: 'not scored yet — too few answers' },
+      { name: 'Daily living', words: 'not scored yet — too few answers' },
+      { name: 'Sport and recreation', words: 'not scored yet — too few answers' },
+      { name: 'Quality of life', words: '100 — Nov 8' },
+    ])
+    // Pain 9 of 9 with sum 5 → 86.11… reads 86.1: one decimal, as the rule rounds it.
+    const nine = { date: '2026-11-08', p1: 1, p2: 1, p3: 1, p4: 1, p5: 1, p6: 0, p7: 0, p8: 0, p9: 0 }
+    expect(koosView({ entries: [nine], today: '2026-11-08' }).rows[0]).toEqual({ name: 'Pain', words: '86.1 — Nov 8' })
+  })
+
+  it('the due line: 28 days since the last entry is due with its date, 27 is not (monthly means 28, PROGRAM-QUESTIONS 158)', () => {
+    expect(koosView({ entries: [earlier], today: '2026-11-08' }).due).toBe('A KOOS check is due — the last entry was Oct 11.')
+    expect(koosView({ entries: [earlier], today: '2026-11-07' }).due).toBeNull()
+  })
+
+  it('progressView carries the KOOS view, from entries handed in on their own, never through History', () => {
+    const history = { workouts: [], setLogs: [], morningChecks: [], runs: [] }
+    const view = progressView({ today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG }, koosEntries: [latest, earlier] })
+    expect(view.koos.rows[0]).toEqual({ name: 'Pain', words: '75 — Nov 8, unchanged from 75 on Oct 11' })
+    const bare = progressView({ today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG } })
+    expect(bare.koos.rows).toEqual([])
+    expect(bare.koos.due).toBe('A KOOS check is due — none entered yet.')
   })
 })

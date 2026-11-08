@@ -1,8 +1,8 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAddedSlots, getHrSettings, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
+import { getAclRsiEntries, getAddedSlots, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
-import type { AddedSlot, HrSettings, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, AddedSlot, HrSettings, KoosEntry, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
 export function useSettings(): Settings | null | undefined {
@@ -17,6 +17,16 @@ export function useHrSettings(): HrSettings | null | undefined {
 /** The VO2 max readings (metrics phase 3), one per day. Undefined while loading, so a screen never says "no readings" before the read lands. */
 export function useVo2Readings(): Vo2Reading[] | undefined {
   return useLiveQuery(() => getVo2Readings(), [])
+}
+
+/** The KOOS entries (Batch A), one per day. Undefined while loading, so a screen never says "no entries" before the read lands. */
+export function useKoosEntries(): KoosEntry[] | undefined {
+  return useLiveQuery(() => getKoosEntries(), [])
+}
+
+/** The ACL-RSI entries (Batch A), one per day. Undefined while loading; the Gates screen hands them to the gate rule through gateContext. */
+export function useAclRsiEntries(): AclRsiEntry[] | undefined {
+  return useLiveQuery(() => getAclRsiEntries(), [])
 }
 
 export function useWorkout(id: string | null): Workout | null | undefined {

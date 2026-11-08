@@ -3,9 +3,10 @@ import { addDays, daysBetween, weekOf } from '../rules/calendar.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { awaitingMorningCheck, consecutiveCleanDays, loadSeries, milesSeries, symmetryLeftOut, symmetrySeries, type LoadPoint, type MilesWeek, type SymmetryLeftOut, type SymmetryPoint } from '../rules/progress.ts'
 import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrainingLoads, type AcuteChronic, type Band, type HrPair, type TrainingLoadEntry, type TrainingLoadWeek } from '../rules/trainingLoad.ts'
+import { KOOS_SUBSCALES, KOOS_SUBSCALE_WORDS, koosDue, koosSeries, koosSubscaleScore } from '../rules/koos.ts'
 import { latestReading, replacesToday, vo2Problem, vo2Series } from '../rules/vo2.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, HrSettings, IsoDate, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading } from '../schema/index.ts'
+import type { Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -1195,6 +1196,56 @@ export function vo2Entry(input: { value: number | null; readings: readonly Vo2Re
 }
 
 // ---------------------------------------------------------------------------------------------
+// KOOS (Batch A): the five subscale trends in words and numbers; scores show here ONLY, never
+// on the Gates screen (Shawn, Nov 8; PROGRAM-QUESTIONS 158), and they inform and change nothing
+// ---------------------------------------------------------------------------------------------
+
+export interface KoosView {
+  /** One row per subscale, the published order: the name and the trend in words and numbers, or why it has no score. Empty with no entries stored. */
+  rows: { name: string; words: string }[]
+  /** The due line, the same words Today's quiet line uses; null while a recent entry stands. */
+  due: string | null
+  /** Said in place of the trends while nothing is stored. */
+  empty: string
+}
+
+/**
+ * The KOOS section's words, over src/rules/koos.ts. Only this file, the Today helpers (the due
+ * line) and the form's own helpers touch the rule module (src/rules/koos.guard.test.ts pins
+ * that); the screen renders these words. Each subscale's row is its latest scored entry against
+ * the scored entry before it — an entry with too few answers for a subscale is said in words,
+ * never scored (the published missing-data rule) and never breaks the comparison.
+ */
+export function koosView({ entries, today }: { entries: readonly KoosEntry[]; today: IsoDate }): KoosView {
+  const series = koosSeries(entries)
+  const latest = series.at(-1)
+  const due = !koosDue(entries, today) ? null : latest ? `A KOOS check is due — the last entry was ${axisDate(latest.date)}.` : 'A KOOS check is due — none entered yet.'
+  const rows = !latest
+    ? []
+    : KOOS_SUBSCALES.map((subscale) => {
+        const name = KOOS_SUBSCALE_WORDS[subscale]
+        const scored = series
+          .map((entry) => ({ date: entry.date, score: koosSubscaleScore(entry, subscale) }))
+          .filter((point): point is { date: IsoDate; score: number } => point.score !== null)
+        const newest = scored.at(-1)
+        if (!newest) return { name, words: 'not scored yet — too few answers' }
+        const previous = scored.at(-2)
+        if (newest.date !== latest.date) {
+          // The newest entry skipped too many of this subscale's items; the last score still stands, said with its date.
+          return { name, words: `not scored ${axisDate(latest.date)} — too few answers; last ${fmt(newest.score)} on ${axisDate(newest.date)}` }
+        }
+        if (!previous) return { name, words: `${fmt(newest.score)} — ${axisDate(newest.date)}` }
+        const move = newest.score > previous.score ? 'up from' : newest.score < previous.score ? 'down from' : 'unchanged from'
+        return { name, words: `${fmt(newest.score)} — ${axisDate(newest.date)}, ${move} ${fmt(previous.score)} on ${axisDate(previous.date)}` }
+      })
+  return {
+    rows,
+    due,
+    empty: 'No questionnaire entries yet. The KOOS asks 42 questions about the knee over the last week; its five subscales trend here, 100 meaning no problems.',
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------------------------
 
@@ -1215,11 +1266,12 @@ export interface ProgressView {
   miles: MilesView
   training: TrainingLoadView
   vo2: Vo2View
+  koos: KoosView
   records: WorkoutRecord[]
 }
 
-/** Everything the screen shows that doesn't depend on the exercise picked. The VO2 readings come in on their own, never through History: no rule reads them. */
-export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[] }): ProgressView {
+/** Everything the screen shows that doesn't depend on the exercise picked. The VO2 readings and KOOS entries come in on their own, never through History: no rule reads them. */
+export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[]; koosEntries?: readonly KoosEntry[] }): ProgressView {
   const { today, settings, history, program } = input
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
@@ -1230,6 +1282,7 @@ export function progressView(input: { today: IsoDate; settings: Settings; histor
     miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),
     training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
     vo2: vo2View({ readings: input.vo2Readings ?? [] }),
+    koos: koosView({ entries: input.koosEntries ?? [], today }),
     records,
   }
 }

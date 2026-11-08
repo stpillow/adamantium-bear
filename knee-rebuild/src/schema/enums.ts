@@ -89,7 +89,12 @@ export type WorkoutStatus = z.infer<typeof WorkoutStatus>
 export const DaySession = z.enum(['run:mbr', 'lift:A', 'run:easy', 'lift:B', 'run:long', 'lift:C', 'off'])
 export type DaySession = z.infer<typeof DaySession>
 
-/** How a gate item is evaluated. `manual` items are toggles; the rest read logged data. */
+/**
+ * How a gate item is evaluated. `manual` items are toggles; the rest read logged data.
+ * `acl-rsi` reads the latest stored ACL-RSI questionnaire entry against the item's `minScore`
+ * (Batch A, PROGRAM-QUESTIONS 156): the one rule-level reader of the questionnaire is the gates
+ * rule, pinned by src/rules/aclRsi.guard.test.ts.
+ */
 export const GateEvaluator = z.enum([
   'manual',
   'clean-weeks',
@@ -98,6 +103,7 @@ export const GateEvaluator = z.enum([
   'no-swelling',
   'run-no-reaction',
   'no-swelling-after-plyo',
+  'acl-rsi',
 ])
 export type GateEvaluator = z.infer<typeof GateEvaluator>
 

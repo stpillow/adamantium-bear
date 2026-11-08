@@ -11,6 +11,7 @@ import {
   dateWords,
   earlierPhaseWords,
   exportLine,
+  koosLine,
   gymRows,
   itemWords,
   lackWords,
@@ -680,5 +681,18 @@ describe('the export reminder (M6)', () => {
     expect(exportLine(undefined, '2026-11-09', logged)).toBeNull()
     expect(exportLine(undefined, '2026-11-11', logged)).toBe('No export yet; the logs go back 9 days')
     expect(exportLine(undefined, '2026-12-20', none)).toBeNull()
+  })
+})
+
+describe('the KOOS due line (Batch A): one quiet word when a check is 28+ days out, no score ever', () => {
+  it('due with no entry stored, and once the latest entry is 28 days old; 27 is not due', () => {
+    expect(koosLine([], '2026-11-08')).toBe('A KOOS check is due')
+    expect(koosLine([{ date: '2026-10-11' }], '2026-11-08')).toBe('A KOOS check is due')
+    expect(koosLine([{ date: '2026-10-11' }], '2026-11-07')).toBeNull()
+    expect(koosLine([{ date: '2026-11-08' }], '2026-11-08')).toBeNull()
+  })
+
+  it('says nothing while the entries are still loading: a line that flashes before the read lands would be wrong', () => {
+    expect(koosLine(undefined, '2026-11-08')).toBeNull()
   })
 })

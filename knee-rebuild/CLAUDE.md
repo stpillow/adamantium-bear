@@ -68,7 +68,7 @@ knee-rebuild/
 - **Back-off**: pain over 5, a set stopped for sharp joint-line pain, or swelling, warmth, or pain up 2+ points the next morning. Load × 0.75 rounded down to the increment, or the previous substitution.
 - **Gate**: the checklist between phases. Auto items evaluate from logged data; manual items are toggles. The phase advances only when every item passes and Shawn confirms.
 - **Deload**: weeks 4, 8 and 12 from the start date. Sets × 2/3 rounded down (minimum 2), loads unchanged, no progression; the mileage plan's down weeks fall on the same weeks.
-- **Symmetry**: injured side divided by the other side, as a percent. Gate 1 wants 80%, gates 2 and 3 want 90%.
+- **Symmetry**: injured side divided by the other side, as a percent — except on a timed test (the 6-meter timed hop), where lower is better, so it is the other side divided by the injured side. Gate 1 wants 80%, gates 2 and 3 want 90%.
 - **Injured side first**: on unilateral slots the injured leg is logged first and sets the rep budget for the healthy leg.
 - **Red-flag state**: any ticked red flag on a morning check. Today shows "Stop. Call the ortho or PT." and progression is suspended until cleared from Settings with a note.
 - **Swap**: replacing a slot's exercise with the next substitution in its ordered list; the slot's job stays the same.

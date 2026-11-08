@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Gate, GateTest, MorningCheck, Run, SetLog, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, Gate, GateTest, MorningCheck, Run, SetLog, Workout } from '../schema/index.ts'
 import { evaluateGate, type GateContext } from './gates.ts'
 import type { SubjectReading } from './history.ts'
 
@@ -17,6 +17,8 @@ const gate3: Gate = {
   items: [
     { id: 'g3-single-hop', text: 'single hop', evaluator: 'symmetry', threshold: 0.9, testItem: 'single-hop', trials: 3 },
     { id: 'g3-no-swelling-plyo', text: 'no swelling the morning after a plyo session', evaluator: 'no-swelling-after-plyo', windowDays: 14 },
+    { id: 'g3-six-meter-timed-hop', text: '6-meter timed hop, fastest counts', evaluator: 'symmetry', threshold: 0.9, testItem: 'six-meter-timed-hop', trials: 3, timed: true },
+    { id: 'g3-acl-rsi', text: 'an ACL-RSI score of 76 or better', evaluator: 'acl-rsi', minScore: 76 },
   ],
 }
 const gate2: Gate = {
@@ -32,7 +34,13 @@ const reading = (date: string, result: SubjectReading['result'] = 'clean'): Subj
 const test = (over: Partial<GateTest>): GateTest => ({ id: 't', date: '2026-11-20', gate: 1, item: 'sl-leg-press-10rm', valueInjured: 8, valueOther: 10, pass: true, manual: false, ...over })
 
 function ctx(over: Partial<GateContext> = {}): GateContext {
-  return { today: '2026-11-22', injuredSide: 'right', readings: [], gateTests: [], morningChecks: [], runs: [], workouts: [], setLogs: [], calfRaiseExerciseIds: ['single-leg-calf-raise-step'], ...over }
+  return { today: '2026-11-22', injuredSide: 'right', readings: [], gateTests: [], morningChecks: [], runs: [], workouts: [], setLogs: [], calfRaiseExerciseIds: ['single-leg-calf-raise-step'], aclRsiEntries: [], ...over }
+}
+
+const ACL_FIELDS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12'] as const
+/** An ACL-RSI entry whose 12 whole items sum to `sum`: the score is sum × 5⁄6, so 92 reads 76.6 and 91 reads 75.8. */
+function aclEntry(date: string, sum: number): AclRsiEntry {
+  return { date, ...(Object.fromEntries(ACL_FIELDS.map((f, i) => [f, Math.max(0, Math.min(10, sum - i * 10))])) as Omit<AclRsiEntry, 'date'>) }
 }
 const twoCleanWeeks = ['2026-11-10', '2026-11-12', '2026-11-14', '2026-11-17', '2026-11-19', '2026-11-21'].map((d) => reading(d))
 
@@ -110,6 +118,46 @@ describe('evaluateGate (rule 8)', () => {
     expect(evaluateGate(gate3, ctx({ gateTests: [one] })).items[0]).toMatchObject({ pass: true, detail: expect.stringContaining('90.3% (56 vs 62)') })
     const zero = test({ gate: 3, item: 'single-hop', trialsInjured: [0], trialsOther: [62, 60], valueInjured: 0, valueOther: 62 })
     expect(evaluateGate(gate3, ctx({ gateTests: [zero] })).items[0]).toMatchObject({ pass: false, detail: expect.stringContaining('0% (0 vs 62)') })
+  })
+
+  it('the timed hop keeps the fastest trial and inverts the ratio: other ÷ injured (Batch A, PROGRAM-QUESTIONS 157)', () => {
+    const timed = (over: Partial<GateTest>) => test({ gate: 3, item: 'six-meter-timed-hop', ...over })
+    // Injured fastest 2.3 s, other fastest 2.1 s: 2.1 / 2.3 = 91.3%, passes the 90% line.
+    const passes = timed({ trialsInjured: [2.4, 2.3, 2.5], trialsOther: [2.2, 2.1, 2.6], valueInjured: 2.3, valueOther: 2.1 })
+    expect(evaluateGate(gate3, ctx({ gateTests: [passes] })).items[2]).toMatchObject({ pass: true, detail: '91.3% (other 2.1 s over injured 2.3 s) against a 90% line, tested 2026-11-20' })
+    // Injured 2.4 s against 2.1 s: 87.5%, fails. A faster injured side reads over 100% and passes.
+    const fails = timed({ trialsInjured: [2.4, 2.6], trialsOther: [2.1], valueInjured: 2.4, valueOther: 2.1 })
+    expect(evaluateGate(gate3, ctx({ gateTests: [fails] })).items[2]).toMatchObject({ pass: false, detail: expect.stringContaining('87.5%') })
+    const faster = timed({ trialsInjured: [2.0], trialsOther: [2.2], valueInjured: 2.0, valueOther: 2.2 })
+    expect(evaluateGate(gate3, ctx({ gateTests: [faster] })).items[2]).toMatchObject({ pass: true, detail: expect.stringContaining('110%') })
+    expect(evaluateGate(gate3, ctx()).items[2]?.detail).toBe('no test entered yet')
+  })
+
+  it('a timed trial of 0 is no time: all-zero on a side fails with "no usable time", distinct from a distance hop’s 0 (PROGRAM-QUESTIONS 108 vs 157)', () => {
+    const timed = (over: Partial<GateTest>) => test({ gate: 3, item: 'six-meter-timed-hop', ...over })
+    const zeroInjured = timed({ trialsInjured: [0, 0, 0], trialsOther: [2.1, 2.2], valueInjured: 0, valueOther: 2.1 })
+    expect(evaluateGate(gate3, ctx({ gateTests: [zeroInjured] })).items[2]).toMatchObject({ pass: false, detail: 'no usable time on the injured side, tested 2026-11-20' })
+    const zeroOther = timed({ trialsInjured: [2.3], trialsOther: [0], valueInjured: 2.3, valueOther: 0 })
+    expect(evaluateGate(gate3, ctx({ gateTests: [zeroOther] })).items[2]).toMatchObject({ pass: false, detail: 'no usable time on the other side, tested 2026-11-20' })
+    // A 0 among usable trials is ignored: the fastest positive counts.
+    const mixed = timed({ trialsInjured: [0, 2.3], trialsOther: [2.1], valueInjured: 2.3, valueOther: 2.1 })
+    expect(evaluateGate(gate3, ctx({ gateTests: [mixed] })).items[2]).toMatchObject({ pass: true, detail: expect.stringContaining('91.3%') })
+  })
+
+  it('the ACL-RSI item reads the latest entry’s score against the 76 line: no entry fails in words (Batch A, PROGRAM-QUESTIONS 156)', () => {
+    expect(evaluateGate(gate3, ctx()).items[3]).toMatchObject({ pass: false, detail: 'no questionnaire entered yet' })
+    // Items are whole, so exactly 76 is unreachable: sum 92 reads 76.6 and passes, sum 91 reads 75.8 and fails.
+    expect(evaluateGate(gate3, ctx({ aclRsiEntries: [aclEntry('2026-11-20', 92)] })).items[3]).toMatchObject({ pass: true, detail: 'scored 76.6 on 2026-11-20; the line is 76' })
+    expect(evaluateGate(gate3, ctx({ aclRsiEntries: [aclEntry('2026-11-20', 91)] })).items[3]).toMatchObject({ pass: false, detail: 'scored 75.8 on 2026-11-20; the line is 76' })
+    // The latest entry wins by date, whatever order the rows arrive in — like the hop items read their latest tests.
+    const older = aclEntry('2026-11-10', 120)
+    const newer = aclEntry('2026-11-21', 91)
+    for (const aclRsiEntries of [[older, newer], [newer, older]]) {
+      expect(evaluateGate(gate3, ctx({ aclRsiEntries })).items[3]).toMatchObject({ pass: false, detail: 'scored 75.8 on 2026-11-21; the line is 76' })
+    }
+    // Without a minScore in the data, the line defaults to the strict published 76.
+    const bare: Gate = { ...gate3, items: [{ id: 'g3-acl-rsi', text: 'ACL-RSI', evaluator: 'acl-rsi' }] }
+    expect(evaluateGate(bare, ctx({ aclRsiEntries: [aclEntry('2026-11-20', 91)] })).items[0]).toMatchObject({ pass: false, detail: 'scored 75.8 on 2026-11-20; the line is 76' })
   })
 
   it('no swelling after plyos needs checks, no swelling, and a Phase 3 A or C session in the window', () => {

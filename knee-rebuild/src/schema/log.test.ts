@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { IsoDate } from './enums.ts'
 import { REST_MAX, REST_MIN } from '../screens/Settings.helpers.ts'
 import {
+  ACL_RSI_MAX,
+  ACL_RSI_MIN,
+  AclRsiEntry,
   DEFAULT_KIT,
   DURATION_MAX,
   DURATION_MIN,
+  KOOS_MAX,
+  KOOS_MIN,
+  KoosEntry,
   EXTRA_TEXT_MAX,
   HR_MAX_MAX,
   HR_MAX_MIN,
@@ -294,5 +300,59 @@ describe('metrics phase 3: a VO2 max reading is a dated whole number, one per da
     expect(Vo2Reading.safeParse({ date: '2026-13-45', vo2: 42 }).success).toBe(false)
     expect(Vo2Reading.safeParse({ date: '2026-11-07' }).success).toBe(false)
     expect(Vo2Reading.safeParse({ vo2: 42 }).success).toBe(false)
+  })
+})
+
+describe('Batch A: a KOOS entry is 42 optional ticked boxes, 0 to 4, one entry per day', () => {
+  const KOOS_FIELDS = [
+    'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9',
+    'sy1', 'sy2', 'sy3', 'sy4', 'sy5', 'sy6', 'sy7',
+    'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10', 'a11', 'a12', 'a13', 'a14', 'a15', 'a16', 'a17',
+    'sp1', 'sp2', 'sp3', 'sp4', 'sp5',
+    'q1', 'q2', 'q3', 'q4',
+  ] as const
+  it('pins the bounds and the 42 field names: 9 pain, 7 symptoms, 17 ADL, 5 sport, 4 QOL', () => {
+    expect([KOOS_MIN, KOOS_MAX]).toEqual([0, 4])
+    expect(KOOS_FIELDS).toHaveLength(42)
+    expect(Object.keys(KoosEntry.shape)).toEqual(['date', ...KOOS_FIELDS])
+  })
+  it('takes answers 0 to 4, the edges included, and every item may be skipped', () => {
+    expect(KoosEntry.parse({ date: '2026-11-08' })).toEqual({ date: '2026-11-08' })
+    expect(KoosEntry.parse({ date: '2026-11-08', p1: 0, sy4: 4, a17: 2, sp5: 3, q1: 1 })).toEqual({ date: '2026-11-08', p1: 0, sy4: 4, a17: 2, sp5: 3, q1: 1 })
+    const full = Object.fromEntries(KOOS_FIELDS.map((f, i) => [f, i % 5]))
+    expect(KoosEntry.safeParse({ date: '2026-11-08', ...full }).success).toBe(true)
+  })
+  it('refuses outside 0 to 4 and anything not whole, never clamping', () => {
+    for (const p1 of [-1, 5, 2.5]) expect(KoosEntry.safeParse({ date: '2026-11-08', p1 }).success, String(p1)).toBe(false)
+  })
+  it('is strict: a key it doesn’t know or a bad date is refused', () => {
+    expect(KoosEntry.safeParse({ date: '2026-11-08', p10: 2 }).success).toBe(false)
+    expect(KoosEntry.safeParse({ date: '2026-11-08', score: 90 }).success).toBe(false)
+    expect(KoosEntry.safeParse({ date: '2026-13-45', p1: 2 }).success).toBe(false)
+    expect(KoosEntry.safeParse({ p1: 2 }).success).toBe(false)
+  })
+})
+
+describe('Batch A: an ACL-RSI entry is 12 required answers, 0 to 10, one entry per day', () => {
+  const ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12'] as const
+  const full = (value: number): Record<string, unknown> => ({ date: '2026-11-08', ...Object.fromEntries(ITEMS.map((f) => [f, value])) })
+  it('pins the bounds and the 12 field names', () => {
+    expect([ACL_RSI_MIN, ACL_RSI_MAX]).toEqual([0, 10])
+    expect(Object.keys(AclRsiEntry.shape)).toEqual(['date', ...ITEMS])
+  })
+  it('takes answers 0 to 10, the edges included, and needs all 12: the published scale has no missing-data rule', () => {
+    expect(AclRsiEntry.safeParse(full(0)).success).toBe(true)
+    expect(AclRsiEntry.safeParse(full(10)).success).toBe(true)
+    const { i7: _skip, ...missing } = full(7)
+    void _skip
+    expect(AclRsiEntry.safeParse(missing).success).toBe(false)
+  })
+  it('refuses outside 0 to 10 and anything not whole, never clamping', () => {
+    for (const i1 of [-1, 11, 7.5]) expect(AclRsiEntry.safeParse({ ...full(5), i1 }).success, String(i1)).toBe(false)
+  })
+  it('is strict: a key it doesn’t know or a bad date is refused', () => {
+    expect(AclRsiEntry.safeParse({ ...full(5), i13: 5 }).success).toBe(false)
+    expect(AclRsiEntry.safeParse({ ...full(5), score: 76 }).success).toBe(false)
+    expect(AclRsiEntry.safeParse({ ...full(5), date: '2026-13-45' }).success).toBe(false)
   })
 })

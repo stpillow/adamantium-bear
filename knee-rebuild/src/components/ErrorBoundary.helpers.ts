@@ -21,6 +21,8 @@ export const SCREEN_NAMES: Readonly<Record<Route['name'], string>> = {
   'next-update': 'For the next program update',
   preview: 'Session preview',
   strava: 'Import from Strava',
+  koos: 'KOOS',
+  'acl-rsi': 'ACL-RSI',
 }
 
 export interface CrashWords {

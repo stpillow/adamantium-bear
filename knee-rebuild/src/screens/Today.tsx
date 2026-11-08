@@ -7,7 +7,7 @@ import { ReadingWord, readingSentence } from '../components/ReadingWord.tsx'
 import { TimeWindow } from '../components/TimeWindow.tsx'
 import { isExtraSlotId } from '../rules/extensions.ts'
 import { Screen } from '../components/Screen.tsx'
-import { useActiveLocation, useHistory, useLocations, useSettings } from '../db/hooks.ts'
+import { useActiveLocation, useHistory, useKoosEntries, useLocations, useSettings } from '../db/hooks.ts'
 import { clearMarkOff, putWorkout, reopenWorkout, setActiveLocation, writeWindow, type History } from '../db/repo.ts'
 import { addDays, nextLiftDate, scheduledSession } from '../rules/calendar.ts'
 import { gymToOffer, lastLoggedGym, liftGym } from '../rules/gymDay.ts'
@@ -21,6 +21,7 @@ import {
   atGymWords,
   earlierPhaseWords,
   exportLine,
+  koosLine,
   gymRows,
   liftChanges,
   markOffLines,
@@ -62,6 +63,8 @@ export function Today() {
   const history = useHistory()
   const activeLocation = useActiveLocation()
   const locations = useLocations()
+  // The KOOS entries feed only the quiet due line (Batch A); undefined while loading keeps the line off rather than wrong.
+  const koosEntries = useKoosEntries()
 
   if (settings === undefined || history === undefined || activeLocation === undefined || locations === undefined || (settings !== null && activeLocation === null)) {
     return (
@@ -106,6 +109,7 @@ export function Today() {
       {view.body.kind === 'run' || view.body.kind === 'off' || view.body.kind === 'before-start' ? <NextLiftLink today={today} settings={settings} history={history} /> : null}
       <OpenWorkoutsBlock open={view.open} active={activeLocation} locations={locations} />
       <YesterdayBlock lines={view.yesterday} />
+      <KoosLine line={koosLine(koosEntries, today)} />
       <ExportLine line={exportLine(settings.lastExportedAt, today, history)} />
     </Screen>
   )
@@ -582,6 +586,22 @@ function YesterdayBlock({ lines }: { lines: YesterdayLine[] }) {
           </Button>
         </>
       ) : null}
+    </section>
+  )
+}
+
+/** One quiet line once a KOOS check is 28+ days overdue (Batch A), with the way to the form; it carries no score — scores show on Progress only. */
+function KoosLine({ line }: { line: string | null }) {
+  if (line === null) return null
+  return (
+    <section aria-label="KOOS check" className={CONTROL_ROW}>
+      <span className="min-w-0 text-small text-on-dark-muted">{line}</span>
+      <span aria-hidden="true" className="shrink-0 text-small text-on-dark-muted">
+        ·
+      </span>
+      <Button variant="quiet" className="shrink-0" onClick={() => navigate({ name: 'koos' })}>
+        Open the form
+      </Button>
     </section>
   )
 }

@@ -33,6 +33,8 @@ export async function readStored(): Promise<StoredContents> {
       addedSlots: await db.addedSlots.toArray(),
       hrSettings: await db.hrSettings.toArray(),
       vo2Readings: await db.vo2Readings.toArray(),
+      koosEntries: await db.koosEntries.toArray(),
+      aclRsiEntries: await db.aclRsiEntries.toArray(),
     }
   })
 }

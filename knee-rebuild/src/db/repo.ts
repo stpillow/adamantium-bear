@@ -19,9 +19,11 @@ import { addedSlotProblem, phaseExerciseIds } from '../rules/addedSlots.ts'
 import { cleanWindow } from '../rules/fitWindow.ts'
 import { overrideProblems } from '../rules/overrides.ts'
 import {
+  AclRsiEntry,
   AddedSlot,
   GateTest,
   HrSettings,
+  KoosEntry,
   Location,
   MorningCheck,
   ProgramOverride,
@@ -168,6 +170,36 @@ export async function saveVo2Reading(row: Vo2Reading): Promise<void> {
 /** Deletes the reading on this date; a reading is re-typeable, so there is no undo to keep. */
 export async function deleteVo2Reading(date: IsoDate): Promise<void> {
   await db.vo2Readings.delete(date)
+}
+
+/** Every KOOS entry as stored, parsed (Batch A). NOT part of `loadHistory`: no rule reads it (PROGRAM-QUESTIONS 158). */
+export async function getKoosEntries(): Promise<KoosEntry[]> {
+  return (await db.koosEntries.toArray()).map((row) => KoosEntry.parse(row))
+}
+
+/** Saves a KOOS entry, parsed first like every write. The date is the primary key, so a same-day save replaces that day's entry. */
+export async function saveKoosEntry(row: KoosEntry): Promise<void> {
+  await db.koosEntries.put(KoosEntry.parse(row))
+}
+
+/** Deletes the KOOS entry on this date; an entry is re-enterable, so there is no undo to keep. */
+export async function deleteKoosEntry(date: IsoDate): Promise<void> {
+  await db.koosEntries.delete(date)
+}
+
+/** Every ACL-RSI entry as stored, parsed (Batch A). NOT part of `loadHistory`: the gates rule reads them through GateContext alone (PROGRAM-QUESTIONS 159). */
+export async function getAclRsiEntries(): Promise<AclRsiEntry[]> {
+  return (await db.aclRsiEntries.toArray()).map((row) => AclRsiEntry.parse(row))
+}
+
+/** Saves an ACL-RSI entry, parsed first like every write. The date is the primary key, so a same-day save replaces that day's entry. */
+export async function saveAclRsiEntry(row: AclRsiEntry): Promise<void> {
+  await db.aclRsiEntries.put(AclRsiEntry.parse(row))
+}
+
+/** Deletes the ACL-RSI entry on this date; an entry is re-enterable, so there is no undo to keep. */
+export async function deleteAclRsiEntry(date: IsoDate): Promise<void> {
+  await db.aclRsiEntries.delete(date)
 }
 
 /** Seed on first run: create the settings row if it is missing, and return it. */

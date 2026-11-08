@@ -53,7 +53,7 @@ four phases, three gates · estimated dates from Nov 2, 2026
 | 3 · Power      | hops and landings     | weeks 8–12       |
 | 4 · Lacrosse   | cutting, scrimmage    | week 13 on       |
 
-Gate 1 (after Phase 1): two clean weeks; 1-leg press within 20%; 30 s one-leg stance. Gate 2 (after Phase 2): step-down, no knee cave; 1-leg strength within 10%; no swelling after runs. Gate 3 (after Phase 3): hop tests ≥90% symmetric; no swelling after plyos; ortho or PT sign-off.
+Gate 1 (after Phase 1): two clean weeks; 1-leg press within 20%; 30 s one-leg stance. Gate 2 (after Phase 2): step-down, no knee cave; 1-leg strength within 10%; no swelling after runs. Gate 3 (after Phase 3): hop tests ≥90% symmetric, the 6-meter timed hop included; ACL-RSI ≥76; no swelling after plyos; ortho or PT sign-off.
 
 Each diamond is a gate: the criteria under it have to be met, and met twice, before the next band starts, whatever the dates say.
 
@@ -218,7 +218,7 @@ Landing rules: every landing is quiet and stuck, about 40 ground contacts a sess
 
 Running in Phase 3: from week 8, finish Wednesday's run with 4 × 15 s strides building to about 85% effort, full walk-back between. From week 10, if Gate 2 was clean, Friday's run carries a 2 × 5 min comfortably-hard segment with 3 min easy between.
 
-Gate 3, to leave Phase 3: single hop, triple hop and crossover hop for distance, each leg, best of three, with the injured side at 90% or better of the other; single-leg leg press 8RM within 10%; no swelling the morning after a plyo session; you'd trust the knee at full speed without thinking about it; ortho or PT sign-off before anything with contact.
+Gate 3, to leave Phase 3: single hop, triple hop and crossover hop for distance and the 6-meter timed hop, each leg, best of three — farthest counts for the distance hops, fastest for the timed hop — with the injured side at 90% or better of the other (for the timed hop that is the other side's best time divided by the injured side's, so a slower injured side reads under 100%); single-leg leg press 8RM within 10%; an ACL-RSI score of 76 or better on the most recent questionnaire; no swelling the morning after a plyo session; you'd trust the knee at full speed without thinking about it; ortho or PT sign-off before anything with contact.
 
 Phase 4 preview, week 13 on, a week or two per rung with the same clean-twice rule:
 

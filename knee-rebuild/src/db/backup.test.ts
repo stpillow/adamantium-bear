@@ -5,9 +5,11 @@ import { BACKUP_SCHEMA_VERSION, BACKUP_TABLES, backupText, parseBackup, type Bac
 import { addDays, dateOf } from '../rules/calendar.ts'
 import { afterMorningCheck, stopMessage } from '../rules/redFlags.ts'
 import {
+  AclRsiEntry,
   AddedSlot,
   GateTest,
   HrSettings,
+  KoosEntry,
   Location,
   MorningCheck,
   PLANET_FITNESS_LOCATION_ID,
@@ -43,7 +45,9 @@ import {
   putWorkout,
   resetAll,
   saveAddedSlot,
+  saveAclRsiEntry,
   saveHrSettings,
+  saveKoosEntry,
   saveProgramOverride,
   saveSettings,
   saveVo2Reading,
@@ -271,6 +275,21 @@ async function seedHistory(): Promise<void> {
   await saveVo2Reading({ date: '2026-12-05', vo2: 44 })
   await saveVo2Reading({ date: '2026-12-05', vo2: 45 })
   await saveVo2Reading({ date: '2026-12-19', vo2: 46 })
+  // A complete KOOS entry, all 42 items answered so fieldsUsed sees every field, saved twice on its
+  // day (the second save replaces), and a partial one with skips (Batch A).
+  await saveKoosEntry({ date: '2026-12-06', p1: 4, sy1: 4, a1: 4, sp1: 4, q1: 4 })
+  await saveKoosEntry({
+    date: '2026-12-06',
+    p1: 1, p2: 2, p3: 1, p4: 2, p5: 0, p6: 2, p7: 1, p8: 0, p9: 1,
+    sy1: 1, sy2: 2, sy3: 0, sy4: 1, sy5: 1, sy6: 2, sy7: 1,
+    a1: 1, a2: 1, a3: 0, a4: 0, a5: 1, a6: 0, a7: 1, a8: 0, a9: 0, a10: 1, a11: 0, a12: 1, a13: 1, a14: 0, a15: 0, a16: 2, a17: 1,
+    sp1: 2, sp2: 2, sp3: 3, sp4: 3, sp5: 2,
+    q1: 2, q2: 2, q3: 1, q4: 2,
+  })
+  await saveKoosEntry({ date: '2026-12-18', p1: 1, p2: 1, p3: 0, p4: 1, p5: 0, sy2: 1, q1: 1 })
+  // An ACL-RSI entry, saved twice on its day (the second save replaces): all 12 items are required, so every field is used (Batch A).
+  await saveAclRsiEntry({ date: '2026-12-19', i1: 5, i2: 5, i3: 5, i4: 5, i5: 5, i6: 5, i7: 5, i8: 5, i9: 5, i10: 5, i11: 5, i12: 5 })
+  await saveAclRsiEntry({ date: '2026-12-19', i1: 8, i2: 7, i3: 6, i4: 8, i5: 7, i6: 6, i7: 7, i8: 8, i9: 6, i10: 9, i11: 8, i12: 7 })
 }
 
 /** The keys every row of a table uses, across the table: every field of the schema shows up somewhere. */
@@ -289,6 +308,8 @@ const SHAPES: Record<keyof BackupTables, readonly string[]> = {
   addedSlots: Object.keys(AddedSlot.shape),
   hrSettings: Object.keys(HrSettings.shape),
   vo2Readings: Object.keys(Vo2Reading.shape),
+  koosEntries: Object.keys(KoosEntry.shape),
+  aclRsiEntries: Object.keys(AclRsiEntry.shape),
 }
 
 describe('the backup carries the whole database', () => {
@@ -364,8 +385,8 @@ describe('import is all or nothing', () => {
     await seedHistory()
     const { backup } = await exportBackup(T1)
     const before = await rawDump()
-    const newer = { ...backup, schemaVersion: 9 } as unknown as Backup
-    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 9; this one reads up to 8).')
+    const newer = { ...backup, schemaVersion: 10 } as unknown as Backup
+    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 10; this one reads up to 9).')
     const twice = { ...backup, runs: [...backup.runs, ...backup.runs.slice(0, 1)] }
     await expect(replaceAll(twice, program, TODAY)).rejects.toThrow('twice')
     expect(await rawDump()).toEqual(before)

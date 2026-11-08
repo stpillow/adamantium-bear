@@ -23,6 +23,10 @@ const TAB_OF: Record<Route['name'], TabName> = {
   'next-update': 'more',
   strava: 'more',
   preview: 'week',
+  /** The KOOS form: its scores live on Progress (Batch A), wherever the tap came from. */
+  koos: 'progress',
+  /** The ACL-RSI form: reached from gate 3's item row (Batch A). */
+  'acl-rsi': 'gates',
 }
 
 export function activeTab(route: Route): TabName {

@@ -2392,12 +2392,27 @@
           "trials": 3
         },
         {
+          "id": "g3-six-meter-timed-hop",
+          "text": "6-meter timed hop, each leg, best of three (fastest counts), with the injured side's time within the 90% line read as the other side's best time over the injured side's",
+          "evaluator": "symmetry",
+          "threshold": 0.9,
+          "testItem": "six-meter-timed-hop",
+          "trials": 3,
+          "timed": true
+        },
+        {
           "id": "g3-sl-leg-press-8rm",
           "text": "single-leg leg press 8RM within 10%",
           "evaluator": "symmetry",
           "threshold": 0.9,
           "testItem": "sl-leg-press-8rm",
           "prefillExerciseId": "single-leg-leg-press"
+        },
+        {
+          "id": "g3-acl-rsi",
+          "text": "an ACL-RSI score of 76 or better on the most recent questionnaire",
+          "evaluator": "acl-rsi",
+          "minScore": 76
         },
         {
           "id": "g3-no-swelling-plyo",

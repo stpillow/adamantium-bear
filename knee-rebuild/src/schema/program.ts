@@ -176,6 +176,19 @@ export const GateItem = z.strictObject({
   /** symmetry: hop tests store this many trials per side and keep the best. */
   trials: z.number().int().positive().optional(),
   /**
+   * symmetry, timed hops (the 6-meter timed hop, Batch A): the unit is seconds and lower is
+   * better, so best = the FASTEST positive trial and the line reads other ÷ injured — a slower
+   * injured side reads under 100% (PROGRAM-QUESTIONS 157). Distance hops carry no flag and keep
+   * the farther-is-better math.
+   */
+  timed: z.literal(true).optional(),
+  /**
+   * acl-rsi: the latest stored questionnaire entry's score (0 to 100) must reach this (76, the
+   * strict published threshold; PROGRAM-QUESTIONS 156, 161). Not `threshold`, which is pinned to
+   * the 0-to-1 symmetry line.
+   */
+  minScore: z.number().int().positive().optional(),
+  /**
    * symmetry load tests: the two-sided exercise whose latest session that logged both sides
    * prefills the form (PROGRAM-QUESTIONS 25). Hop tests have none; their trials start not entered.
    * A seed test checks every one resolves and is two-sided.

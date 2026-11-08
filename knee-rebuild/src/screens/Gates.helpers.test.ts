@@ -4,7 +4,7 @@ import { addDays, weekOf } from '../rules/calendar.ts'
 import { evaluateGate } from '../rules/gates.ts'
 import { attachChecks } from '../rules/history.ts'
 import { advancePhase, loadTestPrefill, phaseEntryWeek } from '../rules/progress.ts'
-import { Settings, type Gate, type GateTest, type IsoDate, type Location, type MorningCheck, type ProgramOverride, type Run, type SetLog, type Workout } from '../schema/index.ts'
+import { Settings, type AclRsiEntry, type Gate, type GateTest, type IsoDate, type Location, type MorningCheck, type ProgramOverride, type Run, type SetLog, type Workout } from '../schema/index.ts'
 import {
   CALF_RAISE_EXERCISE_IDS,
   advanceQuestion,
@@ -20,6 +20,9 @@ import {
   enterWords,
   errorWords,
   formBest,
+  KOOS_OFFER,
+  trialsIntro,
+  ZERO_TIME_BLOCKER,
   focusAfterConfirm,
   formBlocker,
   gateContext,
@@ -102,7 +105,7 @@ const byId = (view: ReturnType<typeof gatesView>, id: string): ItemView => {
 describe('done criterion: gate 1 evaluates from logged data alone', () => {
   it('reads the clean weeks and the 4-mile run from workouts, set logs, morning checks and runs; the test and the toggle wait for entry', () => {
     const history = loggedPhase1()
-    const result = evaluateGate(gate1, gateContext({ today: TODAY, settings: settings(), history }))
+    const result = evaluateGate(gate1, gateContext({ today: TODAY, settings: settings(), history, aclRsiEntries: [] }))
     expect(result.items.map((i) => [i.item.id, i.pass])).toEqual([
       ['g1-clean-weeks', true],
       ['g1-sl-leg-press', false],
@@ -111,7 +114,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
     ])
     expect(result.passes).toBe(false)
 
-    const view = gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM, aclRsiEntries: [] })
     if (view.kind !== 'gate') throw new Error('expected gate 1')
     expect(view.gate.number).toBe(1)
     expect(view.countLine).toBe('2 of 4 items pass')
@@ -125,27 +128,27 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
   it('one hold in the window fails the clean weeks, from the logged pain alone, and the detail names it', () => {
     const history = loggedPhase1()
     const sore = { ...history, setLogs: history.setLogs.map((s) => (s.workoutId === 'w-2026-11-17' ? { ...s, painDuring: 4 } : s)) }
-    const view = gatesView({ today: TODAY, settings: settings(), history: sore, program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings(), history: sore, program: PROGRAM, aclRsiEntries: [] })
     expect(byId(view, 'g1-clean-weeks')).toMatchObject({ pass: false, word: 'Not yet', detail: '1 of 12 readings in the last 14 days read hold. Hold on Tuesday Nov 17 (Session A).' })
   })
 
   it('a session waiting on its morning check says so, rather than reading as a session that went badly', () => {
     const history = loggedPhase1()
     const waiting = { ...history, morningChecks: history.morningChecks.filter((c) => c.date !== TODAY) }
-    const view = gatesView({ today: TODAY, settings: settings(), history: waiting, program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings(), history: waiting, program: PROGRAM, aclRsiEntries: [] })
     expect(byId(view, 'g1-clean-weeks')).toMatchObject({
       pass: false,
       detail: '1 of 12 readings in the last 14 days read hold. Saturday Nov 21’s Session A reads hold until its morning check is in; log it to count.',
     })
     // A run waiting on its check and a back-off say so in the same way.
     const run20 = { ...history, morningChecks: history.morningChecks.filter((c) => c.date !== '2026-11-21') }
-    const late = gatesView({ today: '2026-11-21', settings: settings(), history: run20, program: PROGRAM })
+    const late = gatesView({ today: '2026-11-21', settings: settings(), history: run20, program: PROGRAM, aclRsiEntries: [] })
     expect(byId(late, 'g1-clean-weeks').detail).toContain('Friday Nov 20’s Run: long reads hold until its morning check is in; log it to count.')
   })
 
   it('with the leg-press test entered and the stance ticked, the gate passes and advances only on confirmation', () => {
     const history = loggedPhase1()
-    const view = gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM, aclRsiEntries: [] })
     const legPress = byId(view, 'g1-sl-leg-press')
     if (legPress.kind !== 'symmetry') throw new Error('expected a symmetry item')
     // Phase 1 runs no single-leg leg press, so the loads come from the test itself (PROGRAM-QUESTIONS 114).
@@ -160,7 +163,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
 
     const stance = byId(view, 'g1-stance')
     const tick = manualTest({ gate: gate1, item: stance.item, pass: true, today: TODAY, id: newGateTestId('2026-11-22T15:01:00.000Z', stance.item.id, []) })
-    const passing = gatesView({ today: TODAY, settings: settings(), history: { ...history, gateTests: [draft.test, tick] }, program: PROGRAM })
+    const passing = gatesView({ today: TODAY, settings: settings(), history: { ...history, gateTests: [draft.test, tick] }, program: PROGRAM, aclRsiEntries: [] })
     if (passing.kind !== 'gate') throw new Error('expected gate 1')
     expect(passing.countLine).toBe('4 of 4 items pass')
     expect(passing.result.passes).toBe(true)
@@ -177,7 +180,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
   })
 
   it('says Phase 1 doesn’t run the test’s exercise, so nothing can prefill it, rather than "yet" (PROGRAM-QUESTIONS 114)', () => {
-    const view = gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })
     const legPress = byId(view, 'g1-sl-leg-press')
     if (legPress.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(legPress.entry).toMatchObject({ prefill: null, unit: 'lb', step: 5 })
@@ -192,7 +195,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
     const history: HistoryLike = { ...logged, workouts: [...logged.workouts, sl], setLogs: [...logged.setLogs, ...slSets] }
     // The rule itself still finds the session; the screen doesn't offer it for a phase that doesn't run the exercise.
     expect(loadTestPrefill(attachChecks(history.workouts, history.setLogs, []), 'single-leg-leg-press', 'right').prefill).toMatchObject({ date: '2026-11-19', injured: 80, other: 100 })
-    const legPress = byId(gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM }), 'g1-sl-leg-press')
+    const legPress = byId(gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM, aclRsiEntries: [] }), 'g1-sl-leg-press')
     if (legPress.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(legPress.entry.prefill).toBeNull()
   })
@@ -205,7 +208,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
     // Shawn added the single-leg leg press to Phase 1 C's step-up substitutions, so a Phase 1 session can run it.
     const edit: ProgramOverride = { slotId: 'p1c-1', substitutionIds: ['step-up-stair', 'split-squat', 'single-leg-leg-press'], editedOn: '2026-11-16' }
     const history: HistoryLike = { ...logged, workouts: [...logged.workouts, sl], setLogs: [...logged.setLogs, ...slSets], programOverrides: [edit] }
-    const legPress = byId(gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM }), 'g1-sl-leg-press')
+    const legPress = byId(gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM, aclRsiEntries: [] }), 'g1-sl-leg-press')
     if (legPress.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(legPress.entry.prefill).toMatchObject({ date: '2026-11-19', injured: 80, other: 100 })
     expect(legPress.entry.prefillLine).toBe('Prefilled from Thursday Nov 19’s session: Single-leg leg press, 80 lb right and 100 lb left, the heaviest set on each side. Change either to what the test lifted.')
@@ -216,7 +219,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
       // An imported file's edit the repo would refuse: a leg press on the carry, counted in yards. The runner drops it, so the phase doesn't run it.
       { slotId: 'p1c-7', substitutionIds: ['suitcase-carry', 'single-leg-leg-press'], editedOn: '2026-11-16' },
     ] satisfies ProgramOverride[]) {
-      const row = byId(gatesView({ today: TODAY, settings: settings(), history: { ...history, programOverrides: [other] }, program: PROGRAM }), 'g1-sl-leg-press')
+      const row = byId(gatesView({ today: TODAY, settings: settings(), history: { ...history, programOverrides: [other] }, program: PROGRAM, aclRsiEntries: [] }), 'g1-sl-leg-press')
       if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
       expect(row.entry.prefill).toBeNull()
       expect(row.entry.prefillLine).toBe('Phase 1 doesn’t run this exercise (Single-leg leg press), so no session can prefill this test. Enter the loads from the test.')
@@ -230,7 +233,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
     const sl = workout('2026-11-19', { id: 'w-sl' })
     const slSets = [1, 2, 3].map((n) => set('w-sl', 'single-leg-leg-press', 'both', n, 80, { reps: 10 }))
     const history: HistoryLike = { ...logged, workouts: [...logged.workouts, sl], setLogs: [...logged.setLogs, ...slSets], programOverrides: [edit] }
-    const row = byId(gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM }), 'g1-sl-leg-press')
+    const row = byId(gatesView({ today: TODAY, settings: settings(), history, program: PROGRAM, aclRsiEntries: [] }), 'g1-sl-leg-press')
     if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(row.entry.prefill).toBeNull()
     expect(row.entry.prefillLine).toBe('Phase 1 runs this exercise (Single-leg leg press) only on a slot logged for both legs at once, so no session can prefill this test. Enter the loads from the test.')
@@ -238,7 +241,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
 
   it('a phase that runs the test’s exercise but hasn’t logged both sides yet says "yet"', () => {
     const phase2 = settings({ currentPhase: 2, phaseEnteredWeek: 4 })
-    const row = byId(gatesView({ today: '2026-11-24', settings: phase2, history: { ...loggedPhase1(), gateTests: [] }, program: PROGRAM }), 'g2-sl-leg-press')
+    const row = byId(gatesView({ today: '2026-11-24', settings: phase2, history: { ...loggedPhase1(), gateTests: [] }, program: PROGRAM, aclRsiEntries: [] }), 'g2-sl-leg-press')
     if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(row.entry.prefill).toBeNull()
     expect(row.entry.prefillLine).toBe('Nothing to prefill: no session has logged both sides of this exercise (Single-leg leg press) yet. Enter the loads from the test.')
@@ -248,7 +251,7 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
 describe('done criterion: the hop-test worked example', () => {
   it('best 56 injured against 62 other reads 90.3% and passes gate 3’s 90% line', () => {
     const phase3 = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
-    const view = gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests: [] }, program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests: [] }, program: PROGRAM, aclRsiEntries: [] })
     if (view.kind !== 'gate') throw new Error('expected gate 3')
     expect(view.gate.number).toBe(3)
     const hop = byId(view, 'g3-single-hop')
@@ -274,11 +277,11 @@ describe('done criterion: the hop-test worked example', () => {
       valueInjured: 56, valueOther: 62, trialsInjured: [50, 56, 54], trialsOther: [60, 62, 61], pass: true, manual: false,
     })
 
-    const after = gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests: [draft.test] }, program: PROGRAM })
+    const after = gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests: [draft.test] }, program: PROGRAM, aclRsiEntries: [] })
     const evaluated = byId(after, 'g3-single-hop')
     expect(evaluated).toMatchObject({ pass: true, mark: '✓', word: 'Passes', detail: '90.3% (56 vs 62) against a 90% line, tested Sunday Nov 22.' })
     if (evaluated.kind !== 'symmetry') throw new Error('expected a symmetry item')
-    expect(evaluated.entry.earlier).toEqual([{ id: draft.test.id, when: 'Sunday Nov 22', percent: '90.3%', values: '56 vs 62 in', pass: true, word: '✓ passes' }])
+    expect(evaluated.entry.earlier).toEqual([{ id: draft.test.id, when: 'Sunday Nov 22', percent: '90.3%', values: '56 vs 62 in', pass: true, word: '✓ passes', note: null }])
   })
 
   it('just under the line reads not yet, and the saved test fails the item', () => {
@@ -341,7 +344,7 @@ describe('symmetry forms: hop tests (PROGRAM-QUESTIONS 108, Shawn Nov 2)', () =>
     if (!draft.ok) throw new Error(draft.blocker)
     expect(draft.test).toMatchObject({ valueInjured: 0, valueOther: 62, trialsInjured: [0], trialsOther: [62, 60], pass: false, manual: false })
 
-    const after = gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests: [draft.test] }, program: PROGRAM })
+    const after = gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests: [draft.test] }, program: PROGRAM, aclRsiEntries: [] })
     const evaluated = byId(after, 'g3-single-hop')
     expect(evaluated).toMatchObject({ pass: false, mark: '○', word: 'Not yet', detail: '0% (0 vs 62) against a 90% line, tested Sunday Nov 22.' })
     if (evaluated.kind !== 'symmetry') throw new Error('expected a symmetry item')
@@ -412,7 +415,7 @@ describe('symmetry forms: load tests', () => {
   })
 
   it('a load not entered shows in words, and Enter starts it at the exercise’s first step, not at 0 (a hop starts at 0)', () => {
-    const view = gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })
     const legPress = byId(view, 'g1-sl-leg-press')
     if (legPress.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(openForm(legPress.entry.trials, legPress.entry.prefill)).toEqual({ injured: [null], other: [null] })
@@ -509,7 +512,7 @@ describe('the load prefill (loadTestPrefill)', () => {
     const history: HistoryLike = { workouts: [home, hotel], setLogs: sets, morningChecks: [], runs: [], gateTests: [], sessionMoves: [] }
     const phase2 = settings({ currentPhase: 2, phaseEnteredWeek: 4, activeLocationId: 'hotel' })
     const gym = (id: string, name: string): Location => ({ id, name, present: [], dumbbellMaxLb: 25, startedFrom: 'empty', listVersion: 1, extras: [], markedOff: [], createdOn: '2026-11-01', archived: false })
-    const view = gatesView({ today: '2026-12-11', settings: phase2, history, program: PROGRAM, locations: [gym('planet-fitness', 'Planet Fitness'), gym('hotel', 'Hampton Inn')] })
+    const view = gatesView({ today: '2026-12-11', settings: phase2, history, program: PROGRAM, locations: [gym('planet-fitness', 'Planet Fitness'), gym('hotel', 'Hampton Inn')], aclRsiEntries: [] })
     const row = byId(view, 'g2-bulgarian')
     if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(row.entry.prefill).toMatchObject({ date: '2026-12-08', injured: 40, other: 50 })
@@ -530,7 +533,7 @@ describe('the form a load test opens on, coming back to Gates (PROGRAM-QUESTIONS
   })
   const phase2 = settings({ currentPhase: 2, phaseEnteredWeek: 4 })
   const entryOf = (history: HistoryLike, today: IsoDate, id = 'g2-bulgarian') => {
-    const row = byId(gatesView({ today, settings: phase2, history, program: PROGRAM }), id)
+    const row = byId(gatesView({ today, settings: phase2, history, program: PROGRAM, aclRsiEntries: [] }), id)
     if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
     return row.entry
   }
@@ -566,12 +569,12 @@ describe('the form a load test opens on, coming back to Gates (PROGRAM-QUESTIONS
 
   it('gate 1, which no session can prefill, opens on its last test once there is one; hop tests always open not entered', () => {
     const legPress: GateTest = { id: 'gate-test-2026-11-22T15:00:00.000Z-sl-leg-press-10rm', date: TODAY, gate: 1, item: 'sl-leg-press-10rm', valueInjured: 80, valueOther: 100, pass: true, manual: false }
-    const g1 = byId(gatesView({ today: TODAY, settings: settings(), history: { ...loggedPhase1(), gateTests: [legPress] }, program: PROGRAM }), 'g1-sl-leg-press')
+    const g1 = byId(gatesView({ today: TODAY, settings: settings(), history: { ...loggedPhase1(), gateTests: [legPress] }, program: PROGRAM, aclRsiEntries: [] }), 'g1-sl-leg-press')
     if (g1.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(g1.entry).toMatchObject({ opening: { injured: [80], other: [100] }, openingSaved: true })
     expect(g1.entry.prefillLine).toBe('Opened on the last test, Sunday Nov 22: Single-leg leg press, 80 lb right and 100 lb left. Phase 1 doesn’t run this exercise, so no session can prefill this test. Change either to save a new test.')
     const hopTest: GateTest = { id: 'gate-test-x-single-hop', date: TODAY, gate: 3, item: 'single-hop', valueInjured: 56, valueOther: 62, trialsInjured: [56], trialsOther: [62], pass: true, manual: false }
-    const hop = byId(gatesView({ today: TODAY, settings: settings({ currentPhase: 3 }), history: { ...loggedPhase1(), gateTests: [hopTest] }, program: PROGRAM }), 'g3-single-hop')
+    const hop = byId(gatesView({ today: TODAY, settings: settings({ currentPhase: 3 }), history: { ...loggedPhase1(), gateTests: [hopTest] }, program: PROGRAM, aclRsiEntries: [] }), 'g3-single-hop')
     if (hop.kind !== 'symmetry') throw new Error('expected a symmetry item')
     expect(hop.entry).toMatchObject({ opening: { injured: [null, null, null], other: [null, null, null] }, openingSaved: false })
   })
@@ -586,7 +589,7 @@ describe('manual items and test order', () => {
     const tick = manualTest({ gate: gate1, item: { id: 'g1-stance' }, pass: true, today: TODAY, id: newGateTestId('2026-11-22T14:00:00.000Z', 'g1-stance', []) })
     const untick = manualTest({ gate: gate1, item: { id: 'g1-stance' }, pass: false, today: TODAY, id: newGateTestId('2026-11-22T14:05:00.000Z', 'g1-stance', []) })
     for (const gateTests of [[tick, untick], [untick, tick]]) {
-      const view = gatesView({ today: TODAY, settings: settings(), history: { ...loggedPhase1(), gateTests }, program: PROGRAM })
+      const view = gatesView({ today: TODAY, settings: settings(), history: { ...loggedPhase1(), gateTests }, program: PROGRAM, aclRsiEntries: [] })
       expect(byId(view, 'g1-stance')).toMatchObject({ pass: false, word: 'Not yet', detail: 'Unticked Sunday Nov 22.' })
     }
     const older = { ...tick, date: '2026-11-20', id: newGateTestId('2026-11-20T14:00:00.000Z', 'g1-stance', []) }
@@ -638,7 +641,7 @@ describe('advancing the phase', () => {
     // Saturday's Session C is open; the gate reads only closed sessions, so it passes underneath.
     const open = workout('2026-11-21', { id: '2026-11-21-p1-c', templateId: 'p1-c', status: 'in-progress' })
     const history = { ...logged, workouts: [...logged.workouts.filter((w) => w.date !== '2026-11-21'), open], gateTests: passing }
-    const view = gatesView({ today: '2026-11-21', settings: settings(), history, program: PROGRAM })
+    const view = gatesView({ today: '2026-11-21', settings: settings(), history, program: PROGRAM, aclRsiEntries: [] })
     if (view.kind !== 'gate') throw new Error('expected gate 1')
     expect(view.result.passes).toBe(true)
     expect(view.advance).toEqual({ enabled: false, why: 'Session C from Saturday, November 21 is still open: finish it or end it early, then advance' })
@@ -648,10 +651,10 @@ describe('advancing the phase', () => {
     expect(advanceState(items([true]), { active: true, since: TODAY, items: ['locking'] })).toEqual({ enabled: false, why: 'The red-flag state is on: clear it in Settings, with a note, before advancing' })
     const flag = program.redFlags[0]
     if (!flag) throw new Error('no red flags in the seed')
-    const view = gatesView({ today: TODAY, settings: settings({ redFlag: { active: true, since: TODAY, items: [flag.id] } }), history: loggedPhase1(), program: PROGRAM })
+    const view = gatesView({ today: TODAY, settings: settings({ redFlag: { active: true, since: TODAY, items: [flag.id] } }), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })
     if (view.kind !== 'gate') throw new Error('expected gate 1')
     expect(view.stop).toEqual({ headline: 'Stop. Call the ortho or PT.', items: [flag.text] })
-    expect(gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM })).toMatchObject({ kind: 'gate', stop: null })
+    expect(gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })).toMatchObject({ kind: 'gate', stop: null })
   })
 
   it('focus after the confirm closes: Not yet goes back to Advance phase, Yes to the line saying what changed, anything else stays put', () => {
@@ -681,7 +684,7 @@ describe('advancing the phase', () => {
     const monday = '2026-11-23'
     const logged = loggedPhase1()
     const history = { ...logged, morningChecks: [...logged.morningChecks, check(monday)], gateTests: passingTests(monday) }
-    const view = gatesView({ today: monday, settings: settings(), history, program: PROGRAM })
+    const view = gatesView({ today: monday, settings: settings(), history, program: PROGRAM, aclRsiEntries: [] })
     if (view.kind !== 'gate') throw new Error('expected gate 1')
     expect(view.advance).toEqual({ enabled: true })
     expect(view.entryWeek).toBe(4)
@@ -693,6 +696,7 @@ describe('advancing the phase', () => {
       settings: settings(),
       history: { ...history, morningChecks: [...history.morningChecks, check(tuesday)], sessionMoves: [{ id: 'm1', week: 4, dayA: 'mon', dayB: 'tue' }] },
       program: PROGRAM,
+      aclRsiEntries: [],
     })
     if (moved.kind !== 'gate') throw new Error('expected gate 1')
     expect(moved.entryWeek).toBe(5)
@@ -701,7 +705,7 @@ describe('advancing the phase', () => {
   it('Phase 4 has no gate to check', () => {
     expect(currentGate(program.gates, 4)).toBeNull()
     expect(currentGate(program.gates, 2)?.number).toBe(2)
-    expect(gatesView({ today: TODAY, settings: settings({ currentPhase: 4 }), history: loggedPhase1(), program: PROGRAM })).toEqual({
+    expect(gatesView({ today: TODAY, settings: settings({ currentPhase: 4 }), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })).toEqual({
       kind: 'no-gate',
       line: 'Gate 3 passed; Phase 4’s sessions arrive with the next program update.',
     })
@@ -758,7 +762,7 @@ describe('the seed’s gates fit the screen', () => {
     const history: HistoryLike = { workouts: [bss], setLogs: sets, morningChecks: [], runs: [], gateTests: [], sessionMoves: [] }
     const phase2 = settings({ currentPhase: 2, phaseEnteredWeek: 4 })
     const read = (g: Gate) => {
-      const row = byId(gatesView({ today: '2026-12-09', settings: phase2, history, program: { ...PROGRAM, gates: [g] } }), 'g2-x')
+      const row = byId(gatesView({ today: '2026-12-09', settings: phase2, history, program: { ...PROGRAM, gates: [g] }, aclRsiEntries: [] }), 'g2-x')
       if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
       return row.entry
     }
@@ -766,5 +770,114 @@ describe('the seed’s gates fit the screen', () => {
     expect(read(gate).prefillLine).toContain('Bulgarian split squat, 30 lb right and 35 lb left')
     const bare = { id: item.id, text: item.text, evaluator: item.evaluator, threshold: item.threshold, testItem: item.testItem }
     expect(read({ ...gate, items: [bare] })).toMatchObject({ prefill: null, prefillLine: 'Nothing to prefill from: enter the values from the test.' })
+  })
+})
+
+describe('the timed hop entry (Batch A, PROGRAM-QUESTIONS 157)', () => {
+  const phase3 = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
+  const viewOf = (gateTests: GateTest[] = [], aclRsiEntries: AclRsiEntry[] = []) =>
+    gatesView({ today: TODAY, settings: phase3, history: { ...loggedPhase1(), gateTests }, program: PROGRAM, aclRsiEntries })
+  const timedItem = gate3.items.find((i) => i.id === 'g3-six-meter-timed-hop')
+  if (!timedItem) throw new Error('no timed hop item in the seed')
+
+  it('enters seconds to a tenth with a 60 s ceiling, and its words carry the direction; distance hops keep inches', () => {
+    const row = byId(viewOf(), 'g3-six-meter-timed-hop')
+    if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
+    expect(row.entry).toMatchObject({ key: 'six-meter-timed-hop', threshold: 0.9, trials: 3, timed: true, unit: 's', step: 0.1, max: 60, prefill: null, prefillLine: null })
+    expect(trialsIntro(row.entry)).toBe(
+      'Up to 3 trials per side, in seconds to a tenth; the fastest of each side counts, and the line reads the other side’s time over the injured side’s, so a slower injured side reads under 100%. A time reads in seconds; 0 isn’t a time — leave the trial empty if the hop didn’t happen.',
+    )
+    // Enter starts a timed trial at a positive second, never at the refused 0.
+    expect(enterStart(row.entry)).toBe(1)
+    expect(enterWords(trialName(row.entry.sides.injured, 0), enterStart(row.entry), row.entry.unit)).toBe('Enter right · injured, trial 1, starting at 1 s')
+    const single = byId(viewOf(), 'g3-single-hop')
+    if (single.kind !== 'symmetry') throw new Error('expected a symmetry item')
+    expect(single.entry).toMatchObject({ timed: false, unit: 'in', step: 1, max: 600 })
+    expect(enterStart(single.entry)).toBe(0)
+    expect(trialsIntro(single.entry)).toContain('A hop you couldn’t do is 0')
+  })
+
+  it('the fastest of each side counts and the live line reads other over injured', () => {
+    let form = openForm(3, null)
+    ;[2.4, 2.3, 2.5].forEach((v, i) => (form = setValue(form, 'injured', i, v)))
+    form = setValue(form, 'other', 0, 2.1)
+    const best = formBest(form, true)
+    expect(best).toEqual({ injured: 2.3, other: 2.1 })
+    expect(bestWords(best.injured, 's', true)).toBe('Fastest 2.3 s')
+    expect(bestWords(null, 's', true)).toBe('Fastest: nothing entered yet')
+    expect(symmetryLine(best, 0.9, false, true)).toBe('91.3% · the line is 90%: passes')
+    expect(symmetryLine({ injured: 2.4, other: 2.1 }, 0.9, false, true)).toBe('87.5% · the line is 90%: not yet')
+    expect(formBlocker(form, 3, null, true)).toBeNull()
+  })
+
+  it('a 0 s trial is refused in words — 0 isn’t a time — and Save waits on it; a missing side waits in the usual words', () => {
+    const zero = setValue(setValue(openForm(3, null), 'injured', 0, 0), 'other', 0, 2.1)
+    expect(symmetryLine(formBest(zero, true), 0.9, false, true)).toBe(`${ZERO_TIME_BLOCKER}.`)
+    expect(formBlocker(zero, 3, null, true)).toBe(ZERO_TIME_BLOCKER)
+    // A 0 beside a usable trial still waits: clear it or it isn't a time.
+    const beside = setValue(zero, 'injured', 1, 2.3)
+    expect(formBlocker(beside, 3, null, true)).toBe(ZERO_TIME_BLOCKER)
+    const oneSide = setValue(openForm(3, null), 'injured', 0, 2.3)
+    expect(formBlocker(oneSide, 3, null, true)).toBe('Enter at least one trial on each side to save')
+    expect(symmetryLine(formBest(oneSide, true), 0.9, false, true)).toBe('Enter the other side to see the symmetry.')
+  })
+
+  it('buildTest keeps the fastest, decides on the inverted ratio, and carries the one-line note into GateTest.notes', () => {
+    const form = { injured: [2.4, 2.3, null], other: [2.1, null, null] }
+    const draft = buildTest({ gate: gate3, item: timedItem, form, today: TODAY, id: 't-timed', note: '  Soft landing, a little slow off the injured side  ' })
+    expect(draft).toEqual({
+      ok: true,
+      test: {
+        id: 't-timed', date: TODAY, gate: 3, item: 'six-meter-timed-hop',
+        valueInjured: 2.3, valueOther: 2.1, trialsInjured: [2.4, 2.3], trialsOther: [2.1],
+        notes: 'Soft landing, a little slow off the injured side', pass: true, manual: false,
+      },
+    })
+    if (!draft.ok) throw new Error('expected a draft')
+    // The earlier list recomputes with the right direction and shows the note in words.
+    expect(earlierTests([draft.test], 3, 'six-meter-timed-hop', 0.9, 's', true)).toEqual([
+      { id: 't-timed', when: 'Sunday Nov 22', percent: '91.3%', values: '2.3 vs 2.1 s', pass: true, word: '✓ passes', note: 'Soft landing, a little slow off the injured side' },
+    ])
+    // A distance hop takes the note the same way; a blank note stores nothing.
+    const hopItem = gate3.items.find((i) => i.id === 'g3-single-hop')
+    if (!hopItem) throw new Error('no single hop item')
+    const hop = buildTest({ gate: gate3, item: hopItem, form: { injured: [56, null, null], other: [62, null, null] }, today: TODAY, id: 't-hop', note: 'Shoes on' })
+    expect(hop.ok && hop.test.notes).toBe('Shoes on')
+    const bare = buildTest({ gate: gate3, item: hopItem, form: { injured: [56, null, null], other: [62, null, null] }, today: TODAY, id: 't-bare', note: '   ' })
+    expect(bare.ok && 'notes' in bare.test).toBe(false)
+  })
+
+  it('the evaluated row reads the saved test through the gate rule, in the inverted words', () => {
+    const draft = buildTest({ gate: gate3, item: timedItem, form: { injured: [2.3, null, null], other: [2.1, null, null] }, today: TODAY, id: 'gate-test-2026-11-22T16:30:00.000Z-six-meter-timed-hop' })
+    if (!draft.ok) throw new Error(draft.blocker)
+    const row = byId(viewOf([draft.test]), 'g3-six-meter-timed-hop')
+    expect(row).toMatchObject({ pass: true, mark: '✓', word: 'Passes', detail: '91.3% (other 2.1 s over injured 2.3 s) against a 90% line, tested Sunday Nov 22.' })
+  })
+})
+
+describe('the ACL-RSI row and the KOOS offer (Batch A, PROGRAM-QUESTIONS 156, 158)', () => {
+  const phase3 = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
+  const ACL_FIELDS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12'] as const
+  const aclEntry = (date: IsoDate, sum: number): AclRsiEntry =>
+    ({ date, ...(Object.fromEntries(ACL_FIELDS.map((f, i) => [f, Math.max(0, Math.min(10, sum - i * 10))])) as Omit<AclRsiEntry, 'date'>) })
+  const viewOf = (aclRsiEntries: AclRsiEntry[]) => gatesView({ today: TODAY, settings: phase3, history: loggedPhase1(), program: PROGRAM, aclRsiEntries })
+
+  it('the ACL-RSI item is its own row kind: auto words with the latest score and date; the manual trust toggle stays beside it', () => {
+    const view = viewOf([])
+    expect(byId(view, 'g3-acl-rsi')).toMatchObject({ kind: 'acl-rsi', pass: false, mark: '○', word: 'Not yet', detail: 'No questionnaire entered yet.' })
+    expect(byId(view, 'g3-trust')).toMatchObject({ kind: 'manual' })
+    const scored = viewOf([aclEntry('2026-11-20', 92)])
+    expect(byId(scored, 'g3-acl-rsi')).toMatchObject({ kind: 'acl-rsi', pass: true, mark: '✓', word: 'Passes', detail: 'Scored 76.6 on Friday Nov 20; the line is 76.' })
+    const under = viewOf([aclEntry('2026-11-10', 120), aclEntry('2026-11-20', 91)])
+    expect(byId(under, 'g3-acl-rsi')).toMatchObject({ pass: false, detail: 'Scored 75.8 on Friday Nov 20; the line is 76.' })
+  })
+
+  it('the KOOS offer is a standing line of plain routing words: it names Progress as where scores live and carries none itself', () => {
+    const view = viewOf([])
+    if (view.kind !== 'gate') throw new Error('expected a gate')
+    expect(view.koosOffer).toBe(KOOS_OFFER)
+    expect(view.koosOffer).toBe('Attempting a gate? A KOOS check goes with it: fill the questionnaire in when you test. Scores show on Progress, never here.')
+    // No number rides on the offer: a dipping subscale can never read as an extra gate requirement.
+    expect(view.koosOffer).not.toMatch(/\d/)
   })
 })

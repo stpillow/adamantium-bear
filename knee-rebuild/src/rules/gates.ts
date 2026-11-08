@@ -1,9 +1,10 @@
-import type { Gate, GateItem, GateTest, IsoDate, MorningCheck, Run, SetLog, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, Gate, GateItem, GateTest, IsoDate, MorningCheck, Run, SetLog, Workout } from '../schema/index.ts'
+import { aclRsiScore, latestAclRsiEntry } from './aclRsi.ts'
 import { addDays } from './calendar.ts'
 import type { SubjectReading } from './history.ts'
 import { isSwap } from './mileage.ts'
 import { morningCheckApplies, morningReading } from './reading.ts'
-import { bestOfTrials, meetsSymmetry, symmetryPercent } from './unilateral.ts'
+import { bestOfTrials, fastestOfTrials, meetsSymmetry, meetsTimedSymmetry, symmetryPercent, timedSymmetryPercent } from './unilateral.ts'
 
 export interface GateContext {
   today: IsoDate
@@ -17,6 +18,11 @@ export interface GateContext {
   setLogs: readonly SetLog[]
   /** Which catalog exercises count as the single-leg calf raise. */
   calfRaiseExerciseIds: readonly string[]
+  /**
+   * The stored ACL-RSI entries (Batch A): handed over explicitly, never through History, so the
+   * gates rule stays the questionnaire's one rule-level reader (src/rules/aclRsi.guard.test.ts).
+   */
+  aclRsiEntries: readonly AclRsiEntry[]
 }
 
 export interface GateItemResult {
@@ -83,11 +89,42 @@ function symmetry(item: GateItem, gate: Gate, ctx: GateContext): GateItemResult 
   const test = item.testItem ? latestTest(ctx.gateTests, gate.number, item.testItem, false) : undefined
   const threshold = item.threshold ?? 0.9
   if (!test) return { item, pass: false, detail: 'no test entered yet' }
+  if (item.timed) return timedSymmetry(item, test, threshold)
   const injured = test.trialsInjured?.length ? bestOfTrials(test.trialsInjured) : test.valueInjured
   const other = test.trialsOther?.length ? bestOfTrials(test.trialsOther) : test.valueOther
   const pct = symmetryPercent(injured, other)
   const pass = meetsSymmetry(injured, other, threshold)
   return { item, pass, detail: pct === null ? 'cannot compute: the other side is 0' : `${pct}% (${injured} vs ${other}) against a ${threshold * 100}% line, tested ${test.date}` }
+}
+
+/**
+ * A timed hop (Batch A, PROGRAM-QUESTIONS 157): seconds, lower is better, so best = the FASTEST
+ * positive trial and the line reads other ÷ injured — a slower injured side reads under 100%.
+ * A hop he couldn't do has no time: 0 and non-positive values are ignored (`fastestOfTrials`),
+ * and a side with no usable time fails in words rather than dividing by 0. The stored `value*`
+ * fields stand in only when a test somehow carries no trials, and only when positive.
+ */
+function timedSymmetry(item: GateItem, test: GateTest, threshold: number): GateItemResult {
+  const injured = test.trialsInjured?.length ? fastestOfTrials(test.trialsInjured) : test.valueInjured > 0 ? test.valueInjured : null
+  const other = test.trialsOther?.length ? fastestOfTrials(test.trialsOther) : test.valueOther > 0 ? test.valueOther : null
+  if (injured === null) return { item, pass: false, detail: `no usable time on the injured side, tested ${test.date}` }
+  if (other === null) return { item, pass: false, detail: `no usable time on the other side, tested ${test.date}` }
+  const pct = timedSymmetryPercent(injured, other)
+  const pass = meetsTimedSymmetry(injured, other, threshold)
+  return { item, pass, detail: `${pct}% (other ${other} s over injured ${injured} s) against a ${threshold * 100}% line, tested ${test.date}` }
+}
+
+/**
+ * The ACL-RSI item (Batch A, PROGRAM-QUESTIONS 156): the latest stored questionnaire entry's
+ * score against the item's line (76, the strict published threshold), read the way the hop items
+ * read their latest tests. No entry fails in words; nothing is ever estimated.
+ */
+function aclRsi(item: GateItem, ctx: GateContext): GateItemResult {
+  const entry = latestAclRsiEntry(ctx.aclRsiEntries)
+  const line = item.minScore ?? 76
+  if (!entry) return { item, pass: false, detail: 'no questionnaire entered yet' }
+  const score = aclRsiScore(entry)
+  return { item, pass: score >= line, detail: `scored ${score} on ${entry.date}; the line is ${line}` }
 }
 
 function calfRaises(item: GateItem, ctx: GateContext): GateItemResult {
@@ -153,6 +190,8 @@ export function evaluateGate(gate: Gate, ctx: GateContext): GateResult {
         return noSwelling(item, ctx, true)
       case 'run-no-reaction':
         return runNoReaction(item, ctx)
+      case 'acl-rsi':
+        return aclRsi(item, ctx)
       case 'manual':
         return manual(item, gate, ctx)
     }

@@ -390,7 +390,7 @@ describe('settingsOnImportWords', () => {
 
 describe('backup words (M6)', () => {
   const summary = (over: Partial<BackupSummary> = {}): BackupSummary => ({
-    counts: { workouts: 24, setLogs: 312, morningChecks: 30, runs: 41, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0 },
+    counts: { workouts: 24, setLogs: 312, morningChecks: 30, runs: 41, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0 },
     archivedGyms: 0,
     first: '2026-11-02',
     last: '2026-12-20',
@@ -418,15 +418,15 @@ describe('backup words (M6)', () => {
       headline: '312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20',
       also: 'Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.',
     })
-    const one = summary({ counts: { workouts: 1, setLogs: 1, morningChecks: 0, runs: 1, gateTests: 0, sessionMoves: 0, locations: 2, programOverrides: 3, addedSlots: 0, hrSettings: 0, vo2Readings: 0 }, archivedGyms: 1, first: '2026-11-03', last: '2026-11-03' })
+    const one = summary({ counts: { workouts: 1, setLogs: 1, morningChecks: 0, runs: 1, gateTests: 0, sessionMoves: 0, locations: 2, programOverrides: 3, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0 }, archivedGyms: 1, first: '2026-11-03', last: '2026-11-03' })
     expect(holdsWords(one)).toEqual({ headline: '1 set, 1 run, 1 gym, on Nov 3', also: 'Also 1 session, 3 Program edits and 1 archived gym.' })
-    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0 }, first: null, last: null })
+    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0 }, first: null, last: null })
     expect(holdsWords(empty)).toEqual({ headline: '0 sets, 0 runs, 1 gym; nothing logged yet', also: null })
   })
 
   it('says what a file holds as one sentence, and what an import did, by the file’s name', () => {
     expect(holdsLine(summary())).toBe('312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20. Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.')
-    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0 }, first: null, last: null })
+    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0 }, first: null, last: null })
     expect(holdsLine(empty)).toBe('0 sets, 0 runs, 1 gym; nothing logged yet.')
     expect(importedWords('knee-rebuild-2026-12-20.json', summary())).toBe(
       'Imported knee-rebuild-2026-12-20.json. This phone now holds what the file holds: 312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20. Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.',
@@ -444,6 +444,9 @@ describe('backup words (M6)', () => {
     expect(lostWords([{ table: 'setLogs', count: 8 }])).toBe('It would erase 8 sets on this phone that the file doesn’t have.')
     // The one heart-rate row holds both numbers; "1 heart rate setting" is the accepted wording (PROGRAM-QUESTIONS 150).
     expect(lostWords([{ table: 'hrSettings', count: 1 }])).toBe('It would erase 1 heart rate setting on this phone that the file doesn’t have.')
+    // The questionnaire tables (Batch A) name themselves the same way, singular and plural.
+    expect(lostWords([{ table: 'koosEntries', count: 2 }])).toBe('It would erase 2 KOOS entries on this phone that the file doesn’t have.')
+    expect(lostWords([{ table: 'koosEntries', count: 1 }, { table: 'aclRsiEntries', count: 1 }])).toBe('It would erase 1 KOOS entry and 1 ACL-RSI entry on this phone that the file doesn’t have.')
     expect(lostWords([{ table: 'workouts', count: 1 }, { table: 'setLogs', count: 8 }, { table: 'runs', count: 1 }])).toBe(
       'It would erase 1 session, 8 sets and 1 run on this phone that the file doesn’t have.',
     )

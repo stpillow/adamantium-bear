@@ -77,7 +77,29 @@ describe('data/program.json', () => {
     expect(thresholds(1)).toEqual(new Set([0.8]))
     expect(thresholds(2)).toEqual(new Set([0.9]))
     expect(thresholds(3)).toEqual(new Set([0.9]))
-    expect(program.gates.find((g) => g.number === 3)?.items.filter((i) => i.trials === 3)).toHaveLength(3)
+    // The four-hop battery (Batch A): single, triple, crossover and the 6-meter timed hop.
+    expect(program.gates.find((g) => g.number === 3)?.items.filter((i) => i.trials === 3)).toHaveLength(4)
+  })
+
+  it('gates: exactly one gate-3 item is timed — the 6-meter hop, fastest kept, other ÷ injured (Batch A)', () => {
+    const items = program.gates.flatMap((g) => g.items)
+    const timed = items.filter((i) => i.timed)
+    expect(timed.map((i) => i.id)).toEqual(['g3-six-meter-timed-hop'])
+    expect(timed[0]).toMatchObject({ evaluator: 'symmetry', threshold: 0.9, testItem: 'six-meter-timed-hop', trials: 3 })
+    expect(timed[0]?.prefillExerciseId).toBeUndefined()
+  })
+
+  it('gates: the ACL-RSI item is its own evaluator at the strict published 76, beside the untouched trust toggle (Batch A)', () => {
+    const gate3 = program.gates.find((g) => g.number === 3)
+    const aclRsi = gate3?.items.find((i) => i.evaluator === 'acl-rsi')
+    expect(aclRsi).toMatchObject({ id: 'g3-acl-rsi', minScore: 76 })
+    expect(aclRsi?.testItem).toBeUndefined()
+    expect(aclRsi?.trials).toBeUndefined()
+    expect(aclRsi?.threshold).toBeUndefined()
+    // The manual "would trust it at full speed" toggle stays its own item.
+    expect(gate3?.items.find((i) => i.id === 'g3-trust')).toMatchObject({ evaluator: 'manual' })
+    // No other gate carries an acl-rsi item.
+    expect(program.gates.flatMap((g) => g.items).filter((i) => i.evaluator === 'acl-rsi')).toHaveLength(1)
   })
 
   it('gates: every load test names the two-sided exercise whose latest session prefills it; hop tests name none', () => {
