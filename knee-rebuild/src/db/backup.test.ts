@@ -16,6 +16,7 @@ import {
   SessionMove,
   SetLog,
   Settings,
+  Vo2Reading,
   Workout,
   type Day,
   type SessionLetter,
@@ -45,6 +46,7 @@ import {
   saveHrSettings,
   saveProgramOverride,
   saveSettings,
+  saveVo2Reading,
   setDumbbellMax,
   setId,
   setKit,
@@ -265,6 +267,10 @@ async function seedHistory(): Promise<void> {
   await saveAddedSlot({ id: 'added-k1', templateId: 'p2-a', exerciseId: 'db-bench-press', sets: 3, repsMin: 8, repsMax: 10, addedOn: '2026-12-03' }, program)
   // Both heart-rate numbers set (metrics phase 2), so the fieldsUsed check covers the whole row.
   await saveHrSettings({ id: 'heart-rate', maxHr: 190, restingHr: 50 })
+  // Two VO2 max readings (metrics phase 3), the first typed twice on its day: the second save replaces it, so the file carries 2 readings, every field used.
+  await saveVo2Reading({ date: '2026-12-05', vo2: 44 })
+  await saveVo2Reading({ date: '2026-12-05', vo2: 45 })
+  await saveVo2Reading({ date: '2026-12-19', vo2: 46 })
 }
 
 /** The keys every row of a table uses, across the table: every field of the schema shows up somewhere. */
@@ -282,6 +288,7 @@ const SHAPES: Record<keyof BackupTables, readonly string[]> = {
   programOverrides: Object.keys(ProgramOverride.shape),
   addedSlots: Object.keys(AddedSlot.shape),
   hrSettings: Object.keys(HrSettings.shape),
+  vo2Readings: Object.keys(Vo2Reading.shape),
 }
 
 describe('the backup carries the whole database', () => {
@@ -357,8 +364,8 @@ describe('import is all or nothing', () => {
     await seedHistory()
     const { backup } = await exportBackup(T1)
     const before = await rawDump()
-    const newer = { ...backup, schemaVersion: 8 } as unknown as Backup
-    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 8; this one reads up to 7).')
+    const newer = { ...backup, schemaVersion: 9 } as unknown as Backup
+    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 9; this one reads up to 8).')
     const twice = { ...backup, runs: [...backup.runs, ...backup.runs.slice(0, 1)] }
     await expect(replaceAll(twice, program, TODAY)).rejects.toThrow('twice')
     expect(await rawDump()).toEqual(before)

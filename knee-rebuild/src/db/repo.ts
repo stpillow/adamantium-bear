@@ -29,6 +29,7 @@ import {
   SessionMove,
   SetLog,
   Settings,
+  Vo2Reading,
   Workout,
   PLANET_FITNESS_LOCATION_ID,
   IsoDateTime,
@@ -152,6 +153,21 @@ export async function getHrSettings(): Promise<HrSettings | undefined> {
 /** Saves the heart-rate numbers, parsed first like every write. A touch saves only the touched number; the app never invents the other one. */
 export async function saveHrSettings(row: HrSettings): Promise<void> {
   await db.hrSettings.put(HrSettings.parse(row))
+}
+
+/** Every VO2 max reading as stored, parsed (metrics phase 3). NOT part of `loadHistory`: no rule reads it (PROGRAM-QUESTIONS 155). */
+export async function getVo2Readings(): Promise<Vo2Reading[]> {
+  return (await db.vo2Readings.toArray()).map((row) => Vo2Reading.parse(row))
+}
+
+/** Saves a reading, parsed first like every write. The date is the primary key, so a same-day save replaces that day's reading (PROGRAM-QUESTIONS 154). */
+export async function saveVo2Reading(row: Vo2Reading): Promise<void> {
+  await db.vo2Readings.put(Vo2Reading.parse(row))
+}
+
+/** Deletes the reading on this date; a reading is re-typeable, so there is no undo to keep. */
+export async function deleteVo2Reading(date: IsoDate): Promise<void> {
+  await db.vo2Readings.delete(date)
 }
 
 /** Seed on first run: create the settings row if it is missing, and return it. */

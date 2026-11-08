@@ -3,10 +3,11 @@ import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
+import { NumberField } from '../components/NumberField.tsx'
 import { Screen } from '../components/Screen.tsx'
-import { useHistory, useHrSettings, useSettings } from '../db/hooks.ts'
-import type { History } from '../db/repo.ts'
-import type { IsoDate, Settings } from '../schema/index.ts'
+import { useHistory, useHrSettings, useSettings, useVo2Readings } from '../db/hooks.ts'
+import { deleteVo2Reading, saveVo2Reading, type History } from '../db/repo.ts'
+import type { IsoDate, Settings, Vo2Reading } from '../schema/index.ts'
 import {
   LIST_LIMIT,
   exerciseView,
@@ -16,12 +17,14 @@ import {
   symmetryEmptyWords,
   symmetryName,
   visibleRows,
+  vo2Entry,
   type CleanDaysView,
   type ExerciseRow,
   type ExerciseView,
   type MilesView,
   type SymmetryRef,
   type TrainingLoadView,
+  type Vo2View,
 } from './Progress.helpers.ts'
 import { LoadChart } from './progress/LoadChart.tsx'
 import { MilesChart } from './progress/MilesChart.tsx'
@@ -34,16 +37,18 @@ const SECTION = 'flex flex-col gap-3'
 
 /**
  * How the knee is coming along: the run of clean days, one exercise's load over time, its
- * symmetry when it is two-sided, the weekly miles against the plan, and the weekly training load
- * with its warning in words. Every number comes from
+ * symmetry when it is two-sided, the weekly miles against the plan, the weekly training load
+ * with its warning in words, and the VO2 max readings typed from the watch. Every number comes from
  * src/rules through Progress.helpers; this file renders and takes the one tap that picks an exercise.
  */
 export function Progress() {
   const today = useToday()
   const settings = useSettings()
   const history = useHistory()
+  // The VO2 readings load with the history, so the section never says "No readings yet" before the read lands (metrics phase 3).
+  const vo2Readings = useVo2Readings()
 
-  if (settings === undefined || history === undefined) {
+  if (settings === undefined || history === undefined || vo2Readings === undefined) {
     return (
       <Screen title={TITLE} lead="Opening storage…">
         <p className="text-body text-on-dark-dim">Reading the logged sessions, runs and morning checks from the phone.</p>
@@ -60,17 +65,17 @@ export function Progress() {
       </Screen>
     )
   }
-  return <ProgressBody today={today} settings={settings} history={history} />
+  return <ProgressBody today={today} settings={settings} history={history} vo2Readings={vo2Readings} />
 }
 
-function ProgressBody({ today, settings, history }: { today: IsoDate; settings: Settings; history: History }) {
+function ProgressBody({ today, settings, history, vo2Readings }: { today: IsoDate; settings: Settings; history: History; vo2Readings: Vo2Reading[] }) {
   const [picked, setPicked] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const chartRef = useRef<HTMLDivElement | null>(null)
 
   // Shawn's max and resting HR (metrics phase 2): only the HR-load line reads them; undefined while loading reads as none.
   const hrSettings = useHrSettings()
-  const view = useMemo(() => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null }), [today, settings, history, hrSettings])
+  const view = useMemo(() => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings }), [today, settings, history, hrSettings, vo2Readings])
   const row = pickedRow(view.exercises, picked)
   const exercise = useMemo(
     () => (row ? exerciseView({ records: view.records, setLogs: history.setLogs, row, injuredSide: settings.injuredSide, catalog: PROGRAM.exercises }) : null),
@@ -85,12 +90,13 @@ function ProgressBody({ today, settings, history }: { today: IsoDate; settings: 
   }
 
   return (
-    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles and training load.">
+    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load and VO2 max.">
       <CleanDays clean={view.clean} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
       <MilesSection miles={view.miles} />
       <TrainingLoadSection training={view.training} />
+      <Vo2Section vo2={view.vo2} readings={vo2Readings} today={today} />
     </Screen>
   )
 }
@@ -264,6 +270,73 @@ function TrainingLoadSection({ training }: { training: TrainingLoadView }) {
       {training.olderRuns ? <p className="text-small text-on-dark-muted">{training.olderRuns}</p> : null}
       {training.notCounted.length > 0 ? <NotCountedList lines={training.notCounted} /> : null}
     </section>
+  )
+}
+
+/**
+ * 6. VO2 max (metrics phase 3): the latest reading typed from the watch, the entry right here (no
+ * trip to Settings), and the worded trend, newest first. Nothing is estimated, and nothing here
+ * changes a prescription: the screen talks only to Progress.helpers (the vo2 guard holds the rule
+ * module to the helpers), and the readings never ride in History. Out of range is refused in words
+ * beside the field and never clamped; the Save button carries the blocker word for word, disabled,
+ * as the run logger's does. Every state is a word, never a color.
+ */
+function Vo2Section({ vo2, readings, today }: { vo2: Vo2View; readings: Vo2Reading[]; today: IsoDate }) {
+  const [value, setValue] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+  const entry = vo2Entry({ value, readings, today })
+
+  const save = async () => {
+    if (entry.problem !== null || value === null) return
+    setSaving(true)
+    try {
+      await saveVo2Reading({ date: today, vo2: value })
+      setValue(null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section aria-label="VO2 max" className={SECTION}>
+      <h2 className={HEADING}>VO2 max</h2>
+      <p className="text-small text-on-dark-muted">
+        The number the watch shows, typed in whenever it changes. The trend is the readings alone — nothing is estimated. It informs; nothing here changes a prescription.
+      </p>
+      {vo2.latest ? (
+        <p className="flex flex-col gap-1">
+          <span className="font-display text-stat text-on-dark">{vo2.latest.value}</span>
+          <span className="text-body text-on-dark-dim">mL/kg/min, {vo2.latest.when}</span>
+        </p>
+      ) : (
+        <p className="text-body text-on-dark-dim">{vo2.empty}</p>
+      )}
+      <NumberField label="Today’s reading" unit="mL/kg/min" placeholder="—" value={value} onChange={setValue} />
+      {entry.replaces ? <p className="text-small text-on-dark-dim">{entry.replaces}</p> : null}
+      <Button variant="primary" wide disabled={entry.problem !== null || saving} onClick={() => void save()}>
+        {saving ? 'Saving…' : entry.saveLabel}
+      </Button>
+      {vo2.trend.length > 0 ? <Vo2TrendList rows={vo2.trend} /> : null}
+    </section>
+  )
+}
+
+/** The stored readings, newest first, each a worded row with a quiet Delete: a reading is re-typeable, so no confirm (the HR Clear precedent). */
+function Vo2TrendList({ rows }: { rows: { date: IsoDate; words: string }[] }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <h3 className="font-mono text-small font-normal uppercase tracking-[0.22em] text-on-dark-muted">Readings</h3>
+      <ul className="flex flex-col">
+        {rows.map((row) => (
+          <li key={row.date} className="flex items-center justify-between gap-3 border-t border-on-dark-faint py-1 first:border-t-0">
+            <span className="text-small text-on-dark-dim">{row.words}</span>
+            <Button variant="quiet" className="shrink-0 px-0!" onClick={() => void deleteVo2Reading(row.date)}>
+              Delete
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import type { AddedSlot, GateTest, HrSettings, IsoDateTime, Location, MorningCheck, ProgramOverride, Run, SessionMove, SetLog, Settings, Workout } from '../schema/index.ts'
+import type { AddedSlot, GateTest, HrSettings, IsoDateTime, Location, MorningCheck, ProgramOverride, Run, SessionMove, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /**
  * The settings row, keyed so there is exactly one. It never holds `lastExportedAt`: the build
@@ -27,8 +27,10 @@ export interface ExportStampRow {
  * (src/db/backup.test.ts); version 7 (metrics phase 2) adds the one-row hrSettings table for
  * Shawn's max and resting heart rate, again with no upgrade callback — the numbers live outside
  * the settings row so older builds still read that row untouched (PROGRAM-QUESTIONS 132, 150) —
- * and runs may carry an average and max heart rate, optional and unindexed. Never edit a shipped
- * version; add the next one, and keep every change additive.
+ * and runs may carry an average and max heart rate, optional and unindexed; version 8 (metrics
+ * phase 3) adds the one-reading-per-day vo2Readings table, keyed by date, so typing again the
+ * same day replaces, again with no upgrade callback: no reading is ever invented. Never edit a
+ * shipped version; add the next one, and keep every change additive.
  */
 export class KneeRebuildDb extends Dexie {
   /** The settings row and, once this phone has exported, the export stamp's row. */
@@ -44,6 +46,8 @@ export class KneeRebuildDb extends Dexie {
   addedSlots!: EntityTable<AddedSlot, 'id'>
   /** The one heart-rate settings row (metrics phase 2): outside the settings table's strict row, so a rollback still opens (PROGRAM-QUESTIONS 150). */
   hrSettings!: EntityTable<HrSettings, 'id'>
+  /** VO2 max readings typed from the watch (metrics phase 3), one per day keyed by date, so a same-day save replaces (PROGRAM-QUESTIONS 153). */
+  vo2Readings!: EntityTable<Vo2Reading, 'date'>
 
   constructor() {
     super('knee-rebuild')
@@ -62,6 +66,7 @@ export class KneeRebuildDb extends Dexie {
     this.version(5).stores({ addedSlots: 'id, templateId' })
     this.version(6).stores({})
     this.version(7).stores({ hrSettings: 'id' })
+    this.version(8).stores({ vo2Readings: 'date' })
   }
 }
 

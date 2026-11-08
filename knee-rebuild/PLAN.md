@@ -118,12 +118,22 @@ Done when a run can carry its average and max heart rate (typed or from Strava),
 - [x] Dexie v7 (additive, no upgrade callback) and backup schema 7 with a 6→7 step; v6-build rollback re-proved (`src/db/db.v6.test.ts`)
 - [x] Adversarial review: three lenses (rules and storage, screens, test honesty), two skeptics per finding; three low findings confirmed (HR week-line miscount for a run with heart rate but no time, twice found; no way back to "not set") and fixed test-first. Checked in a browser at 390 px: Set/Clear on both numbers, a 40-minute run at avg 150 saves "HR load 72", Progress carries the HR line
 
+### Metrics, phase 3 · VO2 max (docs/metrics-and-photos-plan.md)
+Done when a dated whole-number reading can be typed on Progress (one per day, a same-day save replaces), the latest value and the trend show in words, and no rule can read a reading.
+
+- [x] VO2 max section on Progress: the latest typed reading with its date in words, a NumberField entry with an explicit Save right in the section (out of bounds refused in words, never clamped; the replace line when today already has one), and the worded trend newest first with a per-row Delete (PROGRAM-QUESTIONS 153 to 155)
+- [x] `vo2Readings` table keyed by date (Dexie v8 additive, no upgrade callback) and backup schema 8 with a 7→8 step; every pinned version test moved, the summary counts and lostOnImport cover the readings
+- [x] v7-build rollback re-proved in `src/db/db.v7.test.ts`: a version 7 declaration opens the version 8 database with its own schema, the settings and heart-rate rows untouched, a stale reading resurfacing under v8
+- [x] The guard: only the Progress helpers import `src/rules/vo2.ts`, no rule module mentions the readings (`rules/backup.ts` the pinned carrier exemption), and the readings never ride in History (`src/rules/vo2.guard.test.ts`)
+- [ ] Adversarial review
+
 **Definition of done for v1:** Shawn runs week 1 of the program entirely from the app, on his phone, with morning check-ins deciding the loads for week 2.
 
 ## Decisions log
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-11-07 | Metrics phase 3 built as decided: VO2 max readings typed from the watch, one per day keyed by date in `vo2Readings` (Dexie v8 additive, backup schema 8 with a 7→8 step), entered and shown on Progress, informing and changing nothing; future schema work — phase 6's `crossTraining` — moves to Dexie v9 | Settled with Shawn (docs/metrics-and-photos-plan.md): typed from what his watch shows, nothing estimated ever; the trend is the readings alone (PROGRAM-QUESTIONS 153 to 155) |
 | 2026-11-07 | Metrics phase 2: the heart-rate settings live in their own one-row `hrSettings` table, outside the Settings schema (Dexie v7 additive, backup schema 7); phase 3's `vo2Readings` moves to Dexie v8 | The settings row stays byte-identical for older builds (PROGRAM-QUESTIONS 132), and the backup's `checkCovered` throws until a new table is carried, which a second settings-table row would have slipped past (PROGRAM-QUESTIONS 150; amends the plan doc's "their own row of the settings table") |
 | 2026-11-06 | Metrics phase 1 adds fields only (Dexie v6 with no store change, backup schema 6); a session's minutes are a stored field (`durationMinutes`), and phase 3's `vo2Readings` takes Dexie v7 | Shawn delegated the open questions (PROGRAM-QUESTIONS 143 to 149). Older builds still open the database (149) |
 | 2026-11-06 | Strava import on tap, through one Vercel function (`api/strava.ts`) that holds the client secret and keeps nothing; logging after the fact up to 14 days back | Shawn's Nov 6 ask. Amends PROMPT sections 2, 7 and 8, CLAUDE.md and the review plan's security pass. Max pain is never imported: an activity opens the run logger filled in. Barriers and setup in docs/integrations.md |
