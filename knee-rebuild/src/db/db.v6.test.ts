@@ -7,13 +7,15 @@ import { homeLocation } from './migrations.ts'
 import { addRun, ensureLocations, getHrSettings, loadHistory, saveHrSettings } from './repo.ts'
 
 /*
- * Dexie version 7 (metrics phase 2): purely additive. A phone on version 6 opens at version 7 with
- * every row as it was and an empty hrSettings table: no run gains an average or max heart rate, and
- * no heart-rate settings row is invented. The new fields are written only by the run logger, the
- * Strava import and Settings' Heart rate steppers. The rollback half re-proves PROGRAM-QUESTIONS
- * 149 for version 7 and pins what 150 records: a version 6 declaration opens the version 7 database
- * with its own schema (no hrSettings table), so the rolled-back build's settings reads, export and
- * import keep working, and the stale hrSettings row waits to resurface under version 7.
+ * Dexie versions 7 and 8 (metrics phases 2 and 3): purely additive. A phone on version 6 opens at
+ * the current version with every row as it was, an empty hrSettings table and an empty vo2Readings
+ * table: no run gains an average or max heart rate, and no heart-rate settings row or VO2 max
+ * reading is invented. The new fields are written only by the run logger, the Strava import,
+ * Settings' Heart rate steppers and Progress's VO2 max entry. The rollback half re-proves
+ * PROGRAM-QUESTIONS 149 for version 7 and pins what 150 records: a version 6 declaration opens the
+ * newer database with its own schema (no hrSettings and no vo2Readings table), so the rolled-back
+ * build's settings reads, export and import keep working, and the stale hrSettings row waits to
+ * resurface under version 7. Version 8's own rollback is re-proved in src/db/db.v7.test.ts.
  */
 
 // Version 6 exactly as shipped (src/db/db.ts): opened here with plain Dexie, as the phone has it.
@@ -85,8 +87,8 @@ describe('a version 6 database opened at version 7', () => {
     await writeVersionSix()
 
     await db.open()
-    expect(db.verno).toBe(7)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v6Rows), 'hrSettings'].sort())
+    expect(db.verno).toBe(8)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v6Rows), 'hrSettings', 'vo2Readings'].sort())
     expect(db.hrSettings.schema.primKey.keyPath).toBe('id')
     expect(await db.hrSettings.count()).toBe(0)
     const before = await rawRows()
@@ -125,6 +127,7 @@ describe('a version 6 database opened at version 7', () => {
     // import loops only its own tables, leaving the stale hrSettings row to resurface under version 7.
     // If a Dexie upgrade ever adopts the installed schema instead, this is the tripwire.
     expect(old.tables.map((t) => t.name)).not.toContain('hrSettings')
+    expect(old.tables.map((t) => t.name)).not.toContain('vo2Readings')
     expect(await old.table('settings').get('settings')).toEqual(settings)
     // Reads don't parse, so a run holding a heart rate still shows on version 6; the accepted hazard
     // stays on version 6's strict write paths, as 149 records for version 5.

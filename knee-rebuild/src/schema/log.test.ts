@@ -21,6 +21,9 @@ import {
   Run,
   SetLog,
   Settings,
+  VO2_MAX,
+  VO2_MIN,
+  Vo2Reading,
   Workout,
   showsText,
 } from './log.ts'
@@ -270,5 +273,26 @@ describe('metrics phase 2: the heart-rate settings row (its own table, never the
     expect(HrSettings.safeParse({ id: 'hr', maxHr: 190 }).success).toBe(false)
     // Unreachable from the steppers (resting tops out under max's floor), kept so no hand-edited backup can store it.
     expect(HrSettings.safeParse({ ...row, maxHr: 130, restingHr: 130 }).success).toBe(false)
+  })
+})
+
+describe('metrics phase 3: a VO2 max reading is a dated whole number, one per day, typed from the watch', () => {
+  it('pins the bounds the entry and the backup are held to', () => {
+    expect([VO2_MIN, VO2_MAX]).toEqual([20, 90])
+  })
+  it('takes a whole number inside the bounds, the edges included, and refuses outside, never clamping', () => {
+    expect(Vo2Reading.parse({ date: '2026-11-07', vo2: 42 })).toEqual({ date: '2026-11-07', vo2: 42 })
+    expect(Vo2Reading.safeParse({ date: '2026-11-07', vo2: VO2_MIN }).success).toBe(true)
+    expect(Vo2Reading.safeParse({ date: '2026-11-07', vo2: VO2_MAX }).success).toBe(true)
+    for (const vo2 of [VO2_MIN - 1, VO2_MAX + 1, 0, -42]) expect(Vo2Reading.safeParse({ date: '2026-11-07', vo2 }).success, String(vo2)).toBe(false)
+  })
+  it('refuses a number that isn’t whole: the watch shows whole numbers, and nothing is rounded for it', () => {
+    expect(Vo2Reading.safeParse({ date: '2026-11-07', vo2: 42.5 }).success).toBe(false)
+  })
+  it('is strict: a key it doesn’t know, a bad date or a missing field is refused', () => {
+    expect(Vo2Reading.safeParse({ date: '2026-11-07', vo2: 42, estimated: true }).success).toBe(false)
+    expect(Vo2Reading.safeParse({ date: '2026-13-45', vo2: 42 }).success).toBe(false)
+    expect(Vo2Reading.safeParse({ date: '2026-11-07' }).success).toBe(false)
+    expect(Vo2Reading.safeParse({ vo2: 42 }).success).toBe(false)
   })
 })

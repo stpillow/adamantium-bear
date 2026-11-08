@@ -243,6 +243,24 @@ export const HrSettings = z
   .refine((s) => s.maxHr === undefined || s.restingHr === undefined || s.restingHr < s.maxHr, { message: 'resting heart rate is under max', path: ['restingHr'] })
 export type HrSettings = z.infer<typeof HrSettings>
 
+/** A VO2 max reading's plausible bounds, in whole mL/kg/min: what the Progress entry takes, and all a stored row or a backup may hold (metrics phase 3). */
+export const VO2_MIN = 20
+export const VO2_MAX = 90
+
+/**
+ * One VO2 max reading, TYPED from what the watch shows, whenever it changes (metrics phase 3;
+ * PROGRAM-QUESTIONS 153 to 155). One reading per day, keyed by its date in the `vo2Readings`
+ * table (src/db/db.ts, Dexie version 8), so typing again the same day replaces that day's
+ * reading. Nothing is ever estimated: the trend is the readings alone. A number outside the
+ * bounds, or not whole, is refused in words and never clamped (the 152 precedent: clamping
+ * would store a number nobody measured).
+ */
+export const Vo2Reading = z.strictObject({
+  date: IsoDate,
+  vo2: z.number().int().min(VO2_MIN).max(VO2_MAX),
+})
+export type Vo2Reading = z.infer<typeof Vo2Reading>
+
 /** A gate test entry. Hop tests store three trials per side and keep the best. */
 export const GateTest = z.strictObject({
   id,

@@ -62,6 +62,8 @@ import {
   ratioWords,
   skewLines,
   visibleRows,
+  vo2Entry,
+  vo2View,
   waitingWords,
   type HistoryLike,
 } from './Progress.helpers.ts'
@@ -1014,5 +1016,70 @@ describe('trainingLoadView', () => {
     const view = trainingLoadView({ records: [], runs, startDate: START, today: '2026-11-05', templates, hrSettings })
     expect(view.hrLine).toBe('HR load this week: 0 (1 of 1 run had heart rate; 1 has no time logged)')
     expect(view.weeks[0]).toMatchObject({ withHr: 1, hrNotCounted: 1, runs: 1 })
+  })
+})
+
+describe('the VO2 max section (metrics phase 3)', () => {
+  const readings = [
+    { date: '2026-11-14', vo2: 45 },
+    { date: '2026-11-07', vo2: 44 },
+    { date: '2026-11-10', vo2: 43 },
+  ]
+
+  it('vo2View: with nothing stored, no stat, no trend, and the empty words', () => {
+    expect(vo2View({ readings: [] })).toEqual({
+      latest: null,
+      trend: [],
+      empty: 'No readings yet. Type the number from the watch when it changes.',
+    })
+  })
+
+  it('vo2View: the latest reading with its date in words, and the trend newest first, whatever order the rows came in', () => {
+    const view = vo2View({ readings })
+    expect(view.latest).toEqual({ value: 45, when: 'from the watch, Nov 14' })
+    expect(view.trend).toEqual([
+      { date: '2026-11-14', words: '45 — Nov 14' },
+      { date: '2026-11-10', words: '43 — Nov 10' },
+      { date: '2026-11-07', words: '44 — Nov 7' },
+    ])
+  })
+
+  it('vo2View: one reading is a stat and a one-row trend; nothing between readings is estimated', () => {
+    const view = vo2View({ readings: [{ date: '2026-11-07', vo2: 44 }] })
+    expect(view.latest).toEqual({ value: 44, when: 'from the watch, Nov 7' })
+    expect(view.trend).toEqual([{ date: '2026-11-07', words: '44 — Nov 7' }])
+  })
+
+  it('vo2Entry: an empty field leaves Save waiting under the type-it-first words, no replace line on a day with no reading', () => {
+    expect(vo2Entry({ value: null, readings, today: '2026-11-15' })).toEqual({
+      problem: 'Type the number from the watch first.',
+      replaces: null,
+      saveLabel: 'Type the number from the watch first.',
+    })
+  })
+
+  it('vo2Entry: out of bounds is refused in words, never clamped, and the Save button carries the blocker', () => {
+    expect(vo2Entry({ value: 19, readings: [], today: '2026-11-15' })).toMatchObject({
+      problem: 'VO2 max reads 20 to 90; 19 is outside that.',
+      saveLabel: 'VO2 max reads 20 to 90; 19 is outside that.',
+    })
+    expect(vo2Entry({ value: 91, readings: [], today: '2026-11-15' }).problem).toBe('VO2 max reads 20 to 90; 91 is outside that.')
+  })
+
+  it('vo2Entry: a fine value frees Save, and the replace line shows only when today already has a reading', () => {
+    expect(vo2Entry({ value: 46, readings, today: '2026-11-14' })).toEqual({
+      problem: null,
+      replaces: 'Today already has a reading (45). Saving replaces it.',
+      saveLabel: 'Save reading',
+    })
+    expect(vo2Entry({ value: 46, readings, today: '2026-11-15' })).toEqual({ problem: null, replaces: null, saveLabel: 'Save reading' })
+  })
+
+  it('progressView carries the VO2 view, from readings handed in on their own, never through History', () => {
+    const history = { workouts: [], setLogs: [], morningChecks: [], runs: [] }
+    const view = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG }, vo2Readings: readings })
+    expect(view.vo2.latest).toEqual({ value: 45, when: 'from the watch, Nov 14' })
+    const bare = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG } })
+    expect(bare.vo2).toEqual({ latest: null, trend: [], empty: 'No readings yet. Type the number from the watch when it changes.' })
   })
 })

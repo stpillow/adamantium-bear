@@ -3,8 +3,9 @@ import { addDays, daysBetween, weekOf } from '../rules/calendar.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { awaitingMorningCheck, consecutiveCleanDays, loadSeries, milesSeries, symmetryLeftOut, symmetrySeries, type LoadPoint, type MilesWeek, type SymmetryLeftOut, type SymmetryPoint } from '../rules/progress.ts'
 import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrainingLoads, type AcuteChronic, type Band, type HrPair, type TrainingLoadEntry, type TrainingLoadWeek } from '../rules/trainingLoad.ts'
+import { latestReading, replacesToday, vo2Problem, vo2Series } from '../rules/vo2.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, HrSettings, IsoDate, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side } from '../schema/index.ts'
+import type { Exercise, Gate, HrSettings, IsoDate, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -1148,6 +1149,52 @@ export function trainingLoadTable(view: TrainingLoadView): NumbersTable {
 }
 
 // ---------------------------------------------------------------------------------------------
+// VO2 max (metrics phase 3): typed readings, shown; they inform and change nothing
+// ---------------------------------------------------------------------------------------------
+
+export interface Vo2View {
+  /** The newest reading and its date in words; null with none stored. */
+  latest: { value: number; when: string } | null
+  /** The worded trend, newest first, one row per stored reading: nothing between them is estimated. The date rides along for the row's Delete. */
+  trend: { date: IsoDate; words: string }[]
+  /** Said in place of the stat while nothing is stored. */
+  empty: string
+}
+
+/** The VO2 max section's words, over src/rules/vo2.ts. Only this file touches the rule module (the trainingLoad precedent): the screen renders these words. */
+export function vo2View({ readings }: { readings: readonly Vo2Reading[] }): Vo2View {
+  const latest = latestReading(readings)
+  const series = vo2Series(readings)
+  return {
+    latest: latest ? { value: latest.vo2, when: `from the watch, ${axisDate(latest.date)}` } : null,
+    trend: series
+      .map((r) => ({ date: r.date, words: `${r.vo2} — ${axisDate(r.date)}` }))
+      .reverse(),
+    empty: 'No readings yet. Type the number from the watch when it changes.',
+  }
+}
+
+export interface Vo2Entry {
+  /** The refusal in words beside the field; null when the typed value could be saved. An empty field reads "Type the number from the watch first." and simply leaves Save waiting, no alert. */
+  problem: string | null
+  /** The line shown when today already has a reading: saving replaces it (the date is the stored key). */
+  replaces: string | null
+  /** The Save button's word: the blocker while one stands (the run logger's pattern), else "Save reading". */
+  saveLabel: string
+}
+
+/** The entry control's words for what the field holds now. Out of bounds is refused in words and never clamped (PROGRAM-QUESTIONS 154). */
+export function vo2Entry(input: { value: number | null; readings: readonly Vo2Reading[]; today: IsoDate }): Vo2Entry {
+  const problem = vo2Problem(input.value)
+  const stored = replacesToday(input.readings, input.today)
+  return {
+    problem,
+    replaces: stored ? `Today already has a reading (${stored.vo2}). Saving replaces it.` : null,
+    saveLabel: problem ?? 'Save reading',
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------------------------
 
@@ -1167,11 +1214,12 @@ export interface ProgressView {
   refs: SymmetryRef[]
   miles: MilesView
   training: TrainingLoadView
+  vo2: Vo2View
   records: WorkoutRecord[]
 }
 
-/** Everything the screen shows that doesn't depend on the exercise picked. */
-export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null }): ProgressView {
+/** Everything the screen shows that doesn't depend on the exercise picked. The VO2 readings come in on their own, never through History: no rule reads them. */
+export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[] }): ProgressView {
   const { today, settings, history, program } = input
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
@@ -1181,6 +1229,7 @@ export function progressView(input: { today: IsoDate; settings: Settings; histor
     refs: symmetryRefs(program.gates),
     miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),
     training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
+    vo2: vo2View({ readings: input.vo2Readings ?? [] }),
     records,
   }
 }

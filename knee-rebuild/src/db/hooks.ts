@@ -1,8 +1,8 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAddedSlots, getHrSettings, getLocations, getProgramOverrides, getSettings, loadHistory, type History } from './repo.ts'
+import { getAddedSlots, getHrSettings, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
-import type { AddedSlot, HrSettings, Location, ProgramOverride, SetLog, Settings, Workout } from '../schema/index.ts'
+import type { AddedSlot, HrSettings, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
 export function useSettings(): Settings | null | undefined {
@@ -12,6 +12,11 @@ export function useSettings(): Settings | null | undefined {
 /** The heart-rate numbers (metrics phase 2). Undefined while loading; null until a stepper has been touched. */
 export function useHrSettings(): HrSettings | null | undefined {
   return useLiveQuery(async () => (await getHrSettings()) ?? null, [])
+}
+
+/** The VO2 max readings (metrics phase 3), one per day. Undefined while loading, so a screen never says "no readings" before the read lands. */
+export function useVo2Readings(): Vo2Reading[] | undefined {
+  return useLiveQuery(() => getVo2Readings(), [])
 }
 
 export function useWorkout(id: string | null): Workout | null | undefined {
