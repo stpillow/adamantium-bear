@@ -8,7 +8,7 @@ import { sessionCompliance } from '../../rules/compliance.ts'
 import { sessionReading } from '../../rules/reading.ts'
 import { isLateEntry } from '../../rules/retro.ts'
 import type { SessionTemplate, SetLog, Side, Workout } from '../../schema/index.ts'
-import { durationWords, loadWords, showsLoad, sideWords, stopReasonLabel } from '../SessionRunner.helpers.ts'
+import { durationWords, loadWords, showsLoad, sideWords, stopReasonLabel, type SummaryCheckAction } from '../SessionRunner.helpers.ts'
 import { MinutesField, SessionRpeField } from './EndPanels.tsx'
 import { minutesNote, minutesOpening, needsEffortOrMinutes, sessionEffortLine, type SessionTiming } from './EndPanels.helpers.ts'
 import { complianceLine, complianceNote } from './Summary.helpers.ts'
@@ -101,6 +101,7 @@ export function Summary({
   injuredSide,
   timing,
   phaseWeek,
+  checkLine,
 }: {
   workout: Workout
   template: SessionTemplate
@@ -108,6 +109,8 @@ export function Summary({
   injuredSide: Side
   timing: SessionTiming
   phaseWeek: number | null
+  /** The morning check that completes these readings, in words, with the way to it (summaryCheckLine; Batch D). */
+  checkLine: { text: string; action: SummaryCheckAction }
 }) {
   const [adding, setAdding] = useState(false)
   const blocks = exerciseBlocks(template, sets)
@@ -159,7 +162,12 @@ export function Summary({
           )
         })}
       </ul>
-      <p className="text-body text-on-dark-dim">These are the session readings. Tomorrow&apos;s morning check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold.</p>
+      <p className="text-body text-on-dark-dim">{checkLine.text}</p>
+      {checkLine.action ? (
+        <Button wide onClick={() => navigate(checkLine.action?.kind === 'late' ? { name: 'morning', date: checkLine.action.morning } : { name: 'morning' })}>
+          {checkLine.action.label}
+        </Button>
+      ) : null}
       <Button variant="primary" wide onClick={() => navigate({ name: 'today' })}>
         Back to Today
       </Button>

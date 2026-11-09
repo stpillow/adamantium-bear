@@ -109,7 +109,7 @@ function Shell({ updateReady }: { updateReady: boolean }) {
             case 'session':
               return <SessionRunner workoutId={route.workoutId} />
             case 'morning':
-              return <MorningCheck />
+              return <MorningCheck key={route.date ?? 'today'} {...(route.date ? { date: route.date } : {})} />
             case 'settings':
               return <Settings />
             case 'more':

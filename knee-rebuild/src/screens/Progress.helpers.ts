@@ -6,8 +6,9 @@ import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrain
 import { KOOS_SUBSCALES, KOOS_SUBSCALE_WORDS, koosDue, koosSeries, koosSubscaleScore } from '../rules/koos.ts'
 import { latestReading, replacesToday, vo2Problem, vo2Series } from '../rules/vo2.ts'
 import { weekAdherence, type WeekAdherence } from '../rules/weekPlan.ts'
+import { TAG_MIN_SAMPLE, anyTagged, tagCounts, type ReadingCounts } from '../rules/morningTags.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, Program, Run, SessionMove, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading, WeeklyTemplate, Workout } from '../schema/index.ts'
+import type { Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, MorningTag, Program, Run, SessionMove, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading, WeeklyTemplate, Workout } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -1257,6 +1258,75 @@ export function koosView({ entries, today }: { entries: readonly KoosEntry[]; to
 }
 
 // ---------------------------------------------------------------------------------------------
+// Morning tags (Batch D, Shawn's Nov 8 decision 10; PROGRAM-QUESTIONS 177, 178)
+
+/** Each tag as the counts name it: "After poor sleep", and on its own line "Poor sleep". */
+export const TAG_AFTER: Record<MorningTag, string> = {
+  'poor-sleep': 'poor sleep',
+  'long-sitting': 'a long sit or car ride',
+  'on-feet': 'a day on your feet',
+  brace: 'wearing the brace',
+  nsaid: 'an anti-inflammatory',
+  'new-shoes': 'new shoes',
+}
+
+const TAG_NAME: Record<MorningTag, string> = {
+  'poor-sleep': 'Poor sleep',
+  'long-sitting': 'A long sit or car ride',
+  'on-feet': 'A day on your feet',
+  brace: 'Wearing the brace',
+  nsaid: 'An anti-inflammatory',
+  'new-shoes': 'New shoes',
+}
+
+export interface TagRow {
+  tag: MorningTag
+  /** The counts after the tag, or where they stand short of the sample. */
+  line: string
+  /** The paired mornings without the tag, once the tag's own counts show. */
+  without: string | null
+}
+
+export interface TagsView {
+  /** What the counts are, and what they are not. */
+  intro: string
+  /** One line in place of the rows when no tag was ever ticked. */
+  empty: string | null
+  rows: TagRow[]
+}
+
+function readingCount(n: number): string {
+  return `${n} ${n === 1 ? 'reading' : 'readings'}`
+}
+
+function countsWords(c: ReadingCounts): string {
+  return `${readingCount(c.paired)} — ${c.clean} clean, ${c.hold} hold, ${c.backOff} back off.`
+}
+
+/**
+ * The Morning tags section: plain counts of the readings on the mornings after each tag, beside the
+ * paired mornings without it, each shown only from TAG_MIN_SAMPLE paired mornings. A count says what
+ * came after, never why: no score, no chart, no color. The rule module pairs each check with the one
+ * reading it completes (morningTags.ts).
+ */
+export function tagsView(input: { checks: readonly MorningCheck[]; readings: readonly SubjectReading[] }): TagsView {
+  const intro = 'Counts only: the readings on mornings after each tag. A count says what came after, not why.'
+  if (!anyTagged(input.checks)) {
+    return { intro, empty: `No tags yet. They’re optional taps on the morning check; a tag’s counts show once it has ${TAG_MIN_SAMPLE} mornings with a session the day before.`, rows: [] }
+  }
+  const rows = tagCounts(input.checks, input.readings).map((c): TagRow => {
+    if (c.tagged === 0) return { tag: c.tag, line: `${TAG_NAME[c.tag]}: not tagged yet.`, without: null }
+    if (c.paired < TAG_MIN_SAMPLE) {
+      const mornings = `${c.paired} ${c.paired === 1 ? 'morning' : 'mornings'}`
+      return { tag: c.tag, line: `${TAG_NAME[c.tag]}: tagged on ${mornings} with a session the day before. Counts show from ${TAG_MIN_SAMPLE}.`, without: null }
+    }
+    const without = c.without.paired < TAG_MIN_SAMPLE ? `Mornings without it: fewer than ${TAG_MIN_SAMPLE} so far.` : `Mornings without it: ${countsWords(c.without)}`
+    return { tag: c.tag, line: `After ${TAG_AFTER[c.tag]}: ${countsWords(c)}`, without }
+  })
+  return { intro, empty: null, rows }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------------------------
 
@@ -1323,6 +1393,7 @@ export interface ProgressView {
   training: TrainingLoadView
   vo2: Vo2View
   koos: KoosView
+  tags: TagsView
   records: WorkoutRecord[]
 }
 
@@ -1340,6 +1411,7 @@ export function progressView(input: { today: IsoDate; settings: Settings; histor
     training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
     vo2: vo2View({ readings: input.vo2Readings ?? [] }),
     koos: koosView({ entries: input.koosEntries ?? [], today }),
+    tags: tagsView({ checks: history.morningChecks, readings }),
     records,
   }
 }

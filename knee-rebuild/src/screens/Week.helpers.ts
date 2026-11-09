@@ -4,9 +4,10 @@ import { attachChecks, subjectReadings } from '../rules/history.ts'
 import { isSwap } from '../rules/mileage.ts'
 import { dayMovable, undoableMove, type MoveContext } from '../rules/moves.ts'
 import { morningCheckApplies, worst } from '../rules/reading.ts'
-import { stopMessage } from '../rules/redFlags.ts'
+import { lateFlagNote, stopMessage } from '../rules/redFlags.ts'
 import { readingsInWeek, runTypeFor, weekDays, weekMilesSummary, type DayStatus, type WeekDay, type WeekMiles } from '../rules/weekPlan.ts'
 import type { Day, DaySession, IsoDate, MorningCheck, Program, ReadingResult, SessionMove, SessionTemplate, Settings, WeeklyTemplate, Workout } from '../schema/index.ts'
+import { lateCheckOffer, weekLateFlagWords } from './MorningCheck.helpers.ts'
 import { timeWords } from './RunLogger.helpers.ts'
 import { runLabel, sessionLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
@@ -184,6 +185,13 @@ export function checkNote(day: Pick<WeekDay, 'date' | 'runs' | 'workouts'>, chec
   return day.date >= addDays(today, -1) ? 'Morning check not done yet; until then it reads hold at best' : 'No morning check was logged for it'
 }
 
+/** The red flag on the next morning's check, when that check was logged late: a note on the session day's row, kept for good. */
+export function dayLateFlagNote(date: IsoDate, checks: readonly MorningCheck[], catalog: ProgramLike['redFlags']): string | null {
+  const morning = addDays(date, 1)
+  const note = checks.map((c) => (c.date === morning ? lateFlagNote(c, catalog) : null)).find((n) => n !== null)
+  return note ? weekLateFlagWords(note) : null
+}
+
 /** The week's own moves, in the order the engine applies them. A move of a day onto itself changes nothing. */
 export function movesForWeek(moves: readonly SessionMove[], week: number): SessionMove[] {
   return moves.filter((m) => m.week === week && m.dayA !== m.dayB)
@@ -273,6 +281,10 @@ export interface DayRow {
   reading: ReadingResult | null
   logged: string[]
   checkNote: string | null
+  /** A past day missing its morning check, inside the 14 days: the button that logs it late (Batch D). */
+  lateCheck: { morning: IsoDate; label: string } | null
+  /** A red flag on the next morning's check, logged late: a note, never the stop (Batch D). */
+  lateFlagNote: string | null
   action: DayAction | null
   /** A quiet Move sits on every day that is not off and has nothing logged, in a week not yet over. */
   movable: boolean
@@ -351,6 +363,8 @@ export function weekView(input: { today: IsoDate; selected: number | null; setti
         reading: d.reading,
         logged: loggedWords(d, program.templates),
         checkNote: d.reading ? checkNote(d, history.morningChecks, today) : null,
+        lateCheck: lateCheckOffer({ date: d.date, today, startDate, history }),
+        lateFlagNote: dayLateFlagNote(d.date, history.morningChecks, program.redFlags),
         action: dayAction(d, today),
         movable: free && d.session !== 'off',
         swappable: free,

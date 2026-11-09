@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { MorningCheck, Workout } from '../schema/index.ts'
 import { planSession } from '../app/session.ts'
 import { homeLocation } from '../db/migrations.ts'
 import { exerciseById, program } from '../program/program.ts'
@@ -65,6 +66,7 @@ import {
   rampSetsWords,
   timedSets,
   withoutEnginePicks,
+  summaryCheckLine,
 } from './SessionRunner.helpers.ts'
 
 const ex = (over: Partial<Exercise> = {}): Exercise => ({ id: 'leg-press', name: 'Leg press', pattern: 'squat', equipment: 'press', loadType: 'stack', loadUnit: 'plate', increment: 1, loadDirection: 'up', unilateral: false, requires: [], ...over })
@@ -581,5 +583,29 @@ describe('timedSets: the logged sets as the minutes stepper reads them', () => {
       { seconds: 30, repUnit: 'seconds' },
       { reps: 8, repUnit: 'reps' },
     ])
+  })
+})
+
+describe('summaryCheckLine: the morning check that completes a summary’s readings (Batch D, PROGRAM-QUESTIONS 174)', () => {
+  const w = (id: string, date: string, status: Workout['status'] = 'finished'): Workout => ({ id, date, templateId: 'p1-a', phase: 1, week: 3, isDeload: false, status })
+  const mc = (date: string, over: Partial<MorningCheck> = {}): MorningCheck => ({ id: `mc-${date}`, date, appliesTo: null, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [], ...over })
+  const line = (workout: Workout, today: string, morningChecks: MorningCheck[] = []) => summaryCheckLine({ workout, today, startDate: '2026-11-02', history: { workouts: [workout], runs: [], morningChecks } })
+  it('a session dated today keeps the sentence it always had', () => {
+    expect(line(w('a', '2026-11-20'), '2026-11-20')).toEqual({ text: 'These are the session readings. Tomorrow’s morning check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold.', action: null })
+  })
+  it('yesterday’s goes to this morning’s check on the plain route, never a late one', () => {
+    expect(line(w('a', '2026-11-19'), '2026-11-20')).toEqual({
+      text: 'These are the session readings. This morning’s check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold at best.',
+      action: { kind: 'morning', label: 'Morning check' },
+    })
+    expect(line(w('a', '2026-11-19'), '2026-11-20', [mc('2026-11-20')]).text).toBe('These are the session readings. The morning check from Friday Nov 20 completes them.')
+  })
+  it('an older one: covered, offered late, or hold at best for good', () => {
+    expect(line(w('a', '2026-11-17'), '2026-11-20', [mc('2026-11-18')])).toEqual({ text: 'These are the session readings. The morning check from Wednesday Nov 18 completes them.', action: null })
+    expect(line(w('a', '2026-11-17'), '2026-11-20')).toEqual({
+      text: 'These are the session readings. The check for the next morning, Wednesday Nov 18, completes them; until it is logged, each reads hold at best.',
+      action: { kind: 'late', morning: '2026-11-18', label: 'Log the morning check for Wednesday Nov 18' },
+    })
+    expect(line(w('a', '2026-11-03'), '2026-11-20')).toEqual({ text: 'These are the session readings. No morning check from the next morning completes them, so each reads hold at best.', action: null })
   })
 })

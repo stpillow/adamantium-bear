@@ -266,6 +266,19 @@ function GateScreen({ today, settings, history, locations, aclRsiEntries }: { to
         </Button>
       </section>
 
+      {/* A red flag on a check logged late (Batch D): a note beside Advance, which only a check for today locks (PROGRAM-QUESTIONS 175). */}
+      {view.lateFlags.length > 0 ? (
+        <section aria-label="Red flag on a past morning" className="flex flex-col gap-2 rounded-sm border border-on-dark-faint p-4">
+          <h2 className="text-body font-medium text-on-dark">Red flag on a past morning</h2>
+          {view.lateFlags.map((note) => (
+            <p key={note} className="text-small text-on-dark-dim">
+              {note}
+            </p>
+          ))}
+          <Button onClick={() => navigate({ name: 'morning' })}>This morning’s check</Button>
+        </section>
+      ) : null}
+
       <AdvanceBlock
         body={view}
         confirming={confirming && view.advance.enabled}

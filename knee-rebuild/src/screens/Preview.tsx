@@ -181,7 +181,7 @@ function LogLate({
       <Button variant="primary" wide disabled={busy} onClick={() => void log()}>
         {busy ? 'Saving…' : `Log this session after the fact at ${gym.name}`}
       </Button>
-      <p className="text-small text-on-dark-muted">You can change the gym before the first set. A session logged late is read like any other: with no morning check the day after, it reads hold.</p>
+      <p className="text-small text-on-dark-muted">You can change the gym before the first set. A session logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged; the app offers it when you finish.</p>
       {error ? (
         <p role="alert" className="text-body text-on-dark">
           {error}

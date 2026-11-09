@@ -68,6 +68,11 @@ describe('morningReading (rule 2)', () => {
     expect(r.result).toBe('back-off')
     expect(morningReading(check()).redFlag).toBe(false)
   })
+  it('a red flag reads back-off whatever else the check says: never hold beside slow stiffness or a worse morning', () => {
+    expect(morningReading(check({ redFlags: ['locking'], stiffnessUnder30Min: false })).result).toBe('back-off')
+    expect(morningReading(check({ redFlags: ['locking'], worseThanYesterday: true })).result).toBe('back-off')
+    expect(morningReading(check({ redFlags: ['locking'], worseThanYesterday: true, stiffnessUnder30Min: false })).reasons).toContain('red flag ticked: locking')
+  })
 })
 
 describe('combinedReading (rule 3)', () => {

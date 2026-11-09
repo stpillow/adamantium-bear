@@ -6,7 +6,11 @@ import type { Draft } from '../rules/prefill.ts'
 import { stepKey } from '../rules/runOrder.ts'
 import type { SwapOffer } from '../rules/runnerGym.ts'
 import { RACK_PRESETS } from './LocationEditor.helpers.ts'
-import type { Equipment, EquipmentId, Exercise, LoadUnit, RepUnit, Requirement, SessionTemplate, SetLog, SetSide, Side, Slot, StopReason, Workout } from '../schema/index.ts'
+import type { Equipment, EquipmentId, Exercise, IsoDate, LoadUnit, MorningCheck, RepUnit, Requirement, Run, SessionTemplate, SetLog, SetSide, Side, Slot, StopReason, Workout } from '../schema/index.ts'
+import { addDays } from '../rules/calendar.ts'
+import { checkFor } from '../rules/history.ts'
+import { lateCheckFor } from '../rules/lateCheck.ts'
+import { dateWords, lateOfferLabel } from './MorningCheck.helpers.ts'
 
 /**
  * Pure helpers for the Session runner: what to prefill, what to call things, how to say a set in
@@ -728,4 +732,39 @@ export function notLoggedWords(open: { notLogged: readonly string[]; notFinished
   ].filter(Boolean)
   if (parts.length > 0) return parts.join(' ')
   return notHereSaid ? 'Every other required set is logged.' : 'Every required set is logged.'
+}
+
+/** What the Summary offers for the morning check: this morning's (the plain route), a past morning's (Batch D), or nothing. */
+export type SummaryCheckAction = { kind: 'morning'; label: string } | { kind: 'late'; morning: IsoDate; label: string } | null
+
+/**
+ * The Summary's line about the morning check that completes its readings (Batch D, PROGRAM-QUESTIONS
+ * 174). A session dated today: tomorrow's check, as before. Yesterday's: this morning's check, on the
+ * plain route, never a late one (it keeps the red-flag takeover). An older one: the check that
+ * already covers it, else the next morning's check logged late while lateCheckFor allows it, else
+ * hold at best for good. A session's own pain can already read back off, so the words say "at best".
+ */
+export function summaryCheckLine(input: {
+  workout: Pick<Workout, 'id' | 'date'>
+  today: IsoDate
+  startDate: IsoDate
+  history: { workouts: readonly Workout[]; runs: readonly Run[]; morningChecks: readonly MorningCheck[] }
+}): { text: string; action: SummaryCheckAction } {
+  const { workout, today, startDate, history } = input
+  if (workout.date >= today) {
+    return { text: 'These are the session readings. Tomorrow’s morning check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold.', action: null }
+  }
+  const covering = checkFor({ kind: 'workout', id: workout.id, date: workout.date }, history.morningChecks)
+  if (covering) return { text: `These are the session readings. The morning check from ${dateWords(covering.date)} completes them.`, action: null }
+  if (addDays(workout.date, 1) === today) {
+    return { text: 'These are the session readings. This morning’s check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold at best.', action: { kind: 'morning', label: 'Morning check' } }
+  }
+  const offer = lateCheckFor({ sessionDay: workout.date, today, startDate, workouts: history.workouts, runs: history.runs, checks: history.morningChecks })
+  if (offer.ok) {
+    return {
+      text: `These are the session readings. The check for the next morning, ${dateWords(offer.morning)}, completes them; until it is logged, each reads hold at best.`,
+      action: { kind: 'late', morning: offer.morning, label: lateOfferLabel(offer.morning) },
+    }
+  }
+  return { text: 'These are the session readings. No morning check from the next morning completes them, so each reads hold at best.', action: null }
 }

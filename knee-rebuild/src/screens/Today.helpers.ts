@@ -9,9 +9,10 @@ import { morningCheckApplies, morningReading, type Reading } from '../rules/read
 import { phaseWeekOf } from '../rules/session.ts'
 import { runsInWeek, suggestRun, targetForWeek, type RunSuggestion } from '../rules/weekPlan.ts'
 import { weekMiles } from '../rules/mileage.ts'
-import { stopMessage } from '../rules/redFlags.ts'
+import { lateFlagNotes, stopMessage } from '../rules/redFlags.ts'
 import { exportNudge, loggedRange } from '../rules/backup.ts'
 import { koosDue } from '../rules/koos.ts'
+import { lateFlagWords } from './MorningCheck.helpers.ts'
 import type {
   IsoDateTime,
   KoosEntry,
@@ -335,6 +336,11 @@ export interface TodayView {
   body: TodayBody
   yesterday: YesterdayLine[]
   open: OpenWorkout[]
+  /**
+   * A red flag on a check logged late, for a past morning in the last 14 days, in words (Batch D,
+   * PROGRAM-QUESTIONS 175): a note under every body, the stop included, never the stop itself.
+   */
+  lateFlags: string[]
 }
 
 /** Everything the Today screen renders, from today's date, the settings, the stored history and the program. */
@@ -357,6 +363,7 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     deload: week !== null && isDeloadWeek(week),
     yesterday: yesterdayReadings(today, history, program.templates, settings.injuredSide),
     open: openWorkouts(history.workouts, program.templates, workout?.status === 'in-progress' ? workout.id : null),
+    lateFlags: lateFlagNotes(history.morningChecks, today, program.redFlags).map(lateFlagWords),
   }
 
   const stop = stopMessage(settings.redFlag, program.redFlags)

@@ -7,14 +7,23 @@ export interface WorkoutRecord {
   morningCheck?: MorningCheck
 }
 
+/**
+ * The one morning check a session's reading uses: the check linked to it, else the first that
+ * applies by date (rule 3). attachChecks and runReading read through this, and so do the
+ * morning-tag counts (morningTags.ts), so a tag is only ever paired with the reading its own check
+ * completed (Batch D, PROGRAM-QUESTIONS 178).
+ */
+export function checkFor(subject: { kind: 'workout' | 'run'; id: string; date: IsoDate }, checks: readonly MorningCheck[]): MorningCheck | undefined {
+  const linked = checks.find((c) => c.appliesTo?.kind === subject.kind && c.appliesTo.id === subject.id)
+  return linked ?? checks.find((c) => morningCheckApplies(c, subject))
+}
+
 /** Joins workouts to their sets and to the morning check that applies (an explicit link wins). Sorted by date. */
 export function attachChecks(workouts: readonly Workout[], sets: readonly SetLog[], checks: readonly MorningCheck[]): WorkoutRecord[] {
   return [...workouts]
     .sort((a, b) => a.date.localeCompare(b.date) || (a.startedAt ?? '').localeCompare(b.startedAt ?? ''))
     .map((workout) => {
-      const subject = { kind: 'workout' as const, id: workout.id, date: workout.date }
-      const linked = checks.find((c) => c.appliesTo?.kind === 'workout' && c.appliesTo.id === workout.id)
-      const check = linked ?? checks.find((c) => morningCheckApplies(c, subject))
+      const check = checkFor({ kind: 'workout', id: workout.id, date: workout.date }, checks)
       return { workout, sets: sets.filter((s) => s.workoutId === workout.id), ...(check ? { morningCheck: check } : {}) }
     })
 }
@@ -88,9 +97,7 @@ export function runReading(run: Run, checks: readonly MorningCheck[]): Reading {
       : run.maxPain >= 4
         ? { result: 'hold', reasons: [`pain reached ${run.maxPain} on the run`] }
         : { result: 'clean', reasons: [`pain stayed at ${run.maxPain} on the run`] }
-  const subject = { kind: 'run' as const, id: run.id, date: run.date }
-  const linked = checks.find((c) => c.appliesTo?.kind === 'run' && c.appliesTo.id === run.id)
-  const check = linked ?? checks.find((c) => morningCheckApplies(c, subject))
+  const check = checkFor({ kind: 'run', id: run.id, date: run.date }, checks)
   return combinedReading(session, check ? morningReading(check) : undefined)
 }
 

@@ -2,10 +2,25 @@ import { describe, expect, it } from 'vitest'
 import type { SlotPlan } from '../app/session.ts'
 import type { History } from '../db/repo.ts'
 import type { Prescription } from '../rules/prescription.ts'
-import type { Exercise, MorningCheck, Run, Settings, Slot, Workout } from '../schema/index.ts'
+import { MORNING_TAGS, type Exercise, type MorningCheck, type Run, type Settings, type Slot, type Workout } from '../schema/index.ts'
+import { MorningCheck as MorningCheckSchema } from '../schema/index.ts'
+import { NO_RED_FLAG } from '../rules/redFlags.ts'
 import {
+  LATE_FLAG_INTRO,
+  TAG_INTRO,
+  TAG_LABELS,
   appliesTo,
   buildCheck,
+  buildLateCheck,
+  formWords,
+  lateFlagWords,
+  lateOfferLabel,
+  lateReachWords,
+  lateRefusalWords,
+  lateSubjectWords,
+  reachLiftDates,
+  tagSectionLabel,
+  weekLateFlagWords,
   checkId,
   dateWords,
   emptyForm,
@@ -102,11 +117,12 @@ describe('appliesTo and words', () => {
 
 describe('the form', () => {
   it('starts with everything off, so an untouched save cannot read clean', () => {
-    expect(emptyForm()).toEqual({ stiffnessUnder30Min: false, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [], notes: '' })
+    expect(emptyForm()).toEqual({ stiffnessUnder30Min: false, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [], tags: [], notes: '' })
   })
   it('prefills from a saved check', () => {
     const saved = check({ worseThanYesterday: true, painChangePoints: -1, redFlags: ['locking'], notes: 'tight' })
-    expect(formFromCheck(saved)).toEqual({ stiffnessUnder30Min: true, worseThanYesterday: true, visibleSwelling: false, warmth: false, painChangePoints: -1, redFlags: ['locking'], notes: 'tight' })
+    expect(formFromCheck(saved)).toEqual({ stiffnessUnder30Min: true, worseThanYesterday: true, visibleSwelling: false, warmth: false, painChangePoints: -1, redFlags: ['locking'], tags: [], notes: 'tight' })
+    expect(formFromCheck(check({ tags: ['brace', 'poor-sleep'] })).tags).toEqual(['brace', 'poor-sleep'])
     expect(formFromCheck(check()).notes).toBe('')
   })
   it('toggles a flag on and off without touching the others', () => {
@@ -223,5 +239,108 @@ describe('nextTemplateFor', () => {
   it("keeps the session's own template when the current phase has no such letter, and knows no unknown one", () => {
     expect(nextTemplateFor('p2-c', templates, 4)).toBe('p2-c')
     expect(nextTemplateFor('p9-z', templates, 3)).toBeNull()
+  })
+})
+
+describe('tags on the form (Batch D, PROGRAM-QUESTIONS 177)', () => {
+  it('names every tag, in the catalog’s order', () => {
+    expect(Object.keys(TAG_LABELS)).toEqual([...MORNING_TAGS])
+    expect(Object.values(TAG_LABELS)).toEqual(['Slept badly', 'Sat or drove for hours', 'On my feet most of the day', 'Wore the brace', 'Took an anti-inflammatory (ibuprofen, naproxen)', 'New shoes'])
+    expect(tagSectionLabel(false)).toBe('Yesterday and last night')
+    expect(tagSectionLabel(true)).toBe('The day before and that night')
+    expect(TAG_INTRO).toBe('Optional. Tap any that fit; none is fine. Tags change no reading.')
+  })
+  it('stores tags in the catalog’s order, drops unknown ids, and leaves the field off when none is ticked', () => {
+    const built = buildCheck({ today: '2026-11-04', link: null, form: { ...emptyForm(), tags: ['nsaid', 'made-up', 'poor-sleep'] }, catalog })
+    expect(built.tags).toEqual(['poor-sleep', 'nsaid'])
+    expect(MorningCheckSchema.safeParse(built).success).toBe(true)
+    expect('tags' in buildCheck({ today: '2026-11-04', link: null, form: emptyForm(), catalog })).toBe(false)
+    expect('tags' in buildCheck({ today: '2026-11-04', link: null, form: { ...emptyForm(), tags: ['made-up'] }, catalog })).toBe(false)
+  })
+})
+
+describe('a morning check for a past day (Batch D, PROGRAM-QUESTIONS 174, 175)', () => {
+  const form = { ...emptyForm(), stiffnessUnder30Min: true, tags: ['long-sitting'] }
+  it('builds a record dated the morning it describes, keyed on it, marked with the day it was saved', () => {
+    const late = buildLateCheck({ morning: '2026-11-18', today: '2026-11-20', link: { kind: 'workout', id: '2026-11-17-p1-a' }, form, catalog })
+    expect(late).toEqual({
+      id: 'mc-2026-11-18',
+      date: '2026-11-18',
+      appliesTo: { kind: 'workout', id: '2026-11-17-p1-a' },
+      stiffnessUnder30Min: true,
+      worseThanYesterday: false,
+      visibleSwelling: false,
+      warmth: false,
+      painChangePoints: 0,
+      redFlags: [],
+      tags: ['long-sitting'],
+      loggedOn: '2026-11-20',
+    })
+    expect(MorningCheckSchema.safeParse(late).success).toBe(true)
+    // Everything but the late mark matches the same check saved that morning.
+    const { loggedOn: _l, ...rest } = late
+    void _l
+    expect(rest).toEqual(buildCheck({ today: '2026-11-18', link: { kind: 'workout', id: '2026-11-17-p1-a' }, form, catalog }))
+  })
+  it('settingsAfter returns the settings themselves for a late flagged check: no takeover', () => {
+    const s = settings()
+    const late = buildLateCheck({ morning: '2026-11-18', today: '2026-11-20', link: null, form: { ...form, redFlags: ['locking'] }, catalog })
+    expect(settingsAfter(s, late)).toBe(s)
+    expect(s.redFlag).toEqual(NO_RED_FLAG)
+  })
+  it('leads with the session and the morning in words', () => {
+    expect(lateSubjectWords({ kind: 'workout', workout: workout('w1', { date: '2026-11-17' }) }, '2026-11-17', templates)).toBe('For Session A on Tuesday Nov 17: the check for the next morning, Wednesday Nov 18, logged late.')
+    expect(lateSubjectWords({ kind: 'run', run: run('r1', { type: 'easy', date: '2026-11-18' }) }, '2026-11-18', templates)).toBe('For the easy run on Wednesday Nov 18: the check for the next morning, Thursday Nov 19, logged late.')
+    expect(lateSubjectWords(null, '2026-11-18', templates)).toBe('For Wednesday Nov 18: the check for the next morning, Thursday Nov 19, logged late.')
+  })
+  it('the late form compares with the day before, not yesterday', () => {
+    expect(formWords(false)).toEqual({ worse: 'Worse than yesterday', painLabel: 'Pain change since yesterday', painNote: 'Minus means less pain than yesterday. Up 2 or more reads back off.' })
+    expect(formWords(true)).toEqual({ worse: 'Worse than the day before', painLabel: 'Pain change since the day before', painNote: 'Minus means less pain than the day before. Up 2 or more reads back off.' })
+    expect(LATE_FLAG_INTRO).toContain('a note, not a stop')
+  })
+  it('says each refusal in words', () => {
+    expect(lateRefusalWords({ kind: 'morning-is-today' }, '2026-11-19')).toBe('That morning is today: use this morning’s check.')
+    expect(lateRefusalWords({ kind: 'morning-ahead' }, '2026-11-20')).toBe('Saturday Nov 21 hasn’t come yet.')
+    expect(lateRefusalWords({ kind: 'outside-window' }, '2026-11-05')).toBe('Only the last 14 days can take a morning check after the fact.')
+    expect(lateRefusalWords({ kind: 'nothing-logged' }, '2026-11-16')).toBe('Nothing finished was logged on Monday Nov 16, so there is no morning check to add. A session left open counts once it is finished or ended.')
+    expect(lateRefusalWords({ kind: 'check-exists', morning: '2026-11-14' }, '2026-11-13')).toBe('A morning check for Saturday Nov 14 is already saved; it stays as it is.')
+    expect(lateRefusalWords({ kind: 'all-covered' }, '2026-11-12')).toBe('Every session that day already has its morning check.')
+    expect(lateOfferLabel('2026-11-18')).toBe('Log the morning check for Wednesday Nov 18')
+  })
+  it('keeps the program’s instruction in the red-flag note, and never says it doesn’t stop the program', () => {
+    const note = { date: '2026-11-18', savedOn: '2026-11-20', items: ['Locking'] }
+    expect(lateFlagWords(note)).toBe(
+      'A red flag was ticked on the check for Wednesday Nov 18’s morning, logged late on Friday Nov 20: Locking. Any of these means a call to the ortho or PT. Logged late, it doesn’t take over Today or suspend progression; if it is still happening, tick it on this morning’s check.',
+    )
+    expect(weekLateFlagWords(note)).toBe('Red flag on the next morning’s check, logged late on Friday Nov 20: Locking. A note, not a stop: any of these means a call to the ortho or PT')
+    expect(lateFlagWords(note)).not.toMatch(/doesn.t stop the program/)
+  })
+  it('names what the late check changed, or that nothing did', () => {
+    const history = { workouts: [workout('2026-11-17-p1-a', { date: '2026-11-17' })], runs: [run('run-2026-11-18', { type: 'easy', date: '2026-11-18' })] }
+    expect(
+      lateReachWords(
+        { readings: [{ kind: 'workout', id: '2026-11-17-p1-a', date: '2026-11-17', from: 'hold', to: 'back-off' }], lifts: [{ date: '2026-11-21', from: null, to: '2026-11-18' }] },
+        history,
+        templates,
+      ),
+    ).toEqual([
+      'Session A on Tuesday Nov 17 now reads back off; it read hold.',
+      'The lift on Saturday Nov 21 now plans its lower-body work at back-off loads: the morning of Wednesday Nov 18 read back off.',
+      'A reading can also change the miles cap of the week after it; Week shows where each week stands.',
+    ])
+    expect(lateReachWords({ readings: [{ kind: 'run', id: 'run-2026-11-18', date: '2026-11-18', from: 'hold', to: 'clean' }], lifts: [{ date: '2026-11-19', from: '2026-11-18', to: null }] }, history, templates)).toEqual([
+      'The easy run on Wednesday Nov 18 now reads clean; it read hold.',
+      'The lift on Thursday Nov 19 no longer plans its lower-body work at back-off loads.',
+      'A reading can also change the miles cap of the week after it; Week shows where each week stands.',
+    ])
+    expect(lateReachWords({ readings: [], lifts: [] }, history, templates)).toEqual(['No reading or plan changed: the sessions read as they already did.'])
+  })
+  it('reaches the open lift and the next scheduled one', () => {
+    const template = { mon: 'run:mbr', tue: 'lift:A', wed: 'run:easy', thu: 'lift:B', fri: 'run:long', sat: 'lift:C', sun: 'off' } as const
+    const base = { today: '2026-11-20', startDate: '2026-11-02', template, moves: [] }
+    expect(reachLiftDates({ ...base, workouts: [] })).toEqual(['2026-11-21'])
+    expect(reachLiftDates({ ...base, workouts: [workout('open', { date: '2026-11-19', status: 'in-progress' })] })).toEqual(['2026-11-19', '2026-11-21'])
+    // Today's lift already done: the next one is from tomorrow.
+    expect(reachLiftDates({ ...base, today: '2026-11-21', workouts: [workout('c', { date: '2026-11-21' })] })).toEqual(['2026-11-24'])
   })
 })

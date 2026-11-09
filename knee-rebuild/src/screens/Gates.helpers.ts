@@ -1,15 +1,17 @@
 import type { History } from '../db/repo.ts'
 import { evaluateGate, inWriteOrder, type GateContext, type GateItemResult, type GateResult } from '../rules/gates.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
+import { onTimeChecks } from '../rules/lateCheck.ts'
 import { weekOf } from '../rules/calendar.ts'
 import { locationOrHome } from '../rules/locations.ts'
 import { withAddedSlots } from '../rules/addedSlots.ts'
 import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
 import { advanceWaitsFor, awaitingMorningCheck, loadTestPrefill, phaseEntryWeek, type LoadTestPrefill, type LoadTestSession } from '../rules/progress.ts'
-import { progressionSuspended, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
+import { lateFlagNotes, progressionSuspended, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
 import { phaseLogsBothSides, phaseRunsExercise } from '../rules/session.ts'
 import { bestOfTrials, fastestOfTrials, meetsSymmetry, meetsTimedSymmetry, symmetryPercent, timedSymmetryPercent } from '../rules/unilateral.ts'
 import type { AclRsiEntry, Exercise, Gate, GateItem, GateTest, IsoDate, Location, Phase, Program, SessionTemplate, Settings, Side } from '../schema/index.ts'
+import { lateFlagWords } from './MorningCheck.helpers.ts'
 import { dateWords, runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -71,13 +73,14 @@ export function newGateTestId(stamp: string, key: string, taken: readonly string
  * pattern), never through History, so the gates rule stays their one rule-level reader
  * (src/rules/aclRsi.guard.test.ts).
  */
-export function gateContext(input: { today: IsoDate; settings: Pick<Settings, 'injuredSide'>; history: HistoryLike; records?: readonly WorkoutRecord[]; aclRsiEntries: readonly AclRsiEntry[] }): GateContext {
+export function gateContext(input: { today: IsoDate; settings: Pick<Settings, 'injuredSide'>; history: HistoryLike; aclRsiEntries: readonly AclRsiEntry[] }): GateContext {
   const { today, settings, history } = input
-  const records = input.records ?? attachChecks(history.workouts, history.setLogs, history.morningChecks)
+  // Sessions read with on-time checks only (PROGRAM-QUESTIONS 176): a clean late check clears no gate item.
+  const onTime = onTimeChecks(history.morningChecks)
   return {
     today,
     injuredSide: settings.injuredSide,
-    readings: subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide),
+    readings: subjectReadings(attachChecks(history.workouts, history.setLogs, onTime), history.runs, onTime, settings.injuredSide),
     gateTests: orderedTests(history.gateTests),
     morningChecks: history.morningChecks,
     runs: history.runs,
@@ -654,6 +657,8 @@ export type GatesView =
       question: string
       /** The stop message while the red-flag state is on (rule 9), else null. */
       stop: { headline: string; items: string[] } | null
+      /** Red flags on checks logged late, in words (Batch D): beside Advance, which they never lock; only a check for today suspends progression. */
+      lateFlags: string[]
     }
 
 /** Where the screen's gyms stand: every stored gym, and the one Today plans at. */
@@ -780,7 +785,7 @@ export function gatesView(input: { today: IsoDate; settings: Settings; history: 
   const gate = currentGate(program.gates, settings.currentPhase)
   if (!gate) return { kind: 'no-gate', line: noGateWords(program.gates, settings.currentPhase) }
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
-  const result = evaluateGate(gate, gateContext({ today, settings, history, records, aclRsiEntries: input.aclRsiEntries }))
+  const result = evaluateGate(gate, gateContext({ today, settings, history, aclRsiEntries: input.aclRsiEntries }))
   const entryWeek = phaseEntryWeek({ today, startDate: settings.startDate, template: program.weeklyTemplate, moves: history.sessionMoves, workouts: history.workouts })
   return {
     kind: 'gate',
@@ -797,5 +802,6 @@ export function gatesView(input: { today: IsoDate; settings: Settings; history: 
     entryWeek,
     question: advanceQuestion(gate, program.phases, entryWeek, weekOf(today, settings.startDate)),
     stop: stopMessage(settings.redFlag, program.redFlags),
+    lateFlags: lateFlagNotes(history.morningChecks, today, program.redFlags).map(lateFlagWords),
   }
 }

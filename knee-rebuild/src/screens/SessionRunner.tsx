@@ -67,6 +67,7 @@ import {
   withoutEnginePicks,
   type GymMark,
   type HoldsOff,
+  summaryCheckLine,
 } from './SessionRunner.helpers.ts'
 import { shortDateWords } from './Today.helpers.ts'
 
@@ -153,6 +154,7 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
           sets={sets}
           injuredSide={settings.injuredSide}
           phaseWeek={sessionPhaseWeek(workout, settings)}
+          checkLine={summaryCheckLine({ workout, today, startDate: settings.startDate, history })}
           timing={{
             workout,
             sets: timedSets(sets, (slotId) => summaryTemplate.slots.find((s) => s.id === slotId)?.repUnit),

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Day, Effort, IsoDate, IsoDateTime, LoadUnit, Pain, ReadingResult, Rpe, RunType, SetSide, Side, StopReason, WholeRpe, WorkoutStatus } from './enums.ts'
+import { Day, Effort, IsoDate, IsoDateTime, LoadUnit, MorningTag, Pain, ReadingResult, Rpe, RunType, SetSide, Side, StopReason, WholeRpe, WorkoutStatus } from './enums.ts'
 import { EquipmentId, Slot } from './program.ts'
 
 const id = z.string().min(1)
@@ -166,7 +166,15 @@ export const SetLog = z.strictObject({
 })
 export type SetLog = z.infer<typeof SetLog>
 
-/** Four taps plus an optional note, the morning after a session. */
+/**
+ * Four taps plus an optional note, optional fixed tags; `loggedOn` only on a check for a past
+ * morning (Batch D). `date` is the morning the check describes. `loggedOn` is the day a check for an
+ * earlier morning was saved: written only by the late flow, always after `date`, never on a check
+ * saved the morning it describes, so every check stored before Batch D reads as on time
+ * (PROGRAM-QUESTIONS 174). Tags describe the day and night before; no rule that decides anything
+ * reads them (PROGRAM-QUESTIONS 177, 178). Absent means none: an empty list is refused, so there is
+ * one way to write "no tags".
+ */
 export const MorningCheck = z.strictObject({
   id,
   date: IsoDate,
@@ -182,6 +190,13 @@ export const MorningCheck = z.strictObject({
   /** Red flag ids ticked. Any entry puts the app in the red-flag state. */
   redFlags: z.array(id),
   notes: z.string().optional(),
+  /** The fixed tags ticked (Batch D), each once, in any order; absent when none was. */
+  tags: z.array(MorningTag).min(1).refine(uniqueIds, { message: 'each tag once' }).optional(),
+  /** The day a check for an earlier morning was saved (Batch D); absent on a check saved the morning it describes. */
+  loggedOn: IsoDate.optional(),
+}).refine((c) => c.loggedOn === undefined || c.loggedOn > c.date, {
+  message: 'a check logged late is logged after the morning it describes',
+  path: ['loggedOn'],
 })
 export type MorningCheck = z.infer<typeof MorningCheck>
 

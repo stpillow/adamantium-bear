@@ -102,6 +102,24 @@ const byId = (view: ReturnType<typeof gatesView>, id: string): ItemView => {
   return item
 }
 
+describe('late checks and the gates (PROGRAM-QUESTIONS 176)', () => {
+  it('a clean late check lifts no reading the gates read: the two lifts it alone would clear read hold, and clean weeks fails', () => {
+    const history = loggedPhase1()
+    const late = new Set(['2026-11-20', '2026-11-22'])
+    const lateHistory = { ...history, morningChecks: history.morningChecks.map((c) => (late.has(c.date) ? { ...c, loggedOn: TODAY } : c)) }
+    const onTime = evaluateGate(gate1, gateContext({ today: TODAY, settings: settings(), history, aclRsiEntries: [] }))
+    const withLate = evaluateGate(gate1, gateContext({ today: TODAY, settings: settings(), history: lateHistory, aclRsiEntries: [] }))
+    expect(onTime.items.find((i) => i.item.id === 'g1-clean-weeks')?.pass).toBe(true)
+    expect(withLate.items.find((i) => i.item.id === 'g1-clean-weeks')?.pass).toBe(false)
+  })
+  it('a late complaint still fails clean weeks', () => {
+    const history = loggedPhase1()
+    const lateHistory = { ...history, morningChecks: history.morningChecks.map((c) => (c.date === '2026-11-20' ? { ...c, visibleSwelling: true, loggedOn: TODAY } : c)) }
+    const result = evaluateGate(gate1, gateContext({ today: TODAY, settings: settings(), history: lateHistory, aclRsiEntries: [] }))
+    expect(result.items.find((i) => i.item.id === 'g1-clean-weeks')?.pass).toBe(false)
+  })
+})
+
 describe('done criterion: gate 1 evaluates from logged data alone', () => {
   it('reads the clean weeks and the 4-mile run from workouts, set logs, morning checks and runs; the test and the toggle wait for entry', () => {
     const history = loggedPhase1()
@@ -926,5 +944,18 @@ describe('the ACL-RSI row and the KOOS offer (Batch A, PROGRAM-QUESTIONS 156, 15
     expect(view.koosOffer).toBe('Attempting a gate? A KOOS check goes with it: fill the questionnaire in when you test. Scores show on Progress, never here.')
     // No number rides on the offer: a dipping subscale can never read as an extra gate requirement.
     expect(view.koosOffer).not.toMatch(/\d/)
+  })
+})
+
+describe('a red flag on a check logged late shows beside Advance, which it never locks (Batch D, PROGRAM-QUESTIONS 175)', () => {
+  it('lists the note and leaves the red-flag state off', () => {
+    const late = check('2026-11-20', { redFlags: ['locking'], loggedOn: '2026-11-22' })
+    const history = loggedPhase1()
+    const view = gatesView({ today: TODAY, settings: settings(), history: { ...history, morningChecks: [...history.morningChecks.filter((c) => c.date !== '2026-11-20'), late] }, program: PROGRAM, aclRsiEntries: [] })
+    if (view.kind !== 'gate') throw new Error('expected a gate')
+    expect(view.stop).toBeNull()
+    expect(view.lateFlags).toHaveLength(1)
+    expect(view.lateFlags[0]).toContain('logged late on Sunday Nov 22')
+    if (!view.advance.enabled) expect(view.advance.why).not.toContain('red-flag')
   })
 })

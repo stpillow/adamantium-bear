@@ -1,3 +1,4 @@
+import { lateCheckOffer } from './MorningCheck.helpers.ts'
 import { describe, expect, it } from 'vitest'
 import { weekSchedule } from '../rules/calendar.ts'
 import type { WeekMiles } from '../rules/weekPlan.ts'
@@ -29,6 +30,7 @@ import {
   weekView,
   type HistoryLike,
   type ProgramLike,
+  dayLateFlagNote,
 } from './Week.helpers.ts'
 
 const START = '2026-11-02'
@@ -380,5 +382,39 @@ describe('weekView', () => {
     const v = weekView({ today: '2026-11-04', selected: null, settings: settings({ redFlag: { active: true, items: ['locking'] } }), history: history(), program: PROGRAM })
     expect(v.stop?.items).toEqual(['Locking or catching'])
     expect(weekView({ today: '2026-11-04', selected: null, settings: settings(), history: history(), program: PROGRAM }).stop).toBeNull()
+  })
+})
+
+describe('a past day missing its morning check offers it (Batch D, PROGRAM-QUESTIONS 174)', () => {
+  // Example 1: today Fri Nov 20; Session A on Tue Nov 17 has no check on Nov 18.
+  const h = history({
+    workouts: [workout('2026-11-17-p1-a', '2026-11-17', 'finished'), workout('2026-11-19-p1-b', '2026-11-19', 'finished', 'p1-b')],
+    setLogs: [set('2026-11-17-p1-a', 1, 2), set('2026-11-19-p1-b', 1, 2)],
+    runs: [run('r-wed', '2026-11-18', 3)],
+    morningChecks: [check('2026-11-19'), check('2026-11-20')],
+  })
+  it('offers it on the session day’s row, and not on yesterday’s', () => {
+    const v = weekView({ today: '2026-11-20', selected: null, settings: settings(), history: h, program: PROGRAM })
+    const tue = v.days.find((d) => d.date === '2026-11-17')
+    expect(tue).toMatchObject({ checkNote: 'No morning check was logged for it', lateCheck: { morning: '2026-11-18', label: 'Log the morning check for Wednesday Nov 18' }, lateFlagNote: null })
+    expect(v.days.find((d) => d.date === '2026-11-19')?.lateCheck).toBeNull()
+    expect(v.days.find((d) => d.date === '2026-11-18')?.lateCheck).toBeNull()
+    expect(v.days.find((d) => d.date === '2026-11-16')?.lateCheck).toBeNull()
+  })
+  it('once logged late the offer goes, the reading recomputes, and a flag on it stays a note on the row', () => {
+    const late = check('2026-11-18', { id: 'mc-2026-11-18', appliesTo: { kind: 'workout', id: '2026-11-17-p1-a' }, redFlags: ['locking'], loggedOn: '2026-11-20' })
+    const v = weekView({ today: '2026-11-20', selected: null, settings: settings(), history: { ...h, morningChecks: [...h.morningChecks, late] }, program: PROGRAM })
+    const tue = v.days.find((d) => d.date === '2026-11-17')
+    expect(tue).toMatchObject({ lateCheck: null, checkNote: null, reading: 'back-off' })
+    expect(tue?.lateFlagNote).toBe('Red flag on the next morning’s check, logged late on Friday Nov 20: Locking or catching. A note, not a stop: any of these means a call to the ortho or PT')
+    // No takeover: the Week's stop stays off.
+    expect(v.stop).toBeNull()
+    // The row keeps the note for good, weeks later.
+    const later = weekView({ today: '2026-12-20', selected: 3, settings: settings(), history: { ...h, morningChecks: [...h.morningChecks, late] }, program: PROGRAM })
+    expect(later.days.find((d) => d.date === '2026-11-17')?.lateFlagNote).toContain('Locking or catching')
+  })
+  it('the offer’s own rule: a lift left open offers nothing', () => {
+    expect(lateCheckOffer({ date: '2026-11-17', today: '2026-11-20', startDate: START, history: { workouts: [workout('w', '2026-11-17', 'in-progress')], runs: [], morningChecks: [] } })).toBeNull()
+    expect(dayLateFlagNote('2026-11-17', [check('2026-11-18', { redFlags: ['locking'] })], PROGRAM.redFlags)).toBeNull()
   })
 })

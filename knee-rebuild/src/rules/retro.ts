@@ -5,7 +5,9 @@ import { addDays, dateOf, daysBetween, isDeloadWeek, weekOf } from './calendar.t
  * Logging after the fact (Shawn, Nov 6): a run or a strength session done on an earlier day, entered
  * later. Readings are recomputed from the whole log, so a late entry is read like any other: a session
  * with no morning check the day after reads hold (unknown is hold), and it can change a reading or a
- * week's mileage cap already shown (PROGRAM-QUESTIONS 141). The window keeps that bounded.
+ * week's mileage cap already shown (PROGRAM-QUESTIONS 141). The window keeps that bounded. Since
+ * Batch D (Shawn's Nov 8 decision 12) that morning's check can be logged late too, inside the same
+ * window (lateCheck.ts; PROGRAM-QUESTIONS 174), so such a session reads hold only until it is.
  */
 
 /** How far back a late entry can go. */
