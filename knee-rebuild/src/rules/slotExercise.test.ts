@@ -378,3 +378,39 @@ describe('slotAtGym: the gym routes the slot forward from where its history put 
     expect(slotAtGym(atGym([]), 'nordic', noMats).exercise).toBe(nordicMat)
   })
 })
+
+describe('a down period holds the slot on its easier version (Batch E, PROGRAM-QUESTIONS 182)', () => {
+  const pause = { start: '2027-01-14', until: '2027-01-20', untilWords: 'Wednesday Jan 20', day: 2, of: 7 }
+  const twoCleans = [backedOff, curl('2027-01-08', 'clean'), curl('2027-01-12', 'clean', 45)]
+
+  it('two cleans on the leg curls inside the period: the slot stays on them, and the clean-twice step up repeats', () => {
+    const { placed, p } = plan(input(twoCleans, { pause }))
+    expect(placed.exercise).toBe(legCurl)
+    expect(placed.placement).toEqual({
+      note: 'On Leg curls since Nordic negatives backed off: clean twice, and the slot goes back to Nordic negatives after the down period (until Wednesday Jan 20).',
+      returned: false,
+    })
+    // prescribe gets no pause in this helper: placement only. The curl's own clean twice would step up; session.ts passes the pause to both.
+    expect(p.exerciseId).toBe('leg-curl')
+    const [paused] = prescribe({ slot: nordicSlot, exercise: placed.exercise, substitutions: [legCurl, lyingCurl], readings: placed.readings, lastSets: placed.lastSets, week: 10, injuredSide: 'right', dumbbellMax: 80, redFlagActive: false, pause, ...(placed.placement ? { placement: placed.placement } : {}) })
+    expect(paused).toMatchObject({ exerciseId: 'leg-curl', load: 45, basis: 'paused' })
+  })
+
+  it('after the period, the same history goes back to the Nordics', () => {
+    expect(slotExercise(input(twoCleans)).exercise).toBe(nordic)
+  })
+
+  it('one clean or none reads as outside a period', () => {
+    for (const entries of [[backedOff], [backedOff, curl('2027-01-08', 'clean')], [backedOff, curl('2027-01-08', 'hold')]]) {
+      expect(slotExercise(input(entries, { pause }))).toEqual(slotExercise(input(entries)))
+    }
+  })
+
+  it('a Swap chosen for the session still wins, the harder own exercise included (Shawn’s pick, not the engine’s step)', () => {
+    expect(sessionSlotExercise(input(twoCleans, { pause }), 'nordic')).toEqual(sessionSlotExercise(input(twoCleans), 'nordic'))
+    const everything = new Set<string>()
+    const atGym = slotAtGym(input(twoCleans, { pause }), undefined, everything)
+    expect(atGym.exercise).toBe(legCurl)
+    expect(slotAtGym(input(twoCleans, { pause }), 'nordic', everything).exercise).toBe(nordic)
+  })
+})

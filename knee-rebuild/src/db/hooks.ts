@@ -1,8 +1,8 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAclRsiEntries, getAddedSlots, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
+import { getAclRsiEntries, getAddedSlots, getDownPeriods, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
-import type { AclRsiEntry, AddedSlot, HrSettings, KoosEntry, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, AddedSlot, DownPeriod, HrSettings, KoosEntry, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
 export function useSettings(): Settings | null | undefined {
@@ -72,4 +72,9 @@ export function useProgramOverrides(): ProgramOverride[] | undefined {
 /** The exercises Shawn added to a session (`withAddedSlots` lays them after a template's own). Undefined while loading. */
 export function useAddedSlots(): AddedSlot[] | undefined {
   return useLiveQuery(() => getAddedSlots(), [])
+}
+
+/** Every declared down period, in start order (the phase-week bands it holds, `bandWeek`). Undefined while loading. */
+export function useDownPeriods(): DownPeriod[] | undefined {
+  return useLiveQuery(() => getDownPeriods(), [])
 }

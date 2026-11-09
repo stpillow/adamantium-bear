@@ -1,8 +1,9 @@
 import { DAYS, DELOAD_WEEKS, addDays, dayOf, daysBetween, isDeloadWeek, isMonday, weekOf } from '../rules/calendar.ts'
 import { rebaseMoves, rebaseWeekNumber } from '../rules/moves.ts'
 import { clearRedFlag, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
+import { downPeriodWords, standingPeriod } from '../rules/downPeriod.ts'
 import { TABLE_WORDS, daysSinceExport, exportDay, type BackupSummary, type BackupTable, type SettingChange, type SettingsOnImport } from '../rules/backup.ts'
-import { HR_MAX_MAX, HR_MAX_MIN, HR_RESTING_MAX, HR_RESTING_MIN, IsoDate, REST_TIMER_MAX, REST_TIMER_MIN, type Day, type HrSettings, type IsoDateTime, type Phase, type RedFlag, type SessionMove, type Settings, type Side } from '../schema/index.ts'
+import { HR_MAX_MAX, HR_MAX_MIN, HR_RESTING_MAX, HR_RESTING_MIN, IsoDate, REST_TIMER_MAX, REST_TIMER_MIN, type Day, type DownPeriod, type HrSettings, type IsoDateTime, type Phase, type RedFlag, type SessionMove, type Settings, type Side } from '../schema/index.ts'
 
 /**
  * Pure helpers for the Settings screen: words for dates, the start-date check, the red-flag state
@@ -385,6 +386,19 @@ export function settingsOnImportWords(
     redFlag = `${set} stays on after the import${items}. It clears only here, with a note.`
   }
   return { redFlag, changes: on.changes.map((change) => settingChangeWords(change, phases)) }
+}
+
+/**
+ * The down period this phone has standing that an import keeps (src/rules/backup.ts
+ * `downPeriodsOnImport`, PROGRAM-QUESTIONS 189), said beside the red flag's line: an import never
+ * lifts a pause. Null when nothing stands, or the file carries the same row.
+ */
+export function keptDownPeriodWords(phone: readonly DownPeriod[], file: readonly DownPeriod[], today: IsoDate): string | null {
+  const standing = standingPeriod(today, phone)
+  if (standing === null) return null
+  const same = file.find((f) => f.id === standing.id)
+  if (same && JSON.stringify(same) === JSON.stringify(standing)) return null
+  return `The down period on this phone, ${downPeriodWords(standing)}, stays after the import: an import never lifts a pause.`
 }
 
 /** A file from an older app, carried forward: said so, so a surprise in it has a reason. */

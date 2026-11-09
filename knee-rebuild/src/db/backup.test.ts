@@ -7,6 +7,7 @@ import { afterMorningCheck, stopMessage } from '../rules/redFlags.ts'
 import {
   AclRsiEntry,
   AddedSlot,
+  DownPeriod,
   GateTest,
   HrSettings,
   KoosEntry,
@@ -37,9 +38,13 @@ import {
   addRun,
   addSessionMove,
   archiveLocation,
+  declareDownPeriod,
   defaultSettings,
+  endDownPeriod,
   ensureLocations,
   ensureSettings,
+  extendDownPeriod,
+  getDownPeriods,
   getProgramOverrides,
   getSettings,
   markOff,
@@ -308,6 +313,11 @@ async function seedHistory(): Promise<void> {
   // An ACL-RSI entry, saved twice on its day (the second save replaces): all 12 items are required, so every field is used (Batch A).
   await saveAclRsiEntry({ date: '2026-12-19', i1: 5, i2: 5, i3: 5, i4: 5, i5: 5, i6: 5, i7: 5, i8: 5, i9: 5, i10: 5, i11: 5, i12: 5 })
   await saveAclRsiEntry({ date: '2026-12-19', i1: 8, i2: 7, i3: 6, i4: 8, i5: 7, i6: 6, i7: 7, i8: 8, i9: 6, i10: 9, i11: 8, i12: 7 })
+  // Two down periods (Batch E): one declared with a note, made longer and ended early, so every field is used; one run to its end.
+  await declareDownPeriod({ today: '2026-11-28', days: 5, declaredAt: '2026-11-28T13:00:00.000Z', note: 'Flu, “the bad one”' })
+  await extendDownPeriod('dp-2026-11-28', '2026-12-04', '2026-11-29')
+  await endDownPeriod('dp-2026-11-28', '2026-11-30')
+  await declareDownPeriod({ today: '2026-12-14', days: 3, declaredAt: '2026-12-14T13:00:00.000Z' })
 }
 
 /** The keys every row of a table uses, across the table: every field of the schema shows up somewhere. */
@@ -328,6 +338,7 @@ const SHAPES: Record<keyof BackupTables, readonly string[]> = {
   vo2Readings: Object.keys(Vo2Reading.shape),
   koosEntries: Object.keys(KoosEntry.shape),
   aclRsiEntries: Object.keys(AclRsiEntry.shape),
+  downPeriods: Object.keys(DownPeriod.shape),
 }
 
 describe('the backup carries the whole database', () => {
@@ -403,8 +414,8 @@ describe('import is all or nothing', () => {
     await seedHistory()
     const { backup } = await exportBackup(T1)
     const before = await rawDump()
-    const newer = { ...backup, schemaVersion: 11 } as unknown as Backup
-    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 11; this one reads up to 10).')
+    const newer = { ...backup, schemaVersion: 12 } as unknown as Backup
+    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 12; this one reads up to 11).')
     const twice = { ...backup, runs: [...backup.runs, ...backup.runs.slice(0, 1)] }
     await expect(replaceAll(twice, program, TODAY)).rejects.toThrow('twice')
     expect(await rawDump()).toEqual(before)
@@ -433,6 +444,26 @@ describe('an import and the red flag (PROGRAM-QUESTIONS 128)', () => {
     expect(stopMessage(after?.redFlag ?? { active: false, items: [] }, program.redFlags)?.headline).toBe('Stop. Call the ortho or PT.')
     // Everything else is the file's: the flagged morning check is gone with the rest of what came after it.
     expect((await db.morningChecks.toArray()).map((m) => m.id)).toEqual(['mc-2026-11-04'])
+  })
+})
+
+describe('an import and a down period (Batch E, PROGRAM-QUESTIONS 189)', () => {
+  it('a phone in a down period importing a file from before it keeps the period: an import never lifts a pause', async () => {
+    await ensureSettings(defaultSettings(program))
+    await ensureLocations(program, START)
+    await declareDownPeriod({ today: '2026-11-03', days: 3, declaredAt: '2026-11-03T13:00:00.000Z' })
+    const before = backupText((await exportBackup('2026-11-07T23:00:00.000Z')).backup)
+    await declareDownPeriod({ today: '2026-11-14', days: 7, declaredAt: '2026-11-14T13:00:00.000Z', note: 'Flu' })
+    const standing = await db.downPeriods.get('dp-2026-11-14')
+
+    const read = parseBackup(before)
+    if (!read.ok) throw new Error(read.refusal)
+    await replaceAll(read.backup, program, '2026-11-16')
+    // The file's past period comes in; the phone's standing one stays, as it was.
+    expect(await getDownPeriods()).toEqual([read.backup.downPeriods[0], standing])
+    // On the day after it ended, the same import brings the file's list in whole.
+    await replaceAll(read.backup, program, '2026-11-21')
+    expect(await getDownPeriods()).toEqual(read.backup.downPeriods)
   })
 })
 

@@ -1,8 +1,10 @@
 import { daysBetween, todayIn } from './calendar.ts'
+import { lastPausedDay } from './downPeriod.ts'
 import type { RedFlagState } from './redFlags.ts'
 import {
   AclRsiEntry,
   AddedSlot,
+  DownPeriod,
   GateTest,
   HrSettings,
   IsoDateTime,
@@ -33,7 +35,7 @@ export const BACKUP_APP = 'knee-rebuild'
  * The shape of the file's tables: the Dexie version they were read from (src/db/db.ts). A test in
  * src/db/backup.test.ts holds the two together, so a new Dexie version has to bring a step here.
  */
-export const BACKUP_SCHEMA_VERSION = 10
+export const BACKUP_SCHEMA_VERSION = 11
 
 /**
  * The oldest shape a file can be carried forward from. Version 1 was the empty M0 database. No file
@@ -46,7 +48,7 @@ export const OLDEST_SCHEMA_VERSION = 2
 export const BACKUP_MAX_BYTES = 10 * 1024 * 1024
 
 /** The tables a file carries besides settings, in the order the file lists them. */
-export const BACKUP_TABLES = ['workouts', 'setLogs', 'morningChecks', 'runs', 'gateTests', 'sessionMoves', 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries'] as const
+export const BACKUP_TABLES = ['workouts', 'setLogs', 'morningChecks', 'runs', 'gateTests', 'sessionMoves', 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods'] as const
 export type BackupTable = (typeof BACKUP_TABLES)[number]
 
 /** Settings as a file carries them: every field but `lastExportedAt`, which is the phone's own (an import stamps the file's `exportedAt`). */
@@ -67,6 +69,7 @@ export interface BackupTables {
   vo2Readings: Vo2Reading[]
   koosEntries: KoosEntry[]
   aclRsiEntries: AclRsiEntry[]
+  downPeriods: DownPeriod[]
 }
 
 /** The file, in the order its keys are written. */
@@ -100,6 +103,7 @@ export const TABLE_WORDS: Record<BackupTable, { many: string; one: string }> = {
   vo2Readings: { many: 'VO2 max readings', one: 'VO2 max reading' },
   koosEntries: { many: 'KOOS entries', one: 'KOOS entry' },
   aclRsiEntries: { many: 'ACL-RSI entries', one: 'ACL-RSI entry' },
+  downPeriods: { many: 'down periods', one: 'down period' },
 }
 
 interface Issue {
@@ -129,6 +133,7 @@ const TABLES: { [K in BackupTable]: { schema: RowSchema<BackupTables[K][number]>
   vo2Readings: { schema: Vo2Reading, key: (r) => r.date },
   koosEntries: { schema: KoosEntry, key: (r) => r.date },
   aclRsiEntries: { schema: AclRsiEntry, key: (r) => r.date },
+  downPeriods: { schema: DownPeriod, key: (r) => r.id },
 }
 
 /** A row's stored key (its id, or a Program edit's slot id). */
@@ -226,6 +231,7 @@ export function buildBackup(stored: StoredContents, exportedAt: IsoDateTime): Ex
     vo2Readings: table('vo2Readings'),
     koosEntries: table('koosEntries'),
     aclRsiEntries: table('aclRsiEntries'),
+    downPeriods: table('downPeriods'),
   }
   return { backup, unreadable }
 }
@@ -271,8 +277,9 @@ export function sizeProblem(bytes: number): string | null {
  * version 9's without the KOOS and ACL-RSI questionnaire lists (Batch A; both lists in the one
  * step, and no questionnaire entry is ever invented); version 9's tables are version 10's as they
  * stand (Batch D adds only optional fields to a morning check: the fixed tags and the day a check
- * for a past morning was saved; none is ever invented). A list the file already has is
- * left for the schema to judge, never replaced.
+ * for a past morning was saved; none is ever invented); version 10's tables are version 11's
+ * without the down periods list (Batch E; no period is ever invented, so an older file pauses
+ * nothing). A list the file already has is left for the schema to judge, never replaced.
  */
 export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObject>> = {
   2: (file) => ({ ...withList(file, 'locations'), schemaVersion: 3 }),
@@ -283,6 +290,7 @@ export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObjec
   7: (file) => ({ ...withList(file, 'vo2Readings'), schemaVersion: 8 }),
   8: (file) => ({ ...withList(withList(file, 'koosEntries'), 'aclRsiEntries'), schemaVersion: 9 }),
   9: (file) => ({ ...file, schemaVersion: 10 }),
+  10: (file) => ({ ...withList(file, 'downPeriods'), schemaVersion: 11 }),
 }
 
 function withList(file: FileObject, key: BackupTable): FileObject {
@@ -375,6 +383,7 @@ export function backupFrom(raw: unknown): BackupRead {
     vo2Readings: tables.vo2Readings ?? [],
     koosEntries: tables.koosEntries ?? [],
     aclRsiEntries: tables.aclRsiEntries ?? [],
+    downPeriods: tables.downPeriods ?? [],
   }
   return { ok: true, backup, migratedFrom: version === BACKUP_SCHEMA_VERSION ? null : version }
 }
@@ -461,6 +470,22 @@ export function redFlagOnImport(phone: RedFlagState | undefined, file: RedFlagSt
   if (!file.active) return phone
   const since = [phone.since, file.since].filter((d): d is IsoDate => d !== undefined).sort()[0]
   return { active: true, ...(since !== undefined ? { since } : {}), items: [...new Set([...phone.items, ...file.items])] }
+}
+
+/**
+ * The down periods an import leaves (Batch E, PROGRAM-QUESTIONS 189), on the red flag's precedent:
+ * an import never lifts a pause the phone has on. Every phone row still pausing today or later (one
+ * covering today, ended today, or dated ahead) stays, and a file row that overlaps one of them is
+ * left out, so one stands at a time; every other file row comes in, and the phone's past periods go
+ * with the rest of its history. With nothing standing on the phone, the file's list comes in whole.
+ */
+export function downPeriodsOnImport(phone: readonly DownPeriod[], file: readonly DownPeriod[], today: IsoDate): DownPeriod[] {
+  const kept = phone.filter((p) => lastPausedDay(p) >= today)
+  if (kept.length === 0) return [...file]
+  const overlaps = (a: DownPeriod, b: DownPeriod) => a.start <= lastPausedDay(b) && b.start <= lastPausedDay(a)
+  const ids = new Set(kept.map((p) => p.id))
+  const fromFile = file.filter((f) => !ids.has(f.id) && !kept.some((k) => overlaps(f, k)))
+  return byKey('downPeriods', [...kept, ...fromFile])
 }
 
 /** A setting the file would change, the phone's value then the file's. */

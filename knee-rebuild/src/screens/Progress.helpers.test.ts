@@ -72,6 +72,7 @@ import {
   vo2View,
   waitingWords,
   type HistoryLike,
+  downPeriodLines,
 } from './Progress.helpers.ts'
 import type { AcuteChronic, TrainingLoadEntry } from '../rules/trainingLoad.ts'
 
@@ -1267,3 +1268,13 @@ function addOne(date: string): string {
   d.setUTCDate(d.getUTCDate() + 1)
   return d.toISOString().slice(0, 10)
 }
+
+describe('down periods on Progress (Batch E, PROGRAM-QUESTIONS 187)', () => {
+  const AT = '2026-11-14T13:00:00.000Z'
+  it('lists them newest first, in words, and leaves the weekly counts as they are', () => {
+    const p1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', endedOn: '2026-11-17', declaredAt: AT }
+    const p2 = { id: 'dp-2026-12-01', start: '2026-12-01', plannedEnd: '2026-12-03', declaredAt: AT }
+    expect(downPeriodLines([p1, p2])).toEqual(['Tuesday Dec 1 to Thursday Dec 3 (3 days)', 'Saturday Nov 14 to Friday Nov 20, ended early on Tuesday Nov 17 (4 of 7 days)'])
+    expect(downPeriodLines([])).toEqual([])
+  })
+})

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useToday } from '../app/today.ts'
 import { Screen } from '../components/Screen.tsx'
-import { useAddedSlots, useProgramOverrides, useSettings } from '../db/hooks.ts'
+import { useAddedSlots, useDownPeriods, useProgramOverrides, useSettings } from '../db/hooks.ts'
 import { REFERENCE_LEAD, VIEW_CHOICES, phaseScreen, type ProgramView } from './Program.helpers.ts'
 import { PhaseSessions } from './program/PhaseSessions.tsx'
 import { Choice } from './program/parts.tsx'
@@ -18,10 +18,11 @@ export function Program() {
   const settings = useSettings()
   const overrides = useProgramOverrides()
   const added = useAddedSlots()
+  const downPeriods = useDownPeriods()
   const today = useToday()
   const [view, setView] = useState<ProgramView>('phase')
 
-  if (settings === undefined || overrides === undefined || added === undefined) {
+  if (settings === undefined || overrides === undefined || added === undefined || downPeriods === undefined) {
     return (
       <Screen title="Program" lead="Opening storage…">
         <p className="text-body text-on-dark-dim">The program loads from the phone.</p>
@@ -36,7 +37,7 @@ export function Program() {
     )
   }
 
-  const screen = phaseScreen(settings, today, overrides)
+  const screen = phaseScreen(settings, today, overrides, downPeriods)
   return (
     <Screen title="Program" lead={view === 'phase' ? screen.lead : REFERENCE_LEAD}>
       <div role="radiogroup" aria-label="Show" className="grid grid-cols-2 gap-2">

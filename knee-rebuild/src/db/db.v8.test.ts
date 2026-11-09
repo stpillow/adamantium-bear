@@ -95,8 +95,8 @@ describe('a version 8 database opened at version 9', () => {
     await writeVersionEight()
 
     await db.open()
-    expect(db.verno).toBe(10)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v8Rows), 'koosEntries', 'aclRsiEntries'].sort())
+    expect(db.verno).toBe(11)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v8Rows), 'koosEntries', 'aclRsiEntries', 'downPeriods'].sort())
     expect(db.koosEntries.schema.primKey.keyPath).toBe('date')
     expect(db.aclRsiEntries.schema.primKey.keyPath).toBe('date')
     expect(await db.koosEntries.count()).toBe(0)

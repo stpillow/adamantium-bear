@@ -99,7 +99,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
 
   return (
     <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max, KOOS and morning tags.">
-      <CleanDays clean={view.clean} adherence={view.adherence} />
+      <CleanDays clean={view.clean} adherence={view.adherence} downPeriods={view.downPeriods} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
       <MilesSection miles={view.miles} />
@@ -116,7 +116,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
  * (Batch B), each program week's sessions done of those scheduled, in words, newest first: a record
  * beside the count, never a streak.
  */
-function CleanDays({ clean, adherence }: { clean: CleanDaysView; adherence: AdherenceView }) {
+function CleanDays({ clean, adherence, downPeriods }: { clean: CleanDaysView; adherence: AdherenceView; downPeriods: string[] }) {
   return (
     <section aria-label="Consecutive clean days" className={SECTION}>
       <h2 className={HEADING}>Consecutive clean days</h2>
@@ -134,6 +134,18 @@ function CleanDays({ clean, adherence }: { clean: CleanDaysView; adherence: Adhe
           <p className="text-small text-on-dark-muted">{adherence.note}</p>
           <ul aria-label="Sessions done by week" className="flex flex-col gap-1">
             {adherence.lines.map((line) => (
+              <li key={line} className="text-body text-on-dark">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {downPeriods.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-small text-on-dark-muted">Down periods: progression paused, readings kept as read.</p>
+          <ul aria-label="Down periods" className="flex flex-col gap-1">
+            {downPeriods.map((line) => (
               <li key={line} className="text-body text-on-dark">
                 {line}
               </li>

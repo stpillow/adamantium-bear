@@ -353,6 +353,14 @@ export const Program = z.strictObject({
     signals: z.array(SignalRow).min(1),
     triggers: z.array(z.string().min(1)).min(1),
     loading: z.array(z.string().min(1)).min(1),
+    /**
+     * A down period's length in days (Batch E; its rule is the last of `loading`, transcribed from
+     * program.md's loading rules). src/schema/log.ts's DOWN_PERIOD_MIN_DAYS and DOWN_PERIOD_MAX_DAYS
+     * mirror it, pinned by src/schema/program.test.ts.
+     */
+    downPeriod: z
+      .strictObject({ minDays: z.number().int().positive(), maxDays: z.number().int().positive() })
+      .refine((r) => r.minDays <= r.maxDays, { message: 'a down period’s shortest is not past its longest', path: ['maxDays'] }),
   }),
   weeklyTemplate: WeeklyTemplate,
   weeklyTemplateRows: z.array(WeeklyTemplateRow).length(7),

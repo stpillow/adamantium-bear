@@ -8,9 +8,10 @@ import { withAddedSlots } from '../rules/addedSlots.ts'
 import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
 import { advanceWaitsFor, awaitingMorningCheck, loadTestPrefill, phaseEntryWeek, type LoadTestPrefill, type LoadTestSession } from '../rules/progress.ts'
 import { lateFlagNotes, progressionSuspended, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
+import { activeDownPeriod, lastPausedDay } from '../rules/downPeriod.ts'
 import { phaseLogsBothSides, phaseRunsExercise } from '../rules/session.ts'
 import { bestOfTrials, fastestOfTrials, meetsSymmetry, meetsTimedSymmetry, symmetryPercent, timedSymmetryPercent } from '../rules/unilateral.ts'
-import type { AclRsiEntry, Exercise, Gate, GateItem, GateTest, IsoDate, Location, Phase, Program, SessionTemplate, Settings, Side } from '../schema/index.ts'
+import type { AclRsiEntry, DownPeriod, Exercise, Gate, GateItem, GateTest, IsoDate, Location, Phase, Program, SessionTemplate, Settings, Side } from '../schema/index.ts'
 import { lateFlagWords } from './MorningCheck.helpers.ts'
 import { dateWords, runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
@@ -23,7 +24,7 @@ import { dateWords, runLabel, shortDateWords, workoutLabel } from './Today.helpe
  * composes the answers and names them. The program pieces are passed in, so tests use fixtures.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'gateTests' | 'sessionMoves' | 'programOverrides' | 'addedSlots'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'gateTests' | 'sessionMoves' | 'programOverrides' | 'addedSlots' | 'downPeriods'>
 export type ProgramLike = Pick<Program, 'gates' | 'phases' | 'exercises' | 'redFlags' | 'templates' | 'weeklyTemplate'>
 
 /** Which catalog exercises count as the single-leg calf raise for gate 2 (the M5 brief). */
@@ -511,13 +512,28 @@ export interface OpenSession {
   dateWords: string
 }
 
+/** A down period covering today, as Advance reads it (Batch E): until when, in words, and whether it was ended today. */
+export interface AdvanceDownPeriod {
+  untilWords: string
+  endedToday: boolean
+}
+
 /**
  * Whether the Advance phase button is live: only when every item passes (evaluateGate), not while
- * the red-flag state suspends progression (rule 9), and not while a session is open
+ * the red-flag state suspends progression (rule 9), not while a down period covers today, the day it
+ * was ended included (Batch E, PROGRAM-QUESTIONS 186: a gate attempt mid-illness is not the
+ * program's intent; the auto items still read real data), and not while a session is open
  * (advanceWaitsFor, PROGRAM-QUESTIONS 117). Disabled, it says why in words.
  */
-export function advanceState(result: { items: readonly { pass: boolean }[]; passes: boolean }, redFlag: RedFlagState, open: readonly OpenSession[] = []): AdvanceState {
+export function advanceState(
+  result: { items: readonly { pass: boolean }[]; passes: boolean },
+  redFlag: RedFlagState,
+  open: readonly OpenSession[] = [],
+  downPeriod: AdvanceDownPeriod | null = null,
+): AdvanceState {
   if (progressionSuspended(redFlag)) return { enabled: false, why: 'The red-flag state is on: clear it in Settings, with a note, before advancing' }
+  if (downPeriod?.endedToday) return { enabled: false, why: 'The down period ended today; the phase can advance from tomorrow' }
+  if (downPeriod) return { enabled: false, why: `A down period is on until ${downPeriod.untilWords}: progression is paused, so the phase waits. End it on Today to advance from tomorrow` }
   if (!result.passes) {
     const failing = result.items.filter((i) => !i.pass).length
     return { enabled: false, why: failing === 1 ? '1 item doesn’t pass yet' : `${failing} items don’t pass yet` }
@@ -526,6 +542,12 @@ export function advanceState(result: { items: readonly { pass: boolean }[]; pass
   if (first && open.length === 1) return { enabled: false, why: `${first.label} from ${first.dateWords} is still open: finish it or end it early, then advance` }
   if (open.length > 1) return { enabled: false, why: `${open.length} sessions are still open: finish them or end them early, then advance` }
   return { enabled: true }
+}
+
+/** The down period covering today, for Advance; null when none does. */
+export function advanceDownPeriod(today: IsoDate, periods: readonly DownPeriod[]): AdvanceDownPeriod | null {
+  const p = activeDownPeriod(today, periods)
+  return p === null ? null : { untilWords: shortDateWords(lastPausedDay(p)), endedToday: p.endedOn === today }
 }
 
 function phaseTitle(phases: readonly Phase[], number: number): string {
@@ -797,6 +819,7 @@ export function gatesView(input: { today: IsoDate; settings: Settings; history: 
       result,
       settings.redFlag,
       advanceWaitsFor(history.workouts).map((w) => ({ label: workoutLabel(w, program.templates), dateWords: dateWords(w.date) })),
+      advanceDownPeriod(today, history.downPeriods ?? []),
     ),
     koosOffer: KOOS_OFFER,
     entryWeek,

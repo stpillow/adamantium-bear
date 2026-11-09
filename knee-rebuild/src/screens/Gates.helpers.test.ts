@@ -8,6 +8,7 @@ import { Settings, type AclRsiEntry, type Gate, type GateTest, type IsoDate, typ
 import {
   CALF_RAISE_EXERCISE_IDS,
   advanceQuestion,
+  advanceDownPeriod,
   advanceState,
   advancedWords,
   bestWords,
@@ -720,6 +721,29 @@ describe('advancing the phase', () => {
     if (view.kind !== 'gate') throw new Error('expected gate 1')
     expect(view.stop).toEqual({ headline: 'Stop. Call the ortho or PT.', items: [flag.text] })
     expect(gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })).toMatchObject({ kind: 'gate', stop: null })
+  })
+
+  it('waits while a down period covers today, the day it was ended included; the items still read real data (Batch E, PROGRAM-QUESTIONS 186)', () => {
+    const off = { active: false, items: [] }
+    expect(advanceState(items([true]), off, [], { untilWords: 'Friday Nov 20', endedToday: false })).toEqual({
+      enabled: false,
+      why: 'A down period is on until Friday Nov 20: progression is paused, so the phase waits. End it on Today to advance from tomorrow',
+    })
+    expect(advanceState(items([true]), off, [], { untilWords: 'Tuesday Nov 17', endedToday: true })).toEqual({ enabled: false, why: 'The down period ended today; the phase can advance from tomorrow' })
+    // The red flag says so first.
+    expect(advanceState(items([true]), { active: true, since: TODAY, items: ['locking'] }, [], { untilWords: 'Friday Nov 20', endedToday: false })).toEqual({ enabled: false, why: 'The red-flag state is on: clear it in Settings, with a note, before advancing' })
+    const P = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T13:00:00.000Z' }
+    expect(advanceDownPeriod('2026-11-16', [P])).toEqual({ untilWords: 'Friday Nov 20', endedToday: false })
+    expect(advanceDownPeriod('2026-11-17', [{ ...P, endedOn: '2026-11-17' }])).toEqual({ untilWords: 'Tuesday Nov 17', endedToday: true })
+    expect(advanceDownPeriod('2026-11-21', [P])).toBeNull()
+    // Through the view: the gate evaluates exactly as without the period; only Advance waits.
+    const covering = { ...P, id: `dp-${TODAY}`, start: TODAY, plannedEnd: addDays(TODAY, 6) }
+    const without = gatesView({ today: TODAY, settings: settings(), history: loggedPhase1(), program: PROGRAM, aclRsiEntries: [] })
+    const withPeriod = gatesView({ today: TODAY, settings: settings(), history: { ...loggedPhase1(), downPeriods: [covering] }, program: PROGRAM, aclRsiEntries: [] })
+    if (without.kind !== 'gate' || withPeriod.kind !== 'gate') throw new Error('expected gate 1')
+    expect(withPeriod.result).toEqual(without.result)
+    expect(withPeriod.items).toEqual(without.items)
+    expect(withPeriod.advance.enabled).toBe(false)
   })
 
   it('focus after the confirm closes: Not yet goes back to Advance phase, Yes to the line saying what changed, anything else stays put', () => {

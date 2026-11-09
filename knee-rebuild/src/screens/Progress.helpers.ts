@@ -6,9 +6,10 @@ import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrain
 import { KOOS_SUBSCALES, KOOS_SUBSCALE_WORDS, koosDue, koosSeries, koosSubscaleScore } from '../rules/koos.ts'
 import { latestReading, replacesToday, vo2Problem, vo2Series } from '../rules/vo2.ts'
 import { weekAdherence, type WeekAdherence } from '../rules/weekPlan.ts'
+import { downPeriodWords } from '../rules/downPeriod.ts'
 import { TAG_MIN_SAMPLE, anyTagged, tagCounts, type ReadingCounts } from '../rules/morningTags.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, MorningTag, Program, Run, SessionMove, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading, WeeklyTemplate, Workout } from '../schema/index.ts'
+import type { DownPeriod, Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, MorningTag, Program, Run, SessionMove, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading, WeeklyTemplate, Workout } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -19,7 +20,7 @@ import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
  * the answers for the screen and says them in words.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves' | 'downPeriods'>
 export type ProgramLike = Pick<Program, 'exercises' | 'gates' | 'mileagePlan' | 'templates' | 'weeklyTemplate'>
 
 // ---------------------------------------------------------------------------------------------
@@ -1384,9 +1385,20 @@ export function adherenceView(input: {
   return { note: lines.length > 0 ? ADHERENCE_NOTE : null, lines }
 }
 
+/**
+ * Every declared down period as history (Batch E, PROGRAM-QUESTIONS 187), newest first, in the
+ * Week screen's words. Beside the weekly counts and never folded into them: a down period doesn't
+ * change what was scheduled, so the counts carry no annotation and nothing here is a streak.
+ */
+export function downPeriodLines(periods: readonly DownPeriod[]): string[] {
+  return [...periods].sort((a, b) => (a.start < b.start ? 1 : a.start > b.start ? -1 : 0)).map(downPeriodWords)
+}
+
 export interface ProgressView {
   clean: CleanDaysView
   adherence: AdherenceView
+  /** The down periods, newest first, in words; empty with none declared. */
+  downPeriods: string[]
   exercises: ExerciseRow[]
   refs: SymmetryRef[]
   miles: MilesView
@@ -1405,6 +1417,7 @@ export function progressView(input: { today: IsoDate; settings: Settings; histor
   return {
     clean: cleanDaysView({ readings, today, records, runs: history.runs, checks: history.morningChecks, templates: program.templates }),
     adherence: adherenceView({ startDate: settings.startDate, today, template: program.weeklyTemplate, moves: history.sessionMoves, runs: history.runs, workouts: history.workouts }),
+    downPeriods: downPeriodLines(history.downPeriods ?? []),
     exercises: loggedExercises(records, program.exercises),
     refs: symmetryRefs(program.gates),
     miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { WeeklyTemplate } from '../schema/index.ts'
 import {
   nextLiftDate,
+  sessionDateInWeek,
   addDays,
   dateOf,
   dayOf,
@@ -117,3 +118,17 @@ describe('nextLiftDate', () => {
   })
 })
 
+
+describe('sessionDateInWeek (Batch E)', () => {
+  const TEMPLATE: WeeklyTemplate = { mon: 'run:mbr', tue: 'lift:A', wed: 'run:easy', thu: 'lift:B', fri: 'run:long', sat: 'lift:C', sun: 'off' }
+  it('finds the day a session falls on in a week, after moves', () => {
+    expect(sessionDateInWeek('2026-11-02', 4, TEMPLATE, [], 'lift:A')).toBe('2026-11-24')
+    expect(sessionDateInWeek('2026-11-02', 3, TEMPLATE, [], 'lift:C')).toBe('2026-11-21')
+    expect(sessionDateInWeek('2026-11-02', 4, TEMPLATE, [{ id: 'm', week: 4, dayA: 'tue', dayB: 'wed' }], 'lift:A')).toBe('2026-11-25')
+    expect(sessionDateInWeek('2026-11-02', 3, TEMPLATE, [{ id: 'm', week: 4, dayA: 'tue', dayB: 'wed' }], 'lift:A')).toBe('2026-11-17')
+  })
+  it('null before the program, or when the week has no such session', () => {
+    expect(sessionDateInWeek('2026-11-02', 0, TEMPLATE, [], 'lift:A')).toBeNull()
+    expect(sessionDateInWeek('2026-11-02', 2, { ...TEMPLATE, tue: 'off' }, [], 'lift:A')).toBeNull()
+  })
+})

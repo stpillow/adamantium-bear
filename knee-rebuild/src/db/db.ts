@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import type { AclRsiEntry, AddedSlot, GateTest, HrSettings, IsoDateTime, KoosEntry, Location, MorningCheck, ProgramOverride, Run, SessionMove, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, AddedSlot, DownPeriod, GateTest, HrSettings, IsoDateTime, KoosEntry, Location, MorningCheck, ProgramOverride, Run, SessionMove, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /**
  * The settings row, keyed so there is exactly one. It never holds `lastExportedAt`: the build
@@ -35,7 +35,10 @@ export interface ExportStampRow {
  * entry is ever invented (PROGRAM-QUESTIONS 159); version 10 (Batch D) adds nothing to the store:
  * a morning check may carry the fixed tags and, for a past morning, the day it was saved, both
  * optional and unindexed, and the bump keeps the backup's schema version in step (PROGRAM-QUESTIONS
- * 179). Never edit a shipped version; add the next one, and keep every change additive.
+ * 179); version 11 (Batch E) adds the downPeriods table, one row per declared down period keyed
+ * by its id, with no upgrade callback: no period is ever invented, and progression pauses only on
+ * the days a stored row covers (PROGRAM-QUESTIONS 189). Never edit a shipped version; add the next
+ * one, and keep every change additive.
  */
 export class KneeRebuildDb extends Dexie {
   /** The settings row and, once this phone has exported, the export stamp's row. */
@@ -57,6 +60,8 @@ export class KneeRebuildDb extends Dexie {
   koosEntries!: EntityTable<KoosEntry, 'date'>
   /** ACL-RSI questionnaire entries (Batch A), one per day keyed by date; the gates rule reads the latest (PROGRAM-QUESTIONS 156, 159). */
   aclRsiEntries!: EntityTable<AclRsiEntry, 'date'>
+  /** Declared down periods (Batch E), one row each keyed by id (`dp-<start>`); progression pauses on the days they cover (PROGRAM-QUESTIONS 181, 189). */
+  downPeriods!: EntityTable<DownPeriod, 'id'>
 
   constructor() {
     super('knee-rebuild')
@@ -78,6 +83,7 @@ export class KneeRebuildDb extends Dexie {
     this.version(8).stores({ vo2Readings: 'date' })
     this.version(9).stores({ koosEntries: 'date', aclRsiEntries: 'date' })
     this.version(10).stores({})
+    this.version(11).stores({ downPeriods: 'id, start' })
   }
 }
 

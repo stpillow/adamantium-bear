@@ -86,6 +86,8 @@ Loading rules:
 
 - Weeks 4, 8 and 12 are deloads: lifting sets down by a third at the same loads, with the mileage down weeks landing on the same weeks. Weeks 4 and 8 are also Thanksgiving and Christmas weeks, so the easy weeks fall where life gets busy anyway.
 
+- Down periods (added Nov 9, 2026). When illness or life stress, not the knee, means you aren't feeling 100%, declare a down period of 3 to 14 days, starting the day you declare it. While it lasts, progression pauses and the readings stay real. An exercise that reads clean twice repeats its current load and reps (or height, range or stage) instead of moving up a notch, a slot on its easier version stays there, and the single-leg plyo, snap-downs and tempo that arrive with the week of the phase wait until it ends. Hold and back off apply exactly as they do outside one, deload weeks still deload, and a red flag still stops everything. The week's run target doesn't step up while a down period covers the start of the week: it holds at last week's target, and the usual caps still apply; after it, the target climbs back one plan step a week, never above the plan. Every session inside one is read as normal, so a clean one still counts toward clean twice and the first session after it may progress. It can be ended early (the day you end it still counts) or extended up to 14 days from its start, it is never backdated, and the phase doesn't advance during one.
+
 ## Weekly template
 
 Six training days alternating lifts and runs, Sunday off. Each lift is a full-body session of about 60 minutes including the warm-up.

@@ -27,6 +27,13 @@ export interface WeekTarget {
   target: number | null
   capped: boolean
   reason: string
+  /**
+   * A down period set this week's target (Batch E, PROGRAM-QUESTIONS 183; `targetForWeek` in
+   * weekPlan.ts): `held`, a period covered the week's Monday, so it stays at last week's; `climbing`,
+   * the weeks after one, back up one plan step a week from last week's. Present only when it binds
+   * (the target is below what rule 7 alone gives); `weekTarget` never sets it.
+   */
+  downPeriod?: { kind: 'held' | 'climbing'; lastWeek: number }
 }
 
 /**

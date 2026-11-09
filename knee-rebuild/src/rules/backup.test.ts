@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import appSource from '../App.tsx?raw'
-import type { Location, Settings } from '../schema/index.ts'
+import type { DownPeriod, Location, Settings } from '../schema/index.ts'
 import {
   BACKUP_MAX_BYTES,
   BACKUP_SCHEMA_VERSION,
@@ -16,6 +16,7 @@ import {
   exportNudge,
   importStamp,
   loggedRange,
+  downPeriodsOnImport,
   lostOnImport,
   migrateForward,
   parseBackup,
@@ -127,6 +128,10 @@ function tables(): BackupTables {
       { date: '2026-11-16', p1: 1, sy2: 2, q1: 1 },
     ],
     aclRsiEntries: [{ date: '2026-11-16', i1: 8, i2: 7, i3: 6, i4: 8, i5: 7, i6: 6, i7: 7, i8: 8, i9: 6, i10: 9, i11: 8, i12: 7 }],
+    downPeriods: [
+      { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', endedOn: '2026-11-17', declaredAt: '2026-11-14T13:00:00.000Z', note: 'Flu, “bad” one' },
+      { id: 'dp-2026-11-19', start: '2026-11-19', plannedEnd: '2026-11-23', declaredAt: '2026-11-19T13:00:00.000Z' },
+    ],
   }
 }
 
@@ -175,7 +180,7 @@ describe('the export file', () => {
 
   it('is two-space JSON with a final newline, named for the day it is written', () => {
     const text = backupText(built())
-    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 10,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
+    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 11,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
     expect(text.endsWith('}\n')).toBe(true)
     expect(backupFileName('2026-11-21')).toBe('knee-rebuild-2026-11-21.json')
   })
@@ -202,10 +207,10 @@ describe('reading a file back', () => {
   })
 
   it('refuses a newer schema version, saying how to get an app that reads it, in the update prompt’s own words', () => {
-    expect(parseBackup(fileText({ ...built(), schemaVersion: 11 }))).toEqual({
+    expect(parseBackup(fileText({ ...built(), schemaVersion: 12 }))).toEqual({
       ok: false,
       refusal:
-        'This backup is from a newer version of the app (schema version 11; this one reads up to 10). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
+        'This backup is from a newer version of the app (schema version 12; this one reads up to 11). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
     })
     // The prompt the refusal sends Shawn to is the one the app shows (src/App.tsx): its sentence and its button.
     expect(appSource).toContain('<span>A new version is ready. It will not reload on its own.</span>')
@@ -344,6 +349,13 @@ describe('older files carried forward', () => {
   // Version 9 as the build before Batch D wrote it: v8 plus both questionnaire lists, and checks with no tags or late mark.
   const v9 = () => ({ ...v8(), schemaVersion: 9, koosEntries: tables().koosEntries, aclRsiEntries: tables().aclRsiEntries })
 
+  // Version 10 as the build before Batch E wrote it: v9 with Batch D's tagged and late checks, and no down periods list.
+  const v10 = () => {
+    const [first, second] = tables().morningChecks
+    if (!first || !second) throw new Error('fixture has two checks')
+    return { ...v9(), schemaVersion: 10, morningChecks: [{ ...first, tags: ['poor-sleep', 'nsaid'] }, { ...second, loggedOn: '2026-11-14' }] }
+  }
+
   it('has a step for every version from the oldest up to this one', () => {
     for (let v = OLDEST_SCHEMA_VERSION; v < BACKUP_SCHEMA_VERSION; v++) expect(MIGRATIONS[v], `version ${v}`).toBeTypeOf('function')
   })
@@ -359,6 +371,8 @@ describe('older files carried forward', () => {
     expect(MIGRATIONS[8]?.(v8())).toEqual({ ...v8(), schemaVersion: 9, koosEntries: [], aclRsiEntries: [] })
     // Batch D adds only optional fields to a morning check: no tag or late mark is invented.
     expect(MIGRATIONS[9]?.(v9())).toEqual({ ...v9(), schemaVersion: 10 })
+    // Batch E: an empty down periods list; no period is invented.
+    expect(MIGRATIONS[10]?.(v10())).toEqual({ ...v10(), schemaVersion: 11, downPeriods: [] })
   })
 
   it('a step leaves a list the file already has for the schema to judge', () => {
@@ -459,16 +473,38 @@ describe('older files carried forward', () => {
     expect(refusal({ ...first, loggedOn: first.date })).toBe('This backup’s morning checks, row 1, doesn’t read as the app stores it (loggedOn: a check logged late is logged after the morning it describes). Nothing was imported.')
   })
 
+  it('reads a version 10 file with its tags and late marks, and invents no down period', () => {
+    const read = parseBackup(fileText(v10()))
+    expect(read).toMatchObject({ ok: true, migratedFrom: 10 })
+    if (!read.ok) return
+    expect(read.backup.downPeriods).toEqual([])
+    expect(read.backup.morningChecks).toEqual(v10().morningChecks)
+  })
+
+  it('carries the down periods through, and refuses a bad one in words', () => {
+    const backup = built()
+    expect(parseBackup(fileText(backup))).toMatchObject({ ok: true, backup: { downPeriods: tables().downPeriods } })
+    const refusal = (row: unknown) => {
+      const r = parseBackup(fileText({ ...backup, downPeriods: [row] }))
+      return r.ok ? '' : r.refusal
+    }
+    const [period] = tables().downPeriods
+    if (!period) throw new Error('fixture has a period')
+    expect(refusal({ ...period, plannedEnd: '2026-11-30' })).toBe('This backup’s down periods, row 1, doesn’t read as the app stores it (plannedEnd: a down period runs 3 to 14 days from its start). Nothing was imported.')
+    expect(refusal({ ...period, endedOn: '2026-11-20' })).toBe('This backup’s down periods, row 1, doesn’t read as the app stores it (endedOn: a down period ends early on a day from its start to the day before its planned end). Nothing was imported.')
+    expect(parseBackup(fileText({ ...backup, downPeriods: [period, period] }))).toEqual({ ok: false, refusal: 'This backup lists the down period “dp-2026-11-14” twice. Nothing was imported.' })
+  })
+
   it('a version with no step can’t be carried', () => {
     expect(() => migrateForward({ schemaVersion: 1 })).toThrow('no step carries a version 1 backup forward')
-    expect(migrateForward({ schemaVersion: 10, a: 1 })).toEqual({ schemaVersion: 10, a: 1 })
+    expect(migrateForward({ schemaVersion: 11, a: 1 })).toEqual({ schemaVersion: 11, a: 1 })
   })
 })
 
 describe('what a file holds', () => {
   it('counts each table, the archived gyms, and the days logged', () => {
     expect(summarize(tables())).toEqual({
-      counts: { workouts: 2, setLogs: 5, morningChecks: 2, runs: 2, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 3, addedSlots: 2, hrSettings: 1, vo2Readings: 2, koosEntries: 2, aclRsiEntries: 1 },
+      counts: { workouts: 2, setLogs: 5, morningChecks: 2, runs: 2, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 3, addedSlots: 2, hrSettings: 1, vo2Readings: 2, koosEntries: 2, aclRsiEntries: 1, downPeriods: 2 },
       archivedGyms: 1,
       first: '2026-11-02',
       last: '2026-11-14',
@@ -492,6 +528,8 @@ describe('what a file holds', () => {
     // A pre-Batch-A file carries no questionnaire entries, so an import from one erases the phone's ("2 KOOS entries", "1 ACL-RSI entry").
     file.koosEntries = []
     file.aclRsiEntries = []
+    // A pre-Batch-E file carries no down periods ("2 down periods"); a standing one stays on import all the same (downPeriodsOnImport).
+    file.downPeriods = []
     // A row on the same key that changed is replaced, not lost.
     phone.runs[0] = { ...phone.runs[0]!, notes: 'edited' }
     expect(lostOnImport(phone, file)).toEqual([
@@ -502,8 +540,41 @@ describe('what a file holds', () => {
       { table: 'vo2Readings', count: 2 },
       { table: 'koosEntries', count: 2 },
       { table: 'aclRsiEntries', count: 1 },
+      { table: 'downPeriods', count: 2 },
     ])
     expect(lostOnImport(file, phone)).toEqual([])
+  })
+})
+
+describe('down periods through an import (Batch E, PROGRAM-QUESTIONS 189)', () => {
+  const AT = '2026-11-01T13:00:00.000Z'
+  const p = (start: string, plannedEnd: string, endedOn?: string): DownPeriod => ({ id: `dp-${start}`, start, plannedEnd, declaredAt: AT, ...(endedOn ? { endedOn } : {}) })
+  const TODAY = '2026-11-17'
+
+  it('with nothing standing on the phone, the file’s list comes in whole, and the phone’s past periods go', () => {
+    const file = [p('2026-11-02', '2026-11-05'), p('2026-11-20', '2026-11-25')]
+    expect(downPeriodsOnImport([], file, TODAY)).toEqual(file)
+    expect(downPeriodsOnImport([p('2026-11-08', '2026-11-12')], file, TODAY)).toEqual(file)
+  })
+
+  it('never lifts a pause the phone has on: an older file without it leaves it standing', () => {
+    const on = p('2026-11-14', '2026-11-20')
+    expect(downPeriodsOnImport([on], [], TODAY)).toEqual([on])
+    // Ended today still pauses today; dated ahead still stands.
+    const endedToday = p('2026-11-14', '2026-11-20', TODAY)
+    expect(downPeriodsOnImport([endedToday], [], TODAY)).toEqual([endedToday])
+    const ahead = p('2026-11-23', '2026-11-26')
+    expect(downPeriodsOnImport([ahead], [], TODAY)).toEqual([ahead])
+  })
+
+  it('a file period overlapping the phone’s standing one is left out; the rest come in, in key order', () => {
+    const on = p('2026-11-14', '2026-11-20')
+    const past = p('2026-11-02', '2026-11-05')
+    const overlapping = p('2026-11-18', '2026-11-22')
+    const later = p('2026-11-21', '2026-11-25')
+    expect(downPeriodsOnImport([on], [later, overlapping, past], TODAY)).toEqual([past, on, later])
+    // The same period in both: the phone's row (it may have been ended or extended since).
+    expect(downPeriodsOnImport([on], [{ ...on, plannedEnd: '2026-11-16' }], TODAY)).toEqual([on])
   })
 })
 

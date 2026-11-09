@@ -700,3 +700,24 @@ describe('errorWords', () => {
     expect(errorWords('')).toBe('no reason was given')
   })
 })
+
+describe('a down period in the run logger (Batch E, PROGRAM-QUESTIONS 183, 188)', () => {
+  const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T13:00:00.000Z' }
+  it('a run logged into a held week sees the held target, and says why', () => {
+    const view = formView({ ...base, today: '2026-11-18', history: history({ downPeriods: [P1] }) })
+    expect(view.summary.target).toMatchObject({ target: 11, capped: true, reason: 'down period: held at last week’s 11 miles' })
+    expect(weekLine(view.summary, null)).toContain('down period: held at last week’s 11 miles')
+    expect(view.suggestion?.miles).toBe(3.25)
+    expect(formView({ ...base, today: '2026-11-18' }).summary.target.target).toBe(12)
+  })
+  it('the tempo waits while a period holds the band; the day after, it doesn’t', () => {
+    // Phase 3 entered in week 8: phase week 3 starts Mon Jan 4. A period from Sat Jan 2 holds Friday Jan 8 in phase week 2.
+    const p = { ...P1, id: 'dp-2027-01-02', start: '2027-01-02', plannedEnd: '2027-01-08' }
+    const clean = check('2027-01-08')
+    const s = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
+    const held = formView({ ...base, today: '2027-01-08', settings: s, history: history({ downPeriods: [p], morningChecks: [clean] }) })
+    const free = formView({ ...base, today: '2027-01-08', settings: s, history: history({ morningChecks: [clean] }) })
+    expect(held.suggestion?.tempo).toBe(false)
+    expect(free.suggestion?.tempo).toBe(true)
+  })
+})

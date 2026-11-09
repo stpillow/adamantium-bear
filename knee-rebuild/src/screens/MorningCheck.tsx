@@ -10,7 +10,7 @@ import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
 import { useActiveLocation, useHistory, useSettings } from '../db/hooks.ts'
 import { addLateMorningCheck, addMorningCheck, saveSettings, type History } from '../db/repo.ts'
-import { addDays, isDeloadWeek } from '../rules/calendar.ts'
+import { addDays, isDeloadWeek, sessionDateInWeek } from '../rules/calendar.ts'
 import { lateCheckFor, lateCheckReach, type LateCheckOffer } from '../rules/lateCheck.ts'
 import { morningReading } from '../rules/reading.ts'
 import { lateFlagNote, stopMessage } from '../rules/redFlags.ts'
@@ -482,9 +482,11 @@ function NextTime({ subject, settings, history, gym }: { subject: CheckSubject |
     return <p className="text-body text-on-dark-dim">Yesterday's session uses a template this program does not have ({workout.templateId}), so there is nothing to plan from.</p>
   }
   const week = nextWeekFor(workout, settings.startDate)
+  // The day that session falls on, after moves: a down period covering it pauses progression there (Batch E). Planned from every record, so no `before`.
+  const pauseDate = sessionDateInWeek(settings.startDate, week, PROGRAM.weeklyTemplate, history.sessionMoves, `lift:${template.letter}`)
   let sentences: ExerciseSentence[]
   try {
-    sentences = exerciseSentences(planSession({ template, week, settings, history, gym }), settings.injuredSide)
+    sentences = exerciseSentences(planSession({ template, week, settings, history, gym, ...(pauseDate ? { pauseDate } : {}) }), settings.injuredSide)
   } catch (e) {
     return <p className="text-body text-on-dark-dim">The next session could not be planned ({errorWords(e)}).</p>
   }

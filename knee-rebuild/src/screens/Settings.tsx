@@ -9,7 +9,7 @@ import { Tap } from '../components/Tap.tsx'
 import { exportBackup, markExported, readStored, replaceAll } from '../db/backup.ts'
 import { useHrSettings, useSettings } from '../db/hooks.ts'
 import { defaultSettings, ensureSettings, getSettings, resetAll, saveHrSettings, saveSettings, saveSettingsAndMoves } from '../db/repo.ts'
-import { backupFileName, backupText, lostOnImport, parseBackup, settingsOnImport, sizeProblem, summarize, type Backup, type BackupSummary, type BackupTable } from '../rules/backup.ts'
+import { backupFileName, backupText, downPeriodsOnImport, lostOnImport, parseBackup, settingsOnImport, sizeProblem, summarize, type Backup, type BackupSummary, type BackupTable } from '../rules/backup.ts'
 import type { HrSettings, IsoDate, IsoDateTime, Settings as SettingsRecord } from '../schema/index.ts'
 import { forgetSlotDrafts } from './program/drafts.ts'
 import {
@@ -49,6 +49,7 @@ import {
   resetWords,
   restTimerWords,
   settingsOnImportWords,
+  keptDownPeriodWords,
   shareFailure,
   shareRoute,
   sideWords,
@@ -931,6 +932,8 @@ interface PendingImport {
   lost: { table: BackupTable; count: number }[]
   /** What the import does to the settings, in words: the red flag it keeps on, and the settings the file changes. */
   settings: ReturnType<typeof settingsOnImportWords>
+  /** The down period standing on this phone that the import keeps (PROGRAM-QUESTIONS 189), in words; null when none. */
+  keptDownPeriod: string | null
 }
 
 /**
@@ -975,8 +978,10 @@ function ImportSection({ today, held, onReplace }: { today: IsoDate; held: strin
         migratedFrom: read.migratedFrom,
         file: summarize(read.backup),
         phone: summarize(phone),
-        lost: lostOnImport(phone, read.backup),
+        // A standing down period stays (downPeriodsOnImport), so it is never named among what the import erases.
+        lost: lostOnImport(phone, { ...read.backup, downPeriods: downPeriodsOnImport(phone.downPeriods, read.backup.downPeriods, today) }),
         settings: settingsOnImportWords(settingsOnImport(phone.settings, read.backup.settings), PROGRAM.redFlags, PROGRAM.phases),
+        keptDownPeriod: keptDownPeriodWords(phone.downPeriods, read.backup.downPeriods, today),
       })
     } catch (e) {
       setRefusal(`The file couldn’t be read (${errorWords(e)}). Nothing was imported.`)
@@ -1031,6 +1036,7 @@ function ImportSection({ today, held, onReplace }: { today: IsoDate; held: strin
             </p>
           ))}
           {pending.settings.redFlag ? <p className="text-body text-on-dark wrap-anywhere">{pending.settings.redFlag}</p> : null}
+          {pending.keptDownPeriod ? <p className="text-body text-on-dark wrap-anywhere">{pending.keptDownPeriod}</p> : null}
           <p className="text-lead font-medium text-on-dark">{IMPORT_CONFIRM}</p>
           <Button wide disabled={step === 'writing' || held !== null} onClick={() => void replace(pending)}>
             {step === 'writing' ? 'Replacing…' : 'Yes, replace everything'}

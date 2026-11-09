@@ -1,4 +1,5 @@
 import type { Exercise, ReadingResult, SetLog, Side, Slot } from '../schema/index.ts'
+import type { Pause } from './downPeriod.ts'
 import { missingHere, routeSlot, type Available, type SlotRoute } from './equipment.ts'
 import { exerciseHistory } from './gymLoads.ts'
 import type { WorkoutRecord } from './history.ts'
@@ -32,6 +33,11 @@ export interface SlotExerciseInput {
   /** Every workout before the session being planned, in date order. */
   records: readonly WorkoutRecord[]
   injuredSide: Side
+  /**
+   * The day being planned is inside a down period (Batch E, PROGRAM-QUESTIONS 182): a slot on its
+   * easier version stays there after two cleans, and goes back once the period is over. Absent outside one.
+   */
+  pause?: Pause
 }
 
 export interface SlotExercise {
@@ -106,6 +112,11 @@ function placedOn(input: SlotExerciseInput, from: Exercise, on: Exercise, ranSin
   const back = from.name
   const leading = leadingCleans(historyOf(input, on).readings)
   const cleans = ranSince ? leading : Math.min(leading, 1)
+  if (cleans >= 2 && input.pause) {
+    // Going back to the harder exercise is a step up: a down period holds it (PROGRAM-QUESTIONS 182).
+    const note = `On ${easier} since ${back} backed off: clean twice, and the slot goes back to ${back} after the down period (until ${input.pause.untilWords}).`
+    return { exercise: on, ...historyOf(input, on), placement: { note, returned: false } }
+  }
   if (cleans >= 2) {
     return { exercise: from, ...historyOf(input, from), placement: { note: `Back on ${back}: ${easier} read clean twice.`, returned: true } }
   }

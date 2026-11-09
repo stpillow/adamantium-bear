@@ -9,7 +9,13 @@ import {
   NEW_LOCATION_HASH,
   atGymWords,
   dateWords,
+  declareWords,
+  downPeriodErrorWords,
+  downPeriodView,
   earlierPhaseWords,
+  extendWords,
+  pastMidnightWords,
+  pauseReplanWords,
   exportLine,
   koosLine,
   gymRows,
@@ -714,5 +720,85 @@ describe('a red flag on a check logged late is a note on Today, never the stop (
   })
   it('a flag on an on-time check is not a late note', () => {
     expect(todayView({ today: '2026-11-20', settings: settings(), history: history({ morningChecks: [check('2026-11-18', { redFlags: ['locking'] })] }), program: PROGRAM }).lateFlags).toEqual([])
+  })
+})
+
+describe('the down period on Today (Batch E, PROGRAM-QUESTIONS 185)', () => {
+  const AT = '2026-11-14T13:00:00.000Z'
+  const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: AT, note: 'Flu' }
+  const view = (today: string, h: Partial<HistoryLike> = {}, s: Partial<Settings> = {}) => todayView({ today, settings: settings(s), history: history(h), program: PROGRAM })
+
+  it('offers one with no period: 3 to 14 days, 7 by default, and says what it does', () => {
+    expect(downPeriodView('2026-11-14', [])).toEqual({ kind: 'offer', minDays: 3, maxDays: 14, defaultDays: 7 })
+    expect(declareWords('2026-11-14', 7)).toEqual({
+      line: 'Today, Saturday Nov 14, to Friday Nov 20. Loads, reps and the week’s miles hold; hold and back off still apply; every session is read as normal.',
+      button: 'Pause progression for 7 days',
+    })
+  })
+
+  it('on now: the day of how many, until when, End it today and Make it longer', () => {
+    expect(downPeriodView('2026-11-16', [P1])).toEqual({
+      kind: 'active',
+      id: 'dp-2026-11-14',
+      start: '2026-11-14',
+      line: 'Down period, day 3 of 7: progression paused until Friday Nov 20.',
+      note: 'Flu',
+      canEnd: true,
+      lastDay: null,
+      extend: { days: 7, maxDays: 14 },
+      atCap: null,
+    })
+    expect(extendWords('2026-11-14', 9)).toEqual({ end: '2026-11-22', button: 'Run it to Sunday Nov 22 (9 days)' })
+  })
+
+  it('on its last planned day there is no End: it ends tonight on its own', () => {
+    expect(downPeriodView('2026-11-20', [P1])).toMatchObject({ canEnd: false, lastDay: 'Its last day: progression resumes tomorrow, Saturday Nov 21.' })
+  })
+
+  it('at the 14-day cap there is no Make it longer, said in words', () => {
+    expect(downPeriodView('2026-11-16', [{ ...P1, plannedEnd: '2026-11-27' }])).toMatchObject({
+      line: 'Down period, day 3 of 14: progression paused until Friday Nov 27.',
+      extend: null,
+      atCap: 'It runs the full 14 days, to Friday Nov 27; a down period can’t run longer.',
+    })
+  })
+
+  it('ended today: progression resumes tomorrow, and Keep it going', () => {
+    expect(downPeriodView('2026-11-17', [{ ...P1, endedOn: '2026-11-17' }])).toEqual({
+      kind: 'ended-today',
+      id: 'dp-2026-11-14',
+      line: 'Down period ended today, day 4 of 7. Progression resumes tomorrow, Wednesday Nov 18.',
+      note: 'Flu',
+    })
+    expect(downPeriodView('2026-11-18', [{ ...P1, endedOn: '2026-11-17' }]).kind).toBe('offer')
+  })
+
+  it('a row dated ahead is said, with nothing to declare', () => {
+    expect(downPeriodView('2026-11-12', [P1])).toEqual({ kind: 'ahead', line: 'A down period from Saturday Nov 14 is stored (Saturday Nov 14 to Friday Nov 20 (7 days)); a new one can’t start before it ends.' })
+  })
+
+  it('shows on lift, run and off days, and never under the stop or before the program', () => {
+    expect(view('2026-11-17', { downPeriods: [P1] }).downPeriod?.kind).toBe('active')
+    expect(view('2026-11-16', { downPeriods: [P1] }).downPeriod?.kind).toBe('active')
+    expect(view('2026-11-15', { downPeriods: [P1] }).downPeriod?.kind).toBe('active')
+    expect(view('2026-11-16', { downPeriods: [P1] }, { redFlag: { active: true, since: '2026-11-16', items: ['locking'] } }).downPeriod).toBeNull()
+    expect(view('2026-11-01').downPeriod).toBeNull()
+  })
+
+  it('says what declaring does to a lift open today, refuses past midnight, and words a refusal', () => {
+    expect(pauseReplanWords('Session A')).toBe('Session A, open today, now plans its remaining exercises with progression paused; the sets already logged stay as logged.')
+    expect(pauseReplanWords(null)).toBeNull()
+    expect(pastMidnightWords('2026-11-15')).toBe('It is past midnight: today is now Sunday Nov 15. Nothing was saved; close this and open it again to start from today.')
+    expect(downPeriodErrorWords(new Error('A down period runs 3 to 14 days.'))).toBe('A down period runs 3 to 14 days. Nothing was saved.')
+    expect(downPeriodErrorWords(new Error('disk full'))).toBe('Nothing was saved (disk full).')
+  })
+
+  it('a run day in a held week says the target held, in words', () => {
+    // Week 3 (Mon Nov 16) is covered: held at week 2's 11, not the plan's 12.
+    const v = view('2026-11-16', { downPeriods: [P1] })
+    expect(v.body).toMatchObject({ kind: 'run', target: 11, capped: true, targetReason: 'down period: held at last week’s 11 miles' })
+    if (v.body.kind !== 'run') throw new Error('a run day')
+    expect(runWeekWords(v.body)).toBe('This week: 0 of 11 miles · down period: held at last week’s 11 miles')
+    expect(view('2026-11-16').body).toMatchObject({ target: 12, capped: false })
   })
 })

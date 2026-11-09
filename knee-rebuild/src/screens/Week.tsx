@@ -118,6 +118,11 @@ export function Week() {
         <h2 className={HEADING}>Miles</h2>
         <p className="text-lead text-on-dark">{view.miles}</p>
         <p className={view.capped ? 'text-body text-on-dark' : 'text-small text-on-dark-muted'}>{view.target}</p>
+        {view.downPeriods.map((line) => (
+          <p key={line} className="text-body text-on-dark-dim">
+            {line}
+          </p>
+        ))}
       </section>
 
       <section aria-label="Days" className={SECTION}>
@@ -235,6 +240,7 @@ function DayItem({
           {row.statusWord}
         </span>
         {row.reading ? <ReadingWord result={row.reading} /> : null}
+        {row.downPeriod ? <span className="rounded-sm border border-on-dark-faint px-2 font-mono text-label uppercase tracking-[0.22em] text-on-dark-dim">{row.downPeriod}</span> : null}
       </span>
       {row.logged.length > 0 ? <span className="text-small text-on-dark-dim">Logged: {row.logged.join(' · ')}</span> : null}
       {row.checkNote ? <span className="text-small text-on-dark-muted">{row.checkNote}.</span> : null}

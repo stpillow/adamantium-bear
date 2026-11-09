@@ -3,7 +3,7 @@ import type { Block } from '../rules/markdown.ts'
 import { plainText } from '../rules/markdown.ts'
 import { addableSubstitutions, cleanCue, cueLength, editedParts, overridesBySlot, slotEdit, substitutionProblem, type Edited, type SlotEdit } from '../rules/overrides.ts'
 import { slotsForPhaseWeek } from '../rules/session.ts'
-import { CUE_MAX, showsText, type Exercise, type IsoDate, type ProgramOverride, type Settings, type Slot } from '../schema/index.ts'
+import { CUE_MAX, showsText, type DownPeriod, type Exercise, type IsoDate, type ProgramOverride, type Settings, type Slot } from '../schema/index.ts'
 import { coverageWeek, currentTemplates, shortDate } from './LocationEditor.helpers.ts'
 
 /*
@@ -77,9 +77,10 @@ export function groupWords(slot: Slot, slots: readonly Slot[]): string | null {
 
 /**
  * The current phase's sessions, A then B then C, each with the slots that run this week of the
- * phase (`slotsForPhaseWeek`, from the week Today plans), every slot with its edits laid over it.
+ * phase (`slotsForPhaseWeek`, from the week Today plans, a down period's held band included), every
+ * slot with its edits laid over it.
  */
-export function phaseScreen(settings: Settings, today: IsoDate, overrides: readonly ProgramOverride[]): PhaseScreen {
+export function phaseScreen(settings: Settings, today: IsoDate, overrides: readonly ProgramOverride[], downPeriods: readonly DownPeriod[]): PhaseScreen {
   const phase = PROGRAM.phases.find((p) => p.number === settings.currentPhase)
   const name = phase ? `Phase ${phase.number}, ${phase.name}` : `Phase ${settings.currentPhase}`
   const templates = currentTemplates(settings)
@@ -90,7 +91,8 @@ export function phaseScreen(settings: Settings, today: IsoDate, overrides: reado
       notWritten: `Phase ${settings.currentPhase}’s sessions are not written yet; program.md says they come once Gate 3 is clean. Its preview is under program.md.`,
     }
   }
-  const phaseWeek = coverageWeek(settings, today)
+  // Held where a down period holds the bands, so this week's sessions are the ones Today plans (PROGRAM-QUESTIONS 188).
+  const phaseWeek = coverageWeek(settings, today, downPeriods)
   const bySlot = overridesBySlot(overrides)
   return {
     lead: `${name}: week ${phaseWeek} of the phase. Read-only until you tap Edit on a slot.`,

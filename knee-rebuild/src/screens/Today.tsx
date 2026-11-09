@@ -1,15 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { navigate } from '../app/router.ts'
 import { PROGRAM, availableAt, planSession, sessionExtensions, warmUpFor, windowFit } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../components/ReadingWord.tsx'
+import { Stepper } from '../components/Stepper.tsx'
 import { TimeWindow } from '../components/TimeWindow.tsx'
 import { isExtraSlotId } from '../rules/extensions.ts'
 import { Screen } from '../components/Screen.tsx'
 import { useActiveLocation, useHistory, useKoosEntries, useLocations, useSettings } from '../db/hooks.ts'
-import { clearMarkOff, putWorkout, reopenWorkout, setActiveLocation, writeWindow, type History } from '../db/repo.ts'
-import { addDays, nextLiftDate, scheduledSession } from '../rules/calendar.ts'
+import { clearMarkOff, declareDownPeriod, endDownPeriod, extendDownPeriod, putWorkout, reopenWorkout, resumeDownPeriod, setActiveLocation, writeWindow, type History } from '../db/repo.ts'
+import { addDays, nextLiftDate, scheduledSession, todayIn } from '../rules/calendar.ts'
 import { gymToOffer, lastLoggedGym, liftGym } from '../rules/gymDay.ts'
 import { listedLocations } from '../rules/locations.ts'
 import type { EquipmentId, IsoDate, Location, Settings } from '../schema/index.ts'
@@ -19,7 +20,12 @@ import { windowWords } from './Window.helpers.ts'
 import {
   NEW_LOCATION_HASH,
   atGymWords,
+  declareWords,
+  downPeriodErrorWords,
   earlierPhaseWords,
+  extendWords,
+  pastMidnightWords,
+  pauseReplanWords,
   exportLine,
   koosLine,
   gymRows,
@@ -34,6 +40,7 @@ import {
   runWeekWords,
   startWords,
   todayView,
+  type DownPeriodView,
   type OpenWorkout,
   type TodayBody,
   type TodayView,
@@ -98,6 +105,7 @@ export function Today() {
     <Screen title="Today" lead={view.dateWords}>
       <GymBlock active={activeLocation} locations={locations} />
       <PhaseLine view={view} />
+      {view.downPeriod ? <DownPeriodBlock view={view.downPeriod} today={today} openToday={view.body.kind === 'lift' && view.body.workout?.status === 'in-progress' ? view.body.label : null} /> : null}
       {view.body.kind === 'before-start' ? (
         <BeforeStartBlock line={view.body.line} />
       ) : view.body.kind === 'lift' ? (
@@ -272,12 +280,143 @@ function PhaseLine({ view }: { view: TodayView }) {
         {view.deload ? (
           <span className="rounded-sm border border-on-dark-faint px-2 py-1 font-mono text-label uppercase tracking-[0.22em] text-on-dark">Deload week</span>
         ) : null}
+        {view.downPeriod?.kind === 'active' || view.downPeriod?.kind === 'ended-today' ? (
+          <span className="rounded-sm border border-on-dark-faint px-2 py-1 font-mono text-label uppercase tracking-[0.22em] text-on-dark">Down period</span>
+        ) : null}
       </div>
       <p className="text-body text-on-dark-dim">{view.phaseName}</p>
       {!view.phaseHasSessions ? (
         <p className="text-body text-on-dark-dim">Phase {view.phaseNumber}’s sessions are not written yet; its gate criteria are all the app carries.</p>
       ) : null}
     </section>
+  )
+}
+
+/**
+ * A down period (Batch E, PROGRAM-QUESTIONS 185): declared, made longer, ended or kept going here,
+ * the one place, since a period always starts today and its status lives here. Each form opens
+ * inline (no modal); each write asks the rule again in the repo, and a refusal is one sentence with
+ * the form left open. The date is read again at the tap, so a form left open past midnight never
+ * starts a period yesterday.
+ */
+function DownPeriodBlock({ view, today, openToday }: { view: DownPeriodView; today: IsoDate; openToday: string | null }) {
+  const noteId = useId()
+  const [open, setOpen] = useState<'declare' | 'extend' | null>(null)
+  const [days, setDays] = useState(view.kind === 'offer' ? view.defaultDays : 7)
+  const [longer, setLonger] = useState(view.kind === 'active' && view.extend ? view.extend.days + 1 : 0)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+
+  async function act(write: (now: IsoDate) => Promise<unknown>, after: string | null): Promise<void> {
+    const now = todayIn(new Date())
+    if (now !== today) {
+      setProblem(pastMidnightWords(now))
+      return
+    }
+    setBusy(true)
+    setProblem(null)
+    try {
+      await write(now)
+      setOpen(null)
+      setNote('')
+      setDone(after)
+    } catch (e) {
+      setProblem(downPeriodErrorWords(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section aria-label="Down period" className="flex flex-col gap-3">
+      {view.kind === 'offer' ? (
+        <>
+          <p className="text-body text-on-dark-dim">Not feeling 100%? Ill or run down, not the knee.</p>
+          {open !== 'declare' ? (
+            <Button wide onClick={() => { setOpen('declare'); setProblem(null); setDone(null) }}>
+              Pause progression
+            </Button>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-sm border border-on-dark-faint p-3">
+              <Stepper label="Days" value={days} min={view.minDays} max={view.maxDays} onChange={setDays} />
+              <p className="text-body text-on-dark-dim">{declareWords(today, days).line}</p>
+              <label htmlFor={noteId} className="text-body text-on-dark-dim">
+                Note <span className="text-on-dark-muted">(optional)</span>
+              </label>
+              <input id={noteId} type="text" autoComplete="off" enterKeyHint="done" maxLength={120} value={note} onChange={(e) => setNote(e.target.value)} className="tap w-full rounded-sm bg-ink px-3 text-body text-on-dark" />
+              <Button
+                variant="primary"
+                wide
+                disabled={busy}
+                onClick={() => void act((now) => declareDownPeriod({ today: now, days, declaredAt: new Date().toISOString(), ...(note.trim() ? { note } : {}) }), pauseReplanWords(openToday))}
+              >
+                {declareWords(today, days).button}
+              </Button>
+              <Button variant="quiet" wide disabled={busy} onClick={() => { setOpen(null); setProblem(null) }}>
+                Not now
+              </Button>
+            </div>
+          )}
+        </>
+      ) : view.kind === 'ahead' ? (
+        <p className="text-body text-on-dark-dim">{view.line}</p>
+      ) : (
+        <>
+          <p className="text-body text-on-dark">{view.line}</p>
+          {view.note ? <p className="text-body text-on-dark-dim wrap-anywhere">Note: {view.note}</p> : null}
+          {view.kind === 'ended-today' ? (
+            <Button wide disabled={busy} onClick={() => void act((now) => resumeDownPeriod(view.id, now), null)}>
+              Keep it going
+            </Button>
+          ) : (
+            <>
+              {view.lastDay ? <p className="text-body text-on-dark-dim">{view.lastDay}</p> : null}
+              {view.canEnd ? (
+                <Button wide disabled={busy} onClick={() => void act((now) => endDownPeriod(view.id, now), null)}>
+                  End it today
+                </Button>
+              ) : null}
+              {view.atCap ? <p className="text-body text-on-dark-dim">{view.atCap}</p> : null}
+              {view.extend && open !== 'extend' ? (
+                <Button variant="quiet" wide onClick={() => { setLonger(view.extend ? view.extend.days + 1 : longer); setOpen('extend'); setProblem(null) }}>
+                  Make it longer
+                </Button>
+              ) : null}
+              {view.extend && open === 'extend' ? (
+                <div className="flex flex-col gap-3 rounded-sm border border-on-dark-faint p-3">
+                  <Stepper label="Days in all" value={longer} min={view.extend.days + 1} max={view.extend.maxDays} onChange={setLonger} />
+                  <ExtendButton start={view.start} days={longer} busy={busy} onExtend={(end) => void act((now) => extendDownPeriod(view.id, end, now), null)} />
+                  <Button variant="quiet" wide disabled={busy} onClick={() => { setOpen(null); setProblem(null) }}>
+                    Not now
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </>
+      )}
+      {problem ? (
+        <p role="alert" className="text-body text-on-dark">
+          {problem}
+        </p>
+      ) : null}
+      {done ? (
+        <p role="status" className="text-body text-on-dark-dim">
+          {done}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+function ExtendButton({ start, days, busy, onExtend }: { start: IsoDate; days: number; busy: boolean; onExtend: (end: IsoDate) => void }) {
+  const { end, button } = extendWords(start, days)
+  return (
+    <Button variant="primary" wide disabled={busy} onClick={() => onExtend(end)}>
+      {button}
+    </Button>
   )
 }
 
@@ -506,7 +645,7 @@ function FitBlock({
   minutes: number | null
   onChange: (minutes: number | null) => void
 }) {
-  const extend = useMemo(() => sessionExtensions(template, history, settings, week), [template, history, settings, week])
+  const extend = useMemo(() => sessionExtensions(template, history, settings, week, before), [template, history, settings, week, before])
   const plans = useMemo(() => planSession({ template, week, settings, history, gym: { location: gym, kit: settings.kit }, before, extend }), [template, week, settings, history, gym, before, extend])
   // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym off the top, and the warm-up sets the runner will show counted.
   const warm = warmUpFor(template.phase, { location: gym, kit: settings.kit })
