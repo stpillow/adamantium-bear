@@ -252,16 +252,27 @@ function DayItem({
     else navigate({ name: 'run' })
   }
 
+  // A past day missing its morning check offers it (Batch D): a quiet button under the row, never
+  // inside the row's own button; hidden while a move waits, when a tap is meant for the move.
+  const late = moving === null ? row.lateCheck : null
   return (
-    <li className={`flex items-start gap-3 border-t border-on-dark-faint py-3 ${row.isToday ? 'border-l-2 border-l-paper pl-3' : ''}`}>
-      {action ? (
-        <button type="button" onClick={() => open(action)} className="tap flex flex-1 flex-col items-start gap-1 rounded-sm text-left">
-          {body}
-        </button>
-      ) : (
-        <div className="flex flex-1 flex-col gap-1">{body}</div>
-      )}
-      <MoveControl row={row} moving={moving} busy={busy} saving={saving} onMove={onMove} onCancel={onCancel} onSwap={onSwap} />
+    <li className={`flex flex-col gap-2 border-t border-on-dark-faint py-3 ${row.isToday ? 'border-l-2 border-l-paper pl-3' : ''}`}>
+      <div className="flex items-start gap-3">
+        {action ? (
+          <button type="button" onClick={() => open(action)} className="tap flex flex-1 flex-col items-start gap-1 rounded-sm text-left">
+            {body}
+          </button>
+        ) : (
+          <div className="flex flex-1 flex-col gap-1">{body}</div>
+        )}
+        <MoveControl row={row} moving={moving} busy={busy} saving={saving} onMove={onMove} onCancel={onCancel} onSwap={onSwap} />
+      </div>
+      {row.lateFlagNote ? <p className="text-small text-on-dark">{row.lateFlagNote}.</p> : null}
+      {late ? (
+        <Button variant="quiet" className="self-start" onClick={() => navigate({ name: 'morning', date: late.morning })}>
+          {late.label}
+        </Button>
+      ) : null}
     </li>
   )
 }

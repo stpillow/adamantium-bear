@@ -92,7 +92,7 @@ export function dateChoices(today: IsoDate, startDate: IsoDate): IsoDate[] {
 
 /** The note under the day choices: which days can be logged, and how a late one reads. */
 export function dayChoicesNote(): string {
-  return `The last ${RETRO_DAYS} days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold.`
+  return `The last ${RETRO_DAYS} days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged. For yesterday that is this morning’s check; for an earlier day the app offers it after you save.`
 }
 
 /**
@@ -547,10 +547,11 @@ const READING_WORDS: Record<ReadingResult, string> = { clean: 'clean', hold: 'ho
 
 /**
  * What saving means for the reading. Today's run: tomorrow's morning check reads it. An earlier
- * day's run: the check that already covers it (rule 3's link or date), this morning's check, or,
- * when none ever will, what the engine reads it as without one.
+ * day's run: the check that already covers it (rule 3's link or date), this morning's check, or what
+ * the engine reads it as without one: until that morning's check is logged late when it still can
+ * be (`canLateCheck`, lateCheckFor; Batch D), and for good when it can't.
  */
-export function loggedWords(run: Run, today: IsoDate, checks: readonly MorningCheck[]): string {
+export function loggedWords(run: Run, today: IsoDate, checks: readonly MorningCheck[], canLateCheck = false): string {
   if (run.date === today) return 'Logged. Tomorrow’s morning check reads it.'
   const subject = { kind: 'run' as const, id: run.id, date: run.date }
   const covering = checks.find((c) => morningCheckApplies(c, subject))
@@ -558,7 +559,9 @@ export function loggedWords(run: Run, today: IsoDate, checks: readonly MorningCh
   if (covering) return `Logged for ${when}. The morning check from ${shortDateWords(covering.date)} reads it.`
   // A check dated the day after always covers the run (rule 3's date), so here none exists yet.
   if (addDays(run.date, 1) === today) return `Logged for yesterday, ${when}. This morning’s check reads it.`
-  return `Logged for ${when}. No morning check from the day after covers it, so it reads ${READING_WORDS[runReading(run, checks).result]}.`
+  const result = runReading(run, checks).result
+  const until = canLateCheck && result === 'hold' ? ' until you log that morning’s check' : ''
+  return `Logged for ${when}. No morning check from the day after covers it, so it reads ${READING_WORDS[result]}${until}.`
 }
 
 export interface RunRow {

@@ -25,6 +25,7 @@ import {
   type MilesView,
   type SymmetryRef,
   type KoosView,
+  type TagsView,
   type TrainingLoadView,
   type Vo2View,
 } from './Progress.helpers.ts'
@@ -97,7 +98,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
   }
 
   return (
-    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max and KOOS.">
+    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max, KOOS and morning tags.">
       <CleanDays clean={view.clean} adherence={view.adherence} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
@@ -105,6 +106,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
       <TrainingLoadSection training={view.training} />
       <Vo2Section vo2={view.vo2} readings={vo2Readings} today={today} />
       <KoosSection koos={view.koos} />
+      <TagsSection tags={view.tags} />
     </Screen>
   )
 }
@@ -375,6 +377,31 @@ function KoosSection({ koos }: { koos: KoosView }) {
       <Button wide onClick={() => navigate({ name: 'koos' })}>
         Open the KOOS form
       </Button>
+    </section>
+  )
+}
+
+/**
+ * Morning tags (Batch D, PROGRAM-QUESTIONS 178): plain counts in words, after each tag and on the
+ * mornings without it. No score, no chart, no color; a count says what came after, never why.
+ */
+function TagsSection({ tags }: { tags: TagsView }) {
+  return (
+    <section aria-label="Morning tags" className={SECTION}>
+      <h2 className={HEADING}>Morning tags</h2>
+      <p className="text-small text-on-dark-muted">{tags.intro}</p>
+      {tags.empty ? (
+        <p className="text-body text-on-dark-dim">{tags.empty}</p>
+      ) : (
+        <ul className="flex flex-col">
+          {tags.rows.map((row) => (
+            <li key={row.tag} className="flex flex-col border-t border-on-dark-faint py-1 first:border-t-0">
+              <span className="text-body text-on-dark">{row.line}</span>
+              {row.without ? <span className="text-small text-on-dark-dim">{row.without}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }

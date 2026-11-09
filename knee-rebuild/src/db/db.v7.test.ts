@@ -89,7 +89,7 @@ describe('a version 7 database opened at version 8', () => {
     await writeVersionSeven()
 
     await db.open()
-    expect(db.verno).toBe(9)
+    expect(db.verno).toBe(10)
     expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v7Rows), 'vo2Readings', 'koosEntries', 'aclRsiEntries'].sort())
     expect(db.vo2Readings.schema.primKey.keyPath).toBe('date')
     expect(await db.vo2Readings.count()).toBe(0)

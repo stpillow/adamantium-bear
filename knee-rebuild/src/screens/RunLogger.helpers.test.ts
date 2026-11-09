@@ -139,7 +139,7 @@ describe('dateChoices', () => {
     expect(dateChoices('2026-11-09', START)).toContain('2026-11-08')
   })
   it('says which days can be logged, and how a late run reads', () => {
-    expect(dayChoicesNote()).toBe('The last 14 days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold.')
+    expect(dayChoicesNote()).toBe('The last 14 days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged. For yesterday that is this morning’s check; for an earlier day the app offers it after you save.')
   })
   it('names each choice by its weekday, and today as Today', () => {
     expect(dayChoiceWords('2026-11-05', '2026-11-05')).toBe('Today')
@@ -678,6 +678,12 @@ describe('loggedWords', () => {
   it('an older run no check covers reads as the engine reads it without one', () => {
     expect(loggedWords(run('2026-11-02', 3), '2026-11-05', [])).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads hold.')
     expect(loggedWords(run('2026-11-02', 3, 'easy', 7), '2026-11-05', [])).toContain('reads back off')
+  })
+  it('inside the window, a run no check covers reads hold until that morning’s check is logged late; back off stays back off (Batch D)', () => {
+    expect(loggedWords(run('2026-11-02', 3), '2026-11-05', [], true)).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads hold until you log that morning’s check.')
+    expect(loggedWords(run('2026-11-02', 3, 'easy', 7), '2026-11-05', [], true)).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads back off.')
+    // Yesterday’s run goes to this morning’s check, never a late one.
+    expect(loggedWords(run('2026-11-04', 3), '2026-11-05', [], true)).toBe('Logged for yesterday, Wednesday Nov 4. This morning’s check reads it.')
   })
 })
 

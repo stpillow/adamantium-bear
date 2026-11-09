@@ -59,3 +59,20 @@ describe('session preview route', () => {
   })
 })
 
+
+describe('a past morning’s check route (Batch D)', () => {
+  it('reads a real date and round-trips it', () => {
+    expect(parseHash('#/morning/2026-11-18')).toEqual({ name: 'morning', date: '2026-11-18' })
+    expect(routeHash({ name: 'morning', date: '2026-11-18' })).toBe('#/morning/2026-11-18')
+    expect(parseHash(routeHash({ name: 'morning', date: '2026-11-18' }))).toEqual({ name: 'morning', date: '2026-11-18' })
+  })
+  it('this morning’s check keeps its plain route', () => {
+    expect(parseHash('#/morning')).toEqual({ name: 'morning' })
+    expect(routeHash({ name: 'morning' })).toBe('#/morning')
+  })
+  it('opens this morning’s check for a malformed or impossible date', () => {
+    expect(parseHash('#/morning/yesterday')).toEqual({ name: 'morning' })
+    expect(parseHash('#/morning/2026-02-30')).toEqual({ name: 'morning' })
+    expect(parseHash('#/morning/2026-11-8')).toEqual({ name: 'morning' })
+  })
+})

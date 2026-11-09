@@ -89,6 +89,7 @@ export function Today() {
     return (
       <Screen title="Today" lead={view.dateWords}>
         <StopBlock headline={view.body.headline} items={view.body.items} />
+        <LateFlagsBlock notes={view.lateFlags} offerCheck={false} />
       </Screen>
     )
   }
@@ -107,11 +108,36 @@ export function Today() {
         <OffBlock label={view.body.label} />
       )}
       {view.body.kind === 'run' || view.body.kind === 'off' || view.body.kind === 'before-start' ? <NextLiftLink today={today} settings={settings} history={history} /> : null}
+      <LateFlagsBlock notes={view.lateFlags} offerCheck />
       <OpenWorkoutsBlock open={view.open} active={activeLocation} locations={locations} />
       <YesterdayBlock lines={view.yesterday} />
       <KoosLine line={koosLine(koosEntries, today)} />
       <ExportLine line={exportLine(settings.lastExportedAt, today, history)} />
     </Screen>
+  )
+}
+
+/**
+ * A red flag ticked on a check logged late, for a past morning (Batch D, PROGRAM-QUESTIONS 175): a
+ * note in words, never the stop. Under the stop it adds no way out; otherwise it points to this
+ * morning's check, the one that can take over.
+ */
+function LateFlagsBlock({ notes, offerCheck }: { notes: string[]; offerCheck: boolean }) {
+  if (notes.length === 0) return null
+  return (
+    <section aria-label="Red flag on a past morning" className={SECTION}>
+      <h2 className={LABEL}>Red flag on a past morning</h2>
+      {notes.map((note) => (
+        <p key={note} className="text-body text-on-dark">
+          {note}
+        </p>
+      ))}
+      {offerCheck ? (
+        <Button wide onClick={() => navigate({ name: 'morning' })}>
+          This morning’s check
+        </Button>
+      ) : null}
+    </section>
   )
 }
 

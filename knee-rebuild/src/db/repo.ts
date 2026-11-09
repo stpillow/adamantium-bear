@@ -405,8 +405,23 @@ export async function deleteSet(id: string): Promise<void> {
   await db.setLogs.delete(id)
 }
 
+/** This morning's check: one per morning, its id the date, so a second save the same morning replaces it. */
 export async function addMorningCheck(check: MorningCheck): Promise<void> {
   await db.morningChecks.put(MorningCheck.parse(check))
+}
+
+/**
+ * A check for a past morning (Batch D): never overwrites. Refused in words, writing nothing, when any
+ * check is already dated that morning (looked up by date, so an imported row under another id
+ * counts) or the id is taken; otherwise added (PROGRAM-QUESTIONS 174).
+ */
+export async function addLateMorningCheck(check: MorningCheck): Promise<void> {
+  const row = MorningCheck.parse(check)
+  await db.transaction('rw', db.morningChecks, async () => {
+    const existing = await db.morningChecks.where('date').equals(row.date).count()
+    if (existing > 0) throw new Error(`a morning check for ${row.date} is already saved; it stays as it is`)
+    await db.morningChecks.add(row)
+  })
 }
 
 export async function addRun(run: Run): Promise<void> {

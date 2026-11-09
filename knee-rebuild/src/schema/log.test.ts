@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IsoDate } from './enums.ts'
+import { IsoDate, MORNING_TAGS, MorningTag } from './enums.ts'
 import { REST_MAX, REST_MIN } from '../screens/Settings.helpers.ts'
 import {
   ACL_RSI_MAX,
@@ -354,5 +354,40 @@ describe('Batch A: an ACL-RSI entry is 12 required answers, 0 to 10, one entry p
     expect(AclRsiEntry.safeParse({ ...full(5), i13: 5 }).success).toBe(false)
     expect(AclRsiEntry.safeParse({ ...full(5), score: 76 }).success).toBe(false)
     expect(AclRsiEntry.safeParse({ ...full(5), date: '2026-13-45' }).success).toBe(false)
+  })
+})
+
+describe('Batch D: a morning check may carry fixed tags and, for a past morning, the day it was logged', () => {
+  const v9 = { id: 'mc-2026-11-18', date: '2026-11-18', appliesTo: { kind: 'workout', id: '2026-11-17-p1-a' }, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [] }
+  it('reads a check stored before Batch D unchanged: no tags, no loggedOn', () => {
+    const parsed = MorningCheck.parse(v9)
+    expect(parsed).toEqual(v9)
+    expect('tags' in parsed).toBe(false)
+    expect('loggedOn' in parsed).toBe(false)
+  })
+  it('pins the six tags in the form’s order', () => {
+    expect(MORNING_TAGS).toEqual(['poor-sleep', 'long-sitting', 'on-feet', 'brace', 'nsaid', 'new-shoes'])
+    expect(MorningTag.options).toBe(MORNING_TAGS)
+  })
+  it('takes known tags, each once', () => {
+    expect(MorningCheck.safeParse({ ...v9, tags: ['poor-sleep'] }).success).toBe(true)
+    expect(MorningCheck.safeParse({ ...v9, tags: ['nsaid', 'brace', 'poor-sleep'] }).success).toBe(true)
+  })
+  it('refuses an unknown tag, a repeated tag and an empty list (absent is the one way to say none)', () => {
+    expect(MorningCheck.safeParse({ ...v9, tags: ['hangover'] }).success).toBe(false)
+    expect(MorningCheck.safeParse({ ...v9, tags: ['brace', 'brace'] }).success).toBe(false)
+    expect(MorningCheck.safeParse({ ...v9, tags: [] }).success).toBe(false)
+  })
+  it('takes loggedOn only after the morning it describes', () => {
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-20' }).success).toBe(true)
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-19' }).success).toBe(true)
+    const same = MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-18' })
+    expect(same.success).toBe(false)
+    expect(same.error?.issues[0]?.message).toBe('a check logged late is logged after the morning it describes')
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-17' }).success).toBe(false)
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-02-30' }).success).toBe(false)
+  })
+  it('keeps its shape for the backup test’s field list', () => {
+    expect(Object.keys(MorningCheck.shape)).toEqual(['id', 'date', 'appliesTo', 'stiffnessUnder30Min', 'worseThanYesterday', 'visibleSwelling', 'warmth', 'painChangePoints', 'redFlags', 'notes', 'tags', 'loggedOn'])
   })
 })

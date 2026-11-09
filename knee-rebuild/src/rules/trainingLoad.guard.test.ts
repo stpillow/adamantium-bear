@@ -24,6 +24,8 @@ const IMPORTERS: readonly string[] = [
   '/src/screens/session/EndPanels.helpers.test.ts',
   '/src/screens/RunLogger.helpers.ts',
   '/src/screens/RunLogger.helpers.test.ts',
+  // The morning-tag guard (Batch D) reads its outputs only to prove tags never change them.
+  '/src/rules/morningTags.guard.test.ts',
 ]
 
 /** A static or dynamic import of the module, by any relative path, with or without the extension. */

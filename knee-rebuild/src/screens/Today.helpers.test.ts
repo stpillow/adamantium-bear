@@ -696,3 +696,23 @@ describe('the KOOS due line (Batch A): one quiet word when a check is 28+ days o
     expect(koosLine(undefined, '2026-11-08')).toBeNull()
   })
 })
+
+describe('a red flag on a check logged late is a note on Today, never the stop (Batch D, PROGRAM-QUESTIONS 175)', () => {
+  const late = check('2026-11-18', { redFlags: [PROGRAM.redFlags[0]?.id ?? 'locking'], loggedOn: '2026-11-20' })
+  it('shows under the body, which stays the day’s session, for 14 days from the morning', () => {
+    const v = todayView({ today: '2026-11-20', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM })
+    expect(v.body.kind).not.toBe('stop')
+    expect(v.lateFlags).toHaveLength(1)
+    expect(v.lateFlags[0]).toMatch(/^A red flag was ticked on the check for Wednesday Nov 18’s morning, logged late on Friday Nov 20: .+\. Any of these means a call to the ortho or PT\./)
+    expect(todayView({ today: '2026-12-02', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toHaveLength(1)
+    expect(todayView({ today: '2026-12-03', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toEqual([])
+  })
+  it('rides beside the stop when today’s check took over too', () => {
+    const v = todayView({ today: '2026-11-20', settings: settings({ redFlag: { active: true, since: '2026-11-20', items: ['locking'] } }), history: history({ morningChecks: [late] }), program: PROGRAM })
+    expect(v.body.kind).toBe('stop')
+    expect(v.lateFlags).toHaveLength(1)
+  })
+  it('a flag on an on-time check is not a late note', () => {
+    expect(todayView({ today: '2026-11-20', settings: settings(), history: history({ morningChecks: [check('2026-11-18', { redFlags: ['locking'] })] }), program: PROGRAM }).lateFlags).toEqual([])
+  })
+})

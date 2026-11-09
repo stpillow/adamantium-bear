@@ -33,7 +33,7 @@ export const BACKUP_APP = 'knee-rebuild'
  * The shape of the file's tables: the Dexie version they were read from (src/db/db.ts). A test in
  * src/db/backup.test.ts holds the two together, so a new Dexie version has to bring a step here.
  */
-export const BACKUP_SCHEMA_VERSION = 9
+export const BACKUP_SCHEMA_VERSION = 10
 
 /**
  * The oldest shape a file can be carried forward from. Version 1 was the empty M0 database. No file
@@ -269,7 +269,9 @@ export function sizeProblem(bytes: number): string | null {
  * fields, and no heart rate is ever invented); version 7's tables are version 8's without the VO2
  * max readings list (metrics phase 3; no reading is ever invented); version 8's tables are
  * version 9's without the KOOS and ACL-RSI questionnaire lists (Batch A; both lists in the one
- * step, and no questionnaire entry is ever invented). A list the file already has is
+ * step, and no questionnaire entry is ever invented); version 9's tables are version 10's as they
+ * stand (Batch D adds only optional fields to a morning check: the fixed tags and the day a check
+ * for a past morning was saved; none is ever invented). A list the file already has is
  * left for the schema to judge, never replaced.
  */
 export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObject>> = {
@@ -280,6 +282,7 @@ export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObjec
   6: (file) => ({ ...withList(file, 'hrSettings'), schemaVersion: 7 }),
   7: (file) => ({ ...withList(file, 'vo2Readings'), schemaVersion: 8 }),
   8: (file) => ({ ...withList(withList(file, 'koosEntries'), 'aclRsiEntries'), schemaVersion: 9 }),
+  9: (file) => ({ ...file, schemaVersion: 10 }),
 }
 
 function withList(file: FileObject, key: BackupTable): FileObject {

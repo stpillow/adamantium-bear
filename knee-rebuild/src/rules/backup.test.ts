@@ -175,7 +175,7 @@ describe('the export file', () => {
 
   it('is two-space JSON with a final newline, named for the day it is written', () => {
     const text = backupText(built())
-    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 9,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
+    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 10,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
     expect(text.endsWith('}\n')).toBe(true)
     expect(backupFileName('2026-11-21')).toBe('knee-rebuild-2026-11-21.json')
   })
@@ -202,10 +202,10 @@ describe('reading a file back', () => {
   })
 
   it('refuses a newer schema version, saying how to get an app that reads it, in the update prompt’s own words', () => {
-    expect(parseBackup(fileText({ ...built(), schemaVersion: 10 }))).toEqual({
+    expect(parseBackup(fileText({ ...built(), schemaVersion: 11 }))).toEqual({
       ok: false,
       refusal:
-        'This backup is from a newer version of the app (schema version 10; this one reads up to 9). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
+        'This backup is from a newer version of the app (schema version 11; this one reads up to 10). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
     })
     // The prompt the refusal sends Shawn to is the one the app shows (src/App.tsx): its sentence and its button.
     expect(appSource).toContain('<span>A new version is ready. It will not reload on its own.</span>')
@@ -341,11 +341,14 @@ describe('older files carried forward', () => {
   // Version 8 as the build before Batch A wrote it: v7 plus the VO2 max readings list, and no questionnaire lists.
   const v8 = () => ({ ...v7(), schemaVersion: 8, vo2Readings: tables().vo2Readings })
 
+  // Version 9 as the build before Batch D wrote it: v8 plus both questionnaire lists, and checks with no tags or late mark.
+  const v9 = () => ({ ...v8(), schemaVersion: 9, koosEntries: tables().koosEntries, aclRsiEntries: tables().aclRsiEntries })
+
   it('has a step for every version from the oldest up to this one', () => {
     for (let v = OLDEST_SCHEMA_VERSION; v < BACKUP_SCHEMA_VERSION; v++) expect(MIGRATIONS[v], `version ${v}`).toBeTypeOf('function')
   })
 
-  it('version 2 gains an empty gyms list, version 3 an empty Program edits list, version 4 an empty added exercises list, version 5 nothing, version 6 an empty heart-rate settings list, version 7 an empty VO2 max readings list, version 8 both empty questionnaire lists in the one step', () => {
+  it('version 2 gains an empty gyms list, version 3 an empty Program edits list, version 4 an empty added exercises list, version 5 nothing, version 6 an empty heart-rate settings list, version 7 an empty VO2 max readings list, version 8 both empty questionnaire lists in the one step, version 9 nothing', () => {
     expect(MIGRATIONS[2]?.(v2())).toEqual({ ...v2(), schemaVersion: 3, locations: [] })
     expect(MIGRATIONS[3]?.(v3())).toEqual({ ...v3(), schemaVersion: 4, programOverrides: [] })
     expect(MIGRATIONS[4]?.({ ...v3(), schemaVersion: 4, programOverrides: [] })).toEqual({ ...v3(), schemaVersion: 5, programOverrides: [], addedSlots: [] })
@@ -354,6 +357,8 @@ describe('older files carried forward', () => {
     expect(MIGRATIONS[7]?.(v7())).toEqual({ ...v7(), schemaVersion: 8, vo2Readings: [] })
     // Both lists in the one step, or every file at version 8 or below would be refused for the missing second list.
     expect(MIGRATIONS[8]?.(v8())).toEqual({ ...v8(), schemaVersion: 9, koosEntries: [], aclRsiEntries: [] })
+    // Batch D adds only optional fields to a morning check: no tag or late mark is invented.
+    expect(MIGRATIONS[9]?.(v9())).toEqual({ ...v9(), schemaVersion: 10 })
   })
 
   it('a step leaves a list the file already has for the schema to judge', () => {
@@ -426,9 +431,37 @@ describe('older files carried forward', () => {
     expect(read.backup.vo2Readings).toEqual(tables().vo2Readings)
   })
 
+  it('reads a version 9 file and invents no tags and no late mark', () => {
+    const read = parseBackup(fileText(v9()))
+    expect(read).toMatchObject({ ok: true, migratedFrom: 9 })
+    if (!read.ok) return
+    expect(read.backup.morningChecks).toEqual(tables().morningChecks)
+    for (const check of read.backup.morningChecks) {
+      expect('tags' in check).toBe(false)
+      expect('loggedOn' in check).toBe(false)
+    }
+  })
+
+  it('carries a check’s tags and late mark through, and refuses a bad one in words', () => {
+    const backup = built()
+    const [first, second] = backup.morningChecks
+    if (!first || !second) throw new Error('fixture has two checks')
+    const tagged = { ...first, tags: ['poor-sleep', 'nsaid'] }
+    const late = { ...second, loggedOn: '2026-11-14' }
+    const read = parseBackup(fileText({ ...backup, morningChecks: [tagged, late] }))
+    expect(read).toMatchObject({ ok: true, backup: { morningChecks: [tagged, late] } })
+    const refusal = (row: unknown) => {
+      const r = parseBackup(fileText({ ...backup, morningChecks: [row] }))
+      return r.ok ? '' : r.refusal
+    }
+    expect(refusal({ ...first, tags: ['hangover'] })).toMatch(/^This backup’s morning checks, row 1, doesn’t read as the app stores it \(tags.*\)\. Nothing was imported\.$/)
+    expect(refusal({ ...first, tags: ['brace', 'brace'] })).toBe('This backup’s morning checks, row 1, doesn’t read as the app stores it (tags: each tag once). Nothing was imported.')
+    expect(refusal({ ...first, loggedOn: first.date })).toBe('This backup’s morning checks, row 1, doesn’t read as the app stores it (loggedOn: a check logged late is logged after the morning it describes). Nothing was imported.')
+  })
+
   it('a version with no step can’t be carried', () => {
     expect(() => migrateForward({ schemaVersion: 1 })).toThrow('no step carries a version 1 backup forward')
-    expect(migrateForward({ schemaVersion: 9, a: 1 })).toEqual({ schemaVersion: 9, a: 1 })
+    expect(migrateForward({ schemaVersion: 10, a: 1 })).toEqual({ schemaVersion: 10, a: 1 })
   })
 })
 

@@ -32,6 +32,7 @@ import {
   addExtra,
   addGateTest,
   addLocation,
+  addLateMorningCheck,
   addMorningCheck,
   addRun,
   addSessionMove,
@@ -254,6 +255,23 @@ async function seedHistory(): Promise<void> {
       painChangePoints: 3,
       redFlags: ['locking', 'giving-way'],
       notes: 'Caught on the stairs twice.\nIced it; 🧊 20 min',
+      tags: ['poor-sleep', 'long-sitting', 'nsaid'],
+    }),
+  )
+  // Batch D: a check for a past morning, logged late, with a tag.
+  await addLateMorningCheck(
+    MorningCheck.parse({
+      id: 'mc-2026-11-16',
+      date: '2026-11-16',
+      appliesTo: null,
+      stiffnessUnder30Min: true,
+      worseThanYesterday: false,
+      visibleSwelling: false,
+      warmth: false,
+      painChangePoints: 0,
+      redFlags: [],
+      tags: ['brace'],
+      loggedOn: '2026-11-18',
     }),
   )
   await addGateTest(
@@ -385,8 +403,8 @@ describe('import is all or nothing', () => {
     await seedHistory()
     const { backup } = await exportBackup(T1)
     const before = await rawDump()
-    const newer = { ...backup, schemaVersion: 10 } as unknown as Backup
-    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 10; this one reads up to 9).')
+    const newer = { ...backup, schemaVersion: 11 } as unknown as Backup
+    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 11; this one reads up to 10).')
     const twice = { ...backup, runs: [...backup.runs, ...backup.runs.slice(0, 1)] }
     await expect(replaceAll(twice, program, TODAY)).rejects.toThrow('twice')
     expect(await rawDump()).toEqual(before)

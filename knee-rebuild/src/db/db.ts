@@ -32,8 +32,10 @@ export interface ExportStampRow {
  * same day replaces, again with no upgrade callback: no reading is ever invented; version 9
  * (Batch A) adds the one-entry-per-day koosEntries and aclRsiEntries questionnaire tables, both
  * keyed by date on the vo2Readings pattern, again with no upgrade callback: no questionnaire
- * entry is ever invented (PROGRAM-QUESTIONS 159). Never edit a shipped version; add the next
- * one, and keep every change additive.
+ * entry is ever invented (PROGRAM-QUESTIONS 159); version 10 (Batch D) adds nothing to the store:
+ * a morning check may carry the fixed tags and, for a past morning, the day it was saved, both
+ * optional and unindexed, and the bump keeps the backup's schema version in step (PROGRAM-QUESTIONS
+ * 179). Never edit a shipped version; add the next one, and keep every change additive.
  */
 export class KneeRebuildDb extends Dexie {
   /** The settings row and, once this phone has exported, the export stamp's row. */
@@ -75,6 +77,7 @@ export class KneeRebuildDb extends Dexie {
     this.version(7).stores({ hrSettings: 'id' })
     this.version(8).stores({ vo2Readings: 'date' })
     this.version(9).stores({ koosEntries: 'date', aclRsiEntries: 'date' })
+    this.version(10).stores({})
   }
 }
 

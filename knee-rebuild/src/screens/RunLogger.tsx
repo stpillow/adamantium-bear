@@ -15,6 +15,7 @@ import { runSwapGym } from '../rules/gymDay.ts'
 import { listedLocations } from '../rules/locations.ts'
 import type { IsoDate, Location, Run, RunType, Settings } from '../schema/index.ts'
 import { noSwapSuggestedWords, runLabel } from './Today.helpers.ts'
+import { lateCheckOffer } from './MorningCheck.helpers.ts'
 import {
   MILES_MAX,
   MILES_STEP,
@@ -136,14 +137,21 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
 
   if (saved) {
     const hrLine = hrLoadWords(saved, hrSettings ?? null)
+    // The run just saved may not be in the live history yet; the offer reads it either way (Batch D).
+    const late = lateCheckOffer({ date: saved.date, today, startDate: settings.startDate, history: { ...history, runs: [...history.runs.filter((r) => r.id !== saved.id), saved] } })
     return (
-      <Screen title={TITLE} lead={loggedWords(saved, today, history.morningChecks)}>
+      <Screen title={TITLE} lead={loggedWords(saved, today, history.morningChecks, late !== null)}>
         {/* The HR load (TRIMP) beside the sRPE words, only when the run and Settings can compute one; absent says nothing, never 0. */}
         {hrLine ? <p className="text-body text-on-dark">{hrLine}</p> : null}
         <p role="status" className="text-body text-on-dark">
           {weekLine(view.summary, null)}
         </p>
         <div className="flex flex-col gap-3">
+          {late ? (
+            <Button wide onClick={() => navigate({ name: 'morning', date: late.morning })}>
+              {late.label}
+            </Button>
+          ) : null}
           <Button variant="primary" wide onClick={() => navigate({ name: 'today' })}>
             Today
           </Button>

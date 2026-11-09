@@ -204,4 +204,25 @@ describe('evaluateGate (rule 8)', () => {
     expect(evaluateGate(gate1, ctx({ runs: [run({})], morningChecks: [check('2026-11-21', { worseThanYesterday: true })] })).items[3]?.pass).toBe(false)
     expect(evaluateGate(gate1, ctx({ runs: [run({})] })).items[3]?.pass).toBe(false)
   })
+  it('a check logged late (Batch D) can fail no-swelling but never makes it pass, and a clean late check doesn’t satisfy the 4-mile run (PROGRAM-QUESTIONS 176, the conservative reading)', () => {
+    const late = (date: string, over: Partial<MorningCheck> = {}) => check(date, { loggedOn: '2026-11-22', ...over })
+    // Only a late check in the window: "has checks" doesn't pass on it.
+    expect(evaluateGate(gate2, ctx({ morningChecks: [late('2026-11-16')] })).items[1]).toMatchObject({ pass: false, detail: 'no morning checks in the last 14 days; the one there was logged late, which doesn’t count toward a pass' })
+    expect(evaluateGate(gate2, ctx({ morningChecks: [late('2026-11-16'), late('2026-11-18')] })).items[1]?.detail).toBe('no morning checks in the last 14 days; the 2 there were logged late, which don’t count toward a pass')
+    // Late swelling still fails, beside an on-time clean check.
+    expect(evaluateGate(gate2, ctx({ morningChecks: [check('2026-11-20'), late('2026-11-16', { visibleSwelling: true })] })).items[1]).toMatchObject({ pass: false, detail: 'swelling flagged on 2026-11-16' })
+    // An on-time check passes as before; the clean late one beside it is not counted.
+    expect(evaluateGate(gate2, ctx({ morningChecks: [check('2026-11-20'), late('2026-11-16')] })).items[1]).toMatchObject({ pass: true, detail: '1 morning checks in the last 14 days, no swelling' })
+
+    const run = (over: Partial<Run>): Run => ({ id: 'r1', date: '2026-11-20', type: 'long', miles: 4, minutes: 40, effort: 'easy', maxPain: 1, strides: false, tempo: false, ...over })
+    expect(evaluateGate(gate1, ctx({ runs: [run({})], morningChecks: [late('2026-11-21')] })).items[3]).toMatchObject({
+      pass: false,
+      detail: '1 runs of 4+ miles, none with a clean morning check after; one has a clean check logged late, which doesn’t count toward a pass',
+    })
+    // The same check saved that morning passes.
+    expect(evaluateGate(gate1, ctx({ runs: [run({})], morningChecks: [check('2026-11-21')] })).items[3]?.pass).toBe(true)
+    // An earlier run with an on-time clean morning still passes beside it.
+    const earlier = run({ id: 'r0', date: '2026-11-13' })
+    expect(evaluateGate(gate1, ctx({ runs: [earlier, run({})], morningChecks: [check('2026-11-14'), late('2026-11-21')] })).items[3]).toMatchObject({ pass: true, detail: '4 miles on 2026-11-13 with a clean morning after' })
+  })
 })

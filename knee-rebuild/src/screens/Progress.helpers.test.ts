@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { program } from '../program/program.ts'
 import { attachChecks, subjectReadings } from '../rules/history.ts'
 import type { MilesWeek } from '../rules/progress.ts'
-import type { Exercise, MileageWeek, MorningCheck, Run, SessionTemplate, SetLog, Settings, Workout } from '../schema/index.ts'
+import type { SubjectReading } from '../rules/history.ts'
+import type { Exercise, MileageWeek, MorningCheck, MorningTag, Run, SessionTemplate, SetLog, Settings, Workout } from '../schema/index.ts'
 import {
+  tagsView,
+  type TagsView,
   axisDate,
   bandCenters,
   clampCenter,
@@ -1205,3 +1208,62 @@ describe('the KOOS section (Batch A): five subscale trends in words, scores on P
     expect(bare.koos.due).toBe('A KOOS check is due — none entered yet.')
   })
 })
+
+describe('Morning tags (Batch D, PROGRAM-QUESTIONS 178)', () => {
+  const mc = (date: string, tags?: MorningTag[]): MorningCheck => ({
+    id: `mc-${date}`, date, appliesTo: null, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [], ...(tags ? { tags } : {}),
+  })
+  const sr = (date: string, result: SubjectReading['result']): SubjectReading => ({ kind: 'run', id: `run-${date}`, date, result })
+  const days = (n: number, from = 3) => Array.from({ length: n }, (_, i) => `2026-11-${String(from + i).padStart(2, '0')}`)
+  /** A causal word, or a word that would read as one: counts say what came after, never why. */
+  const CAUSAL = /\bbecause\b|\bcaused?\b|\bdue to\b|\bleads? to\b|\bimpacts?\b|\beffects?\b|\bdrives?\b|\btriggers?\b|\bresults? in\b|\blinked to\b|\bhelps?\b|\bhurts?\b|\bmakes?\b|\bmade\b/i
+  const allWords = (v: TagsView) => [v.intro, v.empty ?? '', ...v.rows.flatMap((r) => [r.line, r.without ?? ''])]
+
+  it('says in one sentence when no tag was ever used', () => {
+    const v = tagsView({ checks: [mc('2026-11-04')], readings: [sr('2026-11-03', 'clean')] })
+    expect(v.rows).toEqual([])
+    expect(v.empty).toBe('No tags yet. They’re optional taps on the morning check; a tag’s counts show once it has 5 mornings with a session the day before.')
+    expect(v.intro).toBe('Counts only: the readings on mornings after each tag. A count says what came after, not why.')
+  })
+  it('under 5 paired mornings says how many so far; an unused tag says so', () => {
+    const v = tagsView({ checks: [mc('2026-11-04', ['poor-sleep']), mc('2026-11-05', ['poor-sleep']), mc('2026-11-09', ['brace'])], readings: [sr('2026-11-03', 'hold'), sr('2026-11-04', 'clean')] })
+    expect(v.empty).toBeNull()
+    expect(v.rows.map((r) => r.line)).toEqual([
+      'Poor sleep: tagged on 2 mornings with a session the day before. Counts show from 5.',
+      'A long sit or car ride: not tagged yet.',
+      'A day on your feet: not tagged yet.',
+      'Wearing the brace: tagged on 0 mornings with a session the day before. Counts show from 5.',
+      'An anti-inflammatory: not tagged yet.',
+      'New shoes: not tagged yet.',
+    ])
+    expect(v.rows.every((r) => r.without === null)).toBe(true)
+  })
+  it('from 5 shows the counts, and the mornings without it only once they reach 5 too', () => {
+    const tagged = days(5, 3)
+    const checks = tagged.map((d) => mc(addOne(d), ['poor-sleep']))
+    const readings = tagged.map((d, i) => sr(d, i < 2 ? 'clean' : i < 4 ? 'hold' : 'back-off'))
+    const few = tagsView({ checks, readings })
+    expect(few.rows[0]).toEqual({ tag: 'poor-sleep', line: 'After poor sleep: 5 readings — 2 clean, 2 hold, 1 back off.', without: 'Mornings without it: fewer than 5 so far.' })
+    const untagged = days(6, 20)
+    const more = tagsView({ checks: [...checks, ...untagged.map((d) => mc(addOne(d)))], readings: [...readings, ...untagged.map((d) => sr(d, 'clean'))] })
+    expect(more.rows[0]?.without).toBe('Mornings without it: 6 readings — 6 clean, 0 hold, 0 back off.')
+    expect(more.rows[1]?.line).toBe('A long sit or car ride: not tagged yet.')
+    for (const text of [...allWords(few), ...allWords(more)]) expect(text, text).not.toMatch(CAUSAL)
+  })
+  it('the causal-word check catches what it should', () => {
+    for (const bad of ['Pain was up because of poor sleep', 'caused by', 'due to the brace', 'leads to hold', 'impacts trends', 'the effect of', 'drives readings', 'triggers', 'results in', 'linked to', 'helps', 'hurts', 'makes it', 'made']) expect(bad).toMatch(CAUSAL)
+    expect('After poor sleep: 6 readings — 2 clean.').not.toMatch(CAUSAL)
+  })
+  it('rides on the Progress view, read from the stored checks', () => {
+    const settings: Settings = { injuredSide: 'right', startDate: '2026-11-02', dumbbellMax: 75, restTimerSeconds: 60, painPerSet: false, currentPhase: 1, phaseEnteredWeek: 1, redFlag: { active: false, items: [] }, activeLocationId: 'planet-fitness', kit: [] }
+    const history = { workouts: [], setLogs: [], morningChecks: [mc('2026-11-04', ['nsaid'])], runs: [], gateTests: [], sessionMoves: [] }
+    const view = progressView({ today: '2026-11-09', settings, history, program })
+    expect(view.tags.rows.find((r) => r.tag === 'nsaid')?.line).toBe('An anti-inflammatory: tagged on 0 mornings with a session the day before. Counts show from 5.')
+  })
+})
+
+function addOne(date: string): string {
+  const d = new Date(`${date}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+}

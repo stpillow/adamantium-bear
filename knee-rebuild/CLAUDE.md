@@ -70,7 +70,7 @@ knee-rebuild/
 - **Deload**: weeks 4, 8 and 12 from the start date. Sets × 2/3 rounded down (minimum 2), loads unchanged, no progression; the mileage plan's down weeks fall on the same weeks.
 - **Symmetry**: injured side divided by the other side, as a percent — except on a timed test (the 6-meter timed hop), where lower is better, so it is the other side divided by the injured side. Gate 1 wants 80%, gates 2 and 3 want 90%.
 - **Injured side first**: on unilateral slots the injured leg is logged first and sets the rep budget for the healthy leg.
-- **Red-flag state**: any ticked red flag on a morning check. Today shows "Stop. Call the ortho or PT." and progression is suspended until cleared from Settings with a note.
+- **Red-flag state**: any ticked red flag on a morning check for today. Today shows "Stop. Call the ortho or PT." and progression is suspended until cleared from Settings with a note. A flag on a check logged late, for a past morning, shows as a note and suspends nothing.
 - **Swap**: replacing a slot's exercise with the next substitution in its ordered list; the slot's job stays the same.
 - **Effective reading**: what the last two combined readings add up to for one exercise: clean twice, clean once, hold, or back-off (two holds in a row read back-off).
 - **Pain per exercise**: when `Settings.painPerSet` is false, the runner stores the exercise's one pain value on every set it logs; the engine reads pain per set either way.

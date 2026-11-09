@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 export type Route =
   | { name: 'today' }
   | { name: 'session'; workoutId: string }
-  | { name: 'morning' }
+  /** The morning check: this morning's, or (Batch D) one for a past morning, `#/morning/2026-11-18`, dated the morning it describes. */
+  | { name: 'morning'; date?: string }
   | { name: 'run' }
   | { name: 'week' }
   | { name: 'progress' }
@@ -70,6 +71,8 @@ export function parseHash(hash: string): Route {
       return locationId ? { name: 'location', locationId } : { name: 'locations' }
     }
     case 'morning':
+      // Only a real calendar date opens a past morning's check; anything else is this morning's.
+      return arg && isCalendarDate(arg) ? { name: 'morning', date: arg } : { name: 'morning' }
     case 'run':
     case 'week':
     case 'progress':
@@ -101,6 +104,8 @@ export function routeHash(route: Route): string {
       return `#/location/${NEW}`
     case 'preview':
       return `#/preview/${route.date}`
+    case 'morning':
+      return route.date ? `#/morning/${route.date}` : '#/morning'
     default:
       return `#/${route.name}`
   }

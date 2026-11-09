@@ -85,6 +85,16 @@ export type ReadingResult = z.infer<typeof ReadingResult>
 export const WorkoutStatus = z.enum(['planned', 'in-progress', 'finished', 'abandoned'])
 export type WorkoutStatus = z.infer<typeof WorkoutStatus>
 
+/**
+ * The morning check's fixed tags (Batch D, Shawn's Nov 8 decision 10; PROGRAM-QUESTIONS 177): one
+ * optional tap each for the day and night before the morning, none by default. Counted on the
+ * phone against the readings, in plain counts on Progress, and read by no rule that decides
+ * anything (src/rules/morningTags.guard.test.ts). The order here is the form's and the count's.
+ */
+export const MorningTag = z.enum(['poor-sleep', 'long-sitting', 'on-feet', 'brace', 'nsaid', 'new-shoes'])
+export type MorningTag = z.infer<typeof MorningTag>
+export const MORNING_TAGS: readonly MorningTag[] = MorningTag.options
+
 /** What a day of the weekly template holds. */
 export const DaySession = z.enum(['run:mbr', 'lift:A', 'run:easy', 'lift:B', 'run:long', 'lift:C', 'off'])
 export type DaySession = z.infer<typeof DaySession>
