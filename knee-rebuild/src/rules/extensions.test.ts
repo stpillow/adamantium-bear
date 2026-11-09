@@ -113,4 +113,28 @@ describe('extensionPool', () => {
     expect(isExtraSlotId('p1a-1')).toBe(false)
     expect(EXTENSION_MAX).toBe(6)
   })
+
+  it('after program.md’s pulls and pushes, the accessory catalog: the upper tier taking turns, then core, each with its own defaults, cues and substitutions (PROGRAM-QUESTIONS 170)', () => {
+    const acc = (id: string, pattern: Exercise['pattern'], tier: 'upper' | 'core', over: Partial<Exercise> = {}) =>
+      ex({ id, pattern, accessory: { tier, sets: 2, repsMin: 10, repsMax: 15, cues: [`${id} cue`], substitutionIds: ['row'] }, ...over })
+    // Catalog order mixes them on purpose: the passes, not the order of the file, decide.
+    const CRUNCH = acc('crunch', 'core', 'core')
+    const CURL = acc('curl', 'pull', 'upper')
+    const RAISE = acc('raise', 'push', 'upper')
+    const SHRUG = acc('shrug', 'pull', 'upper')
+    const HOLD = acc('hold', 'core', 'core', { accessory: { tier: 'core', repUnit: 'seconds', sets: 3, repsMin: 30, repsMax: 45, cues: ['Stand tall.'], substitutionIds: [] } })
+    const PLANK = ex({ id: 'plank', pattern: 'core', loadType: 'time' })
+    const catalog = new Map([CRUNCH, ...CATALOG.values(), CURL, RAISE, SHRUG, HOLD, PLANK].map((e) => [e.id, e]))
+    const slots = extensionPool({ template: A, templates: TEMPLATES, phaseWeek: 1, catalog })
+    expect(slots.map((s) => s.exerciseId)).toEqual(['lunge', 'calf', 'row', 'bench', 'pulldown', 'curl', 'raise', 'shrug', 'crunch', 'hold'])
+    expect(slots.filter((s) => s.label.startsWith('+U')).map((s) => s.label)).toEqual(['+U1', '+U2', '+U3', '+U4', '+U5', '+U6', '+U7', '+U8'])
+    // A core exercise program.md writes (no accessory) is not upper-body work and is never offered here.
+    expect(slots.map((s) => s.exerciseId)).not.toContain('plank')
+    const curl = slots.find((s) => s.exerciseId === 'curl')
+    expect(curl).toMatchObject({ id: 'extra-curl', sets: 2, repsMin: 10, repsMax: 15, cues: ['curl cue'], substitutionIds: ['row'], progressionRule: 'double-progression' })
+    expect(slots.find((s) => s.exerciseId === 'hold')).toMatchObject({ repUnit: 'seconds', repsMin: 30, repsMax: 45, prescriptionText: '3 × 30–45 s' })
+    // The session already running an accessory is never offered it again.
+    const withCurl = template('p1-a', 'A', [...A.slots, slot('a3', 'curl', { order: 3 })])
+    expect(extensionPool({ template: withCurl, templates: TEMPLATES, phaseWeek: 1, catalog }).map((s) => s.exerciseId)).not.toContain('curl')
+  })
 })

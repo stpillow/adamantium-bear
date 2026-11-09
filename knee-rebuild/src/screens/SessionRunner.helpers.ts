@@ -1,5 +1,7 @@
 import { DUMBBELLS, missingHere, type Available, type SlotRoute } from '../rules/equipment.ts'
 import { HELD_LOAD_INCREMENT_LB, RANGE_LADDER_DEG, type Prescription } from '../rules/prescription.ts'
+import type { WarmUpParts } from '../rules/warmUp.ts'
+import type { Ramp, RampSet } from '../app/session.ts'
 import type { Draft } from '../rules/prefill.ts'
 import { stepKey } from '../rules/runOrder.ts'
 import type { SwapOffer } from '../rules/runnerGym.ts'
@@ -439,11 +441,6 @@ export function notInBagWords(ids: readonly EquipmentId[], items: readonly ItemL
   return `Not in your bag: ${ids.map((id) => itemInSentence(itemOf(id, items).name)).join(' and ')}. "In your bag" in Where you train adds ${ids.length > 1 ? 'them' : 'it'}.`
 }
 
-/** The warm-up's minutes, as the row says them: the circuit for the phase, and the bike's 5 where there is one. Training load's estimate of a late session adds them. */
-export function warmUpMinutes(circuitMinutes: number | undefined, bikeHere: boolean): number {
-  return (circuitMinutes ?? 5) + (bikeHere ? 5 : 0)
-}
-
 /**
  * The logged sets as the minutes stepper reads them: each with its unit (the slot's, or seconds for
  * a set logged in seconds; reps when the slot is no longer in the plan), when it was logged, and its RPE.
@@ -458,10 +455,39 @@ export function timedSets(sets: readonly SetLog[], repUnitOf: (slotId: string) =
   }))
 }
 
-/** The warm-up row: "Warm-up · bike 5 min · knee circuit 5 min", without the bike where there is none, and the line that says so. */
-export function warmUpWords(circuitMinutes: number | undefined, bikeHere: boolean): { line: string; noBike: string | null } {
-  const circuit = `knee circuit ${circuitMinutes ?? 5} min`
-  return bikeHere ? { line: `Warm-up · bike 5 min · ${circuit}`, noBike: null } : { line: `Warm-up · ${circuit}`, noBike: 'No upright bike here; nothing else is written for it.' }
+/** The warm-up row (`warmUpParts`): "Warm-up · bike 5 min · knee circuit 5 min", without the bike where there is none, and the line that says so. */
+export function warmUpWords(parts: WarmUpParts): { line: string; noBike: string | null } {
+  const circuit = `knee circuit ${parts.circuit} min`
+  return parts.bike !== null ? { line: `Warm-up · bike ${parts.bike} min · ${circuit}`, noBike: null } : { line: `Warm-up · ${circuit}`, noBike: 'No upright bike here; nothing else is written for it.' }
+}
+
+/** One warm-up set's load in words: "90 lb", "20 lb each", "empty bar", "empty sled", "the lightest plate". */
+function rampLoadWords(set: RampSet, exercise: Exercise): string {
+  if (set.light === 'empty-bar') return 'empty bar'
+  if (set.light === 'empty-sled') return 'empty sled'
+  if (set.light === 'lightest-plate') return 'the lightest plate'
+  return loadWords(set.load, exercise)
+}
+
+/** A slot's warm-up sets in words: "90 lb × 8, then 135 lb × 5"; null when there are none. */
+export function rampSetsWords(ramp: Ramp, exercise: Exercise): string | null {
+  if (ramp.kind !== 'sets') return null
+  return ramp.sets.map((s) => `${rampLoadWords(s, exercise)} × ${s.reps}`).join(', then ')
+}
+
+/**
+ * The runner's line above set 1 of a big lift (PROGRAM-QUESTIONS 165): its warm-up sets, never
+ * logged, or why a load needs none. Nothing for an exercise the rule doesn't cover, a first time,
+ * one already warm, a late entry, or a working load of nothing on a stack or dumbbells.
+ */
+export function rampWords(ramp: Ramp, exercise: Exercise): string | null {
+  const sets = rampSetsWords(ramp, exercise)
+  if (sets !== null && ramp.kind === 'sets') return `${ramp.sets.length === 1 ? 'Warm-up set' : 'Warm-up sets'} first, not logged: ${sets}.`
+  if (ramp.kind !== 'none' || ramp.why !== 'too-light' || ramp.workingLoad === undefined) return null
+  if (ramp.workingLoad > 0) return `No warm-up sets today: ${loadWords(ramp.workingLoad, exercise)} is light enough to start on.`
+  if (exercise.loadType === 'smith-plates') return 'No warm-up sets today: the empty bar is light enough to start on.'
+  if (exercise.loadType === 'plates') return 'No warm-up sets today: the empty sled is light enough to start on.'
+  return null
 }
 
 export interface SwapChoice {

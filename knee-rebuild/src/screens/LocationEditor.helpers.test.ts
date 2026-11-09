@@ -251,7 +251,10 @@ describe('Something else here?', () => {
   it('keeps what no exercise uses, in its own words', () => {
     expect(words('Kettlebells')).toBe('No exercise in the program uses kettlebells. Kept for the next program.md update.')
     expect(words('TRX')).toBe('No exercise in the program uses TRX. Kept for the next program.md update.')
-    expect(words('shoulder press')).toBe('Shoulder press machine is on program.md’s list, but no session uses it. Kept for the next program.md update.')
+    expect(words('treadmill')).toBe('Treadmill is on program.md’s list, but no session uses it. Kept for the next program.md update.')
+    // The overhead press machine uses it now (Batch C, PROGRAM-QUESTIONS 172): typed, it reads as an item the program uses.
+    expect(at('shoulder press')).toEqual({ kind: 'mark', id: 'shoulder-press-machine' })
+    expect(words('shoulder press')).toBe('Matches Shoulder press machine. Mark it here?')
   })
 
   it("sends the bag and the rack to their sections, and asks for text when there is none", () => {

@@ -39,6 +39,11 @@ export interface ActiveCardProps {
   /** A logged set being corrected, or null. */
   editing: SetLog | null
   slotSets: SetLog[]
+  /**
+   * The warm-up sets before set 1 of a big lift, in words (`rampWords`, PROGRAM-QUESTIONS 165), or
+   * null. Display only: no tap, nothing logged. Shown above set 1 while nothing is logged on the slot.
+   */
+  ramp: string | null
   /** Sets prescribed for each side, for "set 2 of 3". */
   setsBySide: Record<string, number>
   /** Sides of a two-sided slot and whether each still has an open set, for the side toggle. */
@@ -237,6 +242,8 @@ export function ActiveCard(props: ActiveCardProps) {
             })}
           </div>
         ) : null}
+
+        {props.ramp && !editing && step?.setNumber === 1 && slotSets.length === 0 ? <p className="text-small text-on-dark wrap-anywhere">{props.ramp}</p> : null}
 
         {draft && (step || editing) ? (
           <div aria-label={editing ? `Editing set ${editing.setNumber}` : 'Next set'} className="flex flex-col gap-4">

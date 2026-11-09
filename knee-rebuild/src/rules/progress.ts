@@ -23,7 +23,7 @@ export interface LoadPoint {
   count: number
 }
 
-/** Load over time for one exercise: per session and side, the heaviest set. Stopped sets count as logged. */
+/** Load over time for one exercise: per session and side, the heaviest set across the workout's slots (display only; the gate prefill and the symmetry line pair sides within one slot, `slotPairs`). Stopped sets count as logged. */
 export function loadSeries(records: readonly WorkoutRecord[], exerciseId: string): LoadPoint[] {
   const points: LoadPoint[] = []
   for (const record of records) {
@@ -35,6 +35,41 @@ export function loadSeries(records: readonly WorkoutRecord[], exerciseId: string
     }
   }
   return points.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+/** One slot's pair in a session: the injured side's best set and the other side's, both logged on that slot. */
+export interface SlotPair {
+  slotId: string
+  injured: SetLog
+  other: SetLog
+}
+
+/**
+ * The pairs one session logged for an exercise, one per slot that logged both sides, in slot-id
+ * order: each side's best set on that slot (`bestSet`). Sides are paired within a slot, never across
+ * two: a program slot and an added or extra-time slot of the same exercise on the same day are two
+ * pairs, so the injured side's best from one can't meet the other side's best from the other and
+ * show a symmetry no slot did (Batch C, PROGRAM-QUESTIONS 168). A session whose sides were logged on
+ * different slots has no pair. Sets of other exercises, and `both` sets, are not read.
+ */
+export function slotPairs(record: WorkoutRecord, exerciseId: string, injuredSide: Side): SlotPair[] {
+  const otherSide: Side = injuredSide === 'left' ? 'right' : 'left'
+  const own = record.sets.filter((s) => s.exerciseId === exerciseId)
+  const slotIds = [...new Set(own.map((s) => s.slotId))].sort()
+  const pairs: SlotPair[] = []
+  for (const slotId of slotIds) {
+    const onSlot = own.filter((s) => s.slotId === slotId)
+    const injured = bestSet(onSlot.filter((s) => s.side === injuredSide))
+    const other = bestSet(onSlot.filter((s) => s.side === otherSide))
+    if (injured && other) pairs.push({ slotId, injured, other })
+  }
+  return pairs
+}
+
+/** Of several pairs, the least symmetric by load (injured ÷ other, both above 0); ties to the lower injured load, then the slot id. */
+function leastSymmetric(pairs: readonly SlotPair[]): SlotPair | undefined {
+  const ratio = (p: SlotPair) => p.injured.load / p.other.load
+  return [...pairs].sort((a, b) => ratio(a) - ratio(b) || a.injured.load - b.injured.load || a.slotId.localeCompare(b.slotId))[0]
 }
 
 /** The session a gate's load test opens on, each side's heaviest set, and the gym it ran at. */
@@ -62,25 +97,29 @@ export interface LoadTestPrefill {
  * side's heaviest set carried no load, since a load test needs a load on each side and a bodyweight
  * session would hide the last loaded one (PROGRAM-QUESTIONS 115). Null when nothing is left; either
  * way, what was passed over is counted, so the screen can say so.
+ *
+ * Both sides are read from one slot (`slotPairs`, PROGRAM-QUESTIONS 168): a session whose sides were
+ * logged only on different slots is not a both-sides session. With two slots of the exercise that
+ * day (the program's and an added or extra-time one), the pair with the lowest injured ÷ other load
+ * opens the test, the conservative one. A rack-capped set anywhere in the session passes it over.
  */
 export function loadTestPrefill(records: readonly WorkoutRecord[], exerciseId: string, injuredSide: Side): LoadTestPrefill {
-  const other: Side = injuredSide === 'left' ? 'right' : 'left'
   const passedOver = { rackCapped: 0, noLoad: 0 }
   // Newest first; of two on one date, the later one written.
   for (const record of [...records].reverse().sort((a, b) => b.workout.date.localeCompare(a.workout.date))) {
-    const points = loadSeries([record], exerciseId)
-    const a = points.find((p) => p.side === injuredSide)
-    const b = points.find((p) => p.side === other)
-    if (!a || !b) continue
+    if (!happened(record)) continue
+    const pairs = slotPairs(record, exerciseId, injuredSide)
+    if (pairs.length === 0) continue
     if (record.sets.some((s) => s.exerciseId === exerciseId && isRackCapped(s))) {
       passedOver.rackCapped += 1
       continue
     }
-    if (!(a.load > 0) || !(b.load > 0)) {
+    const pick = leastSymmetric(pairs.filter((p) => p.injured.load > 0 && p.other.load > 0))
+    if (!pick) {
       passedOver.noLoad += 1
       continue
     }
-    return { prefill: { date: record.workout.date, workoutId: record.workout.id, locationId: locationIdOf(record.workout), injured: a.load, other: b.load }, passedOver }
+    return { prefill: { date: record.workout.date, workoutId: record.workout.id, locationId: locationIdOf(record.workout), injured: pick.injured.load, other: pick.other.load }, passedOver }
   }
   return { prefill: null, passedOver }
 }
@@ -119,17 +158,8 @@ function unlike(a: SetLog, b: SetLog): string | null {
 
 type SessionSymmetry = { point: SymmetryPoint } | { leftOut: SymmetryLeftOut }
 
-/** One session's symmetry, or why it is left out; null when it didn't log both sides. */
-function sessionSymmetry(record: WorkoutRecord, exerciseId: string, injuredSide: Side): SessionSymmetry | null {
-  if (!happened(record)) return null
-  const otherSide: Side = injuredSide === 'left' ? 'right' : 'left'
-  const own = record.sets.filter((s) => s.exerciseId === exerciseId)
-  const a = bestSet(own.filter((s) => s.side === injuredSide))
-  const b = bestSet(own.filter((s) => s.side === otherSide))
-  if (!a || !b) return null
-  const date = record.workout.date
-  // A capped set ran at the gym's heaviest dumbbell, not the load the knee was on (question 73).
-  if (own.some(isRackCapped)) return { leftOut: { date, reason: `the gym’s rack capped the loads ${sides(`${a.load} ${a.loadUnit}`, `${b.load} ${b.loadUnit}`)}, so they say nothing of the knee` } }
+/** One pair's symmetry, or why it is left out. */
+function pairSymmetry(date: IsoDate, a: SetLog, b: SetLog): SessionSymmetry {
   const why = unlike(a, b)
   if (why) return { leftOut: { date, reason: why } }
   const byLoad = a.load !== b.load
@@ -143,6 +173,28 @@ function sessionSymmetry(record: WorkoutRecord, exerciseId: string, injuredSide:
     return { leftOut: { date, reason } }
   }
   return { point: { date, percent, basis: byLoad ? 'load' : 'count', injured, other: healthy } }
+}
+
+/**
+ * One session's symmetry, or why it is left out; null when no slot logged both sides. Sides are
+ * paired within a slot (`slotPairs`), as the Gates prefill pairs them, so the two screens never read
+ * one session two ways; with two slots of the exercise that day, the lowest percent stands
+ * (PROGRAM-QUESTIONS 168).
+ */
+function sessionSymmetry(record: WorkoutRecord, exerciseId: string, injuredSide: Side): SessionSymmetry | null {
+  if (!happened(record)) return null
+  const pairs = slotPairs(record, exerciseId, injuredSide)
+  const first = pairs[0]
+  if (!first) return null
+  const date = record.workout.date
+  // A capped set ran at the gym's heaviest dumbbell, not the load the knee was on (question 73).
+  if (record.sets.some((s) => s.exerciseId === exerciseId && isRackCapped(s))) {
+    return { leftOut: { date, reason: `the gym’s rack capped the loads ${sides(`${first.injured.load} ${first.injured.loadUnit}`, `${first.other.load} ${first.other.loadUnit}`)}, so they say nothing of the knee` } }
+  }
+  const read = pairs.map((p) => pairSymmetry(date, p.injured, p.other))
+  const points = read.flatMap((r) => ('point' in r ? [r.point] : []))
+  const lowest = [...points].sort((x, y) => x.percent - y.percent || x.injured - y.injured)[0]
+  return lowest ? { point: lowest } : (read[0] ?? null)
 }
 
 /**

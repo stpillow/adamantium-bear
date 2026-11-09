@@ -14,6 +14,8 @@ import { parseArgs } from 'node:util'
 import { exerciseById, nominalPhaseForWeek, program, templateFor } from '../src/program/program.ts'
 import { isDeloadWeek } from '../src/rules/calendar.ts'
 import { prescribedSets } from '../src/rules/deload.ts'
+import { warmUpParts } from '../src/rules/warmUp.ts'
+import { rampEligible } from '../src/rules/warmUpRamp.ts'
 import { phaseWeekOf, slotsForPhaseWeek } from '../src/rules/session.ts'
 import { SessionLetter, type Requirement, type Slot } from '../src/schema/index.ts'
 
@@ -143,6 +145,7 @@ function printSession(): void {
   const circuitMinutes = program.warmUp.lift.circuitMinutesByPhase[String(phase.number)]
   console.log(`Warm-up: ${program.warmUp.lift.intro}`)
   console.log(`Knee circuit this phase: ${circuitMinutes === undefined ? 'not written' : `${circuitMinutes} minutes`}, ${program.warmUp.lift.circuit.length} items`)
+  console.log(`Warm-up total with the bike: ${warmUpParts(program.warmUp.lift, phase.number, true).total} minutes, off the top of the time window`)
   console.log('')
 
   for (const slot of slotsForPhaseWeek(template, phaseWeek)) {
@@ -158,6 +161,10 @@ function printSession(): void {
     console.log(`${slot.label.padStart(9)}  ${ex.name}`)
     console.log(`${''.padStart(11)}${setsText} × ${repsText(slot)}${rpe(slot)}   [${slot.prescriptionText}]`)
     console.log(`${''.padStart(11)}${loadText(slot)} · ${slot.progressionRule}${flags.length ? ' · ' + flags.join(' · ') : ''}`)
+    if (rampEligible(ex, slot, slot.repUnit, program.warmUp.lift.ramp)) {
+      const { percents, reps } = program.warmUp.lift.ramp
+      console.log(`${''.padStart(11)}Warm-up sets (not logged): ${percents.map((p, i) => `${reps[i]} at ${p * 100}%`).join(', then ')} of the day's load, rounded down`)
+    }
     if (ex.sideMeaning) console.log(`${''.padStart(11)}${ex.sideMeaning}`)
     for (const cue of slot.cues) console.log(`${''.padStart(11)}${cue}`)
     if (ex.stages) console.log(`${''.padStart(11)}Stages: ${ex.stages.join(' → ')}`)

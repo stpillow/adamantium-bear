@@ -51,6 +51,32 @@ export type Equipment = z.infer<typeof Equipment>
 export const Requirement = z.union([EquipmentId, z.strictObject({ anyOf: z.array(EquipmentId).min(2) })])
 export type Requirement = z.infer<typeof Requirement>
 
+/**
+ * The accessory and core catalog (Batch C, Nov 9; program.md "Accessory and core catalog",
+ * PROGRAM-QUESTIONS 169): an exercise no session lists, addable in any phase and offered for extra
+ * time, with its own default added prescription, cues and ordered substitutions.
+ */
+export const Accessory = z
+  .strictObject({
+    /** Its place in the extra-time pool: 'upper' after the 13 program pulls and pushes, 'core' last (PROGRAM-QUESTIONS 170). */
+    tier: z.enum(['upper', 'core']),
+    /**
+     * Only a hold sets it (the farmer's hold, 'seconds'); absent reads as `addedRepUnit` reads the
+     * exercise. Never yards, minutes or steps: those are a carry's, cardio's and a band walk's, which
+     * an add refuses (`notAddableReason`) and a slot counts only its own way (`substitutionProblem`).
+     */
+    repUnit: z.literal('seconds').optional(),
+    /** Default sets when added; at most ADDED_SETS_MAX (a seed test checks it against src/schema/log.ts, not imported here to keep the schema free of a cycle). */
+    sets: z.number().int().min(1).max(6),
+    repsMin: z.number().int().positive(),
+    repsMax: z.number().int().positive(),
+    cues: z.array(z.string().min(1)).min(1),
+    /** Exercise ids to swap to, in order; bodyweight entries list the easier version first, where a back-off moves (PROGRAM-QUESTIONS 49). */
+    substitutionIds: z.array(kebab),
+  })
+  .refine((a) => a.repsMax >= a.repsMin, { message: 'repsMax below repsMin', path: ['repsMax'] })
+export type Accessory = z.infer<typeof Accessory>
+
 /** One movement in the catalog. Loads are logged in `loadUnit`; `increment` is the smallest step. */
 export const Exercise = z.strictObject({
   id: kebab,
@@ -67,6 +93,13 @@ export const Exercise = z.strictObject({
   unilateral: z.boolean(),
   /** When the logged side isn't the obvious one, e.g. the standing leg on cable hip abduction. */
   sideMeaning: z.string().optional(),
+  /**
+   * The side words program.md writes on every slot of work it doesn't log per side ("each side" on the
+   * dead bug, side plank and Pallof press, "each way" on the band walk). A swap or an add onto it from
+   * a both-sides slot carries them, so it isn't done on one side only (PROGRAM-QUESTIONS 169(h)).
+   * One-legged work says "each leg" through `unilateral` instead.
+   */
+  perSideLabel: z.string().min(1).optional(),
   /** Step-height exercises: the step rises by this many inches. */
   heightIncrementIn: z.number().positive().optional(),
   /** Step-height exercises that also hold dumbbells. */
@@ -81,9 +114,14 @@ export const Exercise = z.strictObject({
   /** Per stage, what that stage needs on top of `requires` (the folded mat, the bosu). Parallels `stages`. */
   stageRequires: z.array(z.array(Requirement)).optional(),
   notes: z.string().optional(),
+  /** Present only on the accessory and core catalog (Batch C, PROGRAM-QUESTIONS 169). */
+  accessory: Accessory.optional(),
 }).refine((e) => e.stageRequires === undefined || e.stageRequires.length === (e.stages?.length ?? -1), {
   message: 'stageRequires needs one entry per stage, and stages to go with it',
   path: ['stageRequires'],
+}).refine((e) => !(e.unilateral && e.perSideLabel !== undefined), {
+  message: 'a one-legged exercise says "each leg" through unilateral, not perSideLabel',
+  path: ['perSideLabel'],
 })
 export type Exercise = z.infer<typeof Exercise>
 
@@ -258,6 +296,25 @@ export const SubstitutionRow = z.strictObject({
 
 export const EquipmentRow = z.strictObject({ slot: z.string().min(1), equipment: z.string().min(1) })
 
+/**
+ * The warm-up sets rule (Shawn, Nov 8, decision 5: "standard ramp"): one rep count per percent of the
+ * day's working load, the percents rising and under 1, on the patterns and load types named, never on
+ * an exercise that needs any of `excludeRequires`. `text` is program.md's paragraph, verbatim.
+ */
+export const WarmUpRamp = z
+  .strictObject({
+    text: z.string().min(1),
+    percents: z.array(z.number().gt(0).lt(1)).min(1),
+    reps: z.array(z.number().int().positive()).min(1),
+    patterns: z.array(Pattern).min(1),
+    loadTypes: z.array(LoadType).min(1),
+    excludeRequires: z.array(EquipmentId),
+  })
+  .refine((r) => r.reps.length === r.percents.length && r.percents.every((p, i) => i === 0 || p > (r.percents[i - 1] ?? 1)), {
+    message: 'one rep count per percent, the percents rising',
+  })
+export type WarmUpRamp = z.infer<typeof WarmUpRamp>
+
 export const WarmUp = z.strictObject({
   lift: z.strictObject({
     intro: z.string().min(1),
@@ -265,6 +322,10 @@ export const WarmUp = z.strictObject({
     circuit: z.array(z.string().min(1)).min(1),
     /** Minutes for the knee circuit by phase: 5 in Phases 1–2, 3 from Phase 3. */
     circuitMinutesByPhase: z.record(z.string(), z.number().positive()),
+    /** The bike's minutes, from the intro: "5 minutes on the upright bike" (the time window counts them, PROGRAM-QUESTIONS 166). */
+    bikeMinutes: z.number().int().positive(),
+    /** Warm-up sets before the big lifts (Batch C, Nov 9; program.md's warm-up section; PROGRAM-QUESTIONS 165). Display only: src/rules/warmUpRamp.ts. */
+    ramp: WarmUpRamp,
   }),
   run: z.string().min(1),
   offDays: z.array(z.string().min(1)),

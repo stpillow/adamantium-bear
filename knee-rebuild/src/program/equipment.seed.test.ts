@@ -96,13 +96,11 @@ describe('the home gym on the live seed', () => {
     expect(available.has('lying-leg-curl')).toBe(false)
   })
 
-  it('names the six list items nothing in the program uses for the next program update (PROGRAM-QUESTIONS 78)', () => {
+  it('names the four list items nothing in the program uses for the next program update (PROGRAM-QUESTIONS 78, 172)', () => {
     // The rower (a Hold-day run swap) and the upright bike (the warm-up) count as used, as the elliptical does.
     expect(forNextProgramUpdate([home], program.equipment, program.exercises).map((n) => n.text)).toEqual([
       'Weight plate',
       'Floor tape',
-      'Cable crossover',
-      'Shoulder press machine',
       'Treadmill',
       'Stair climber',
     ])
@@ -110,7 +108,7 @@ describe('the home gym on the live seed', () => {
 
   it('puts every used item on the editor checklist but dumbbells and the bag, and nothing the program doesn\'t use', () => {
     const listed = equipmentChecklist(program.equipment, program.exercises).flatMap((g) => g.items.map((i) => i.item.id))
-    const unused = ['weight-plate', 'floor-tape', 'cable-crossover', 'shoulder-press-machine', 'treadmill', 'stair-climber', 'tape-measure', 'medicine-ball']
+    const unused = ['weight-plate', 'floor-tape', 'treadmill', 'stair-climber', 'tape-measure', 'medicine-ball']
     expect(listed).toEqual(program.equipment.map((e) => e.id).filter((id) => !unused.includes(id) && !kit.includes(id) && id !== 'dumbbells'))
     expect(listed).toEqual(expect.arrayContaining(['upright-bike', 'elliptical', 'rower', 'adjustable-bench', 'stair']))
     expect(equipmentChecklist(program.equipment, program.exercises).map((g) => g.group)).toEqual(program.equipmentBySlot.map((r) => r.slot))

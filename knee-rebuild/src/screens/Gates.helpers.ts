@@ -3,6 +3,7 @@ import { evaluateGate, inWriteOrder, type GateContext, type GateItemResult, type
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { weekOf } from '../rules/calendar.ts'
 import { locationOrHome } from '../rules/locations.ts'
+import { withAddedSlots } from '../rules/addedSlots.ts'
 import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
 import { advanceWaitsFor, awaitingMorningCheck, loadTestPrefill, phaseEntryWeek, type LoadTestPrefill, type LoadTestSession } from '../rules/progress.ts'
 import { progressionSuspended, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
@@ -20,7 +21,7 @@ import { dateWords, runLabel, shortDateWords, workoutLabel } from './Today.helpe
  * composes the answers and names them. The program pieces are passed in, so tests use fixtures.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'gateTests' | 'sessionMoves' | 'programOverrides'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'gateTests' | 'sessionMoves' | 'programOverrides' | 'addedSlots'>
 export type ProgramLike = Pick<Program, 'gates' | 'phases' | 'exercises' | 'redFlags' | 'templates' | 'weeklyTemplate'>
 
 /** Which catalog exercises count as the single-leg calf raise for gate 2 (the M5 brief). */
@@ -669,16 +670,19 @@ function awayGymName(locationId: string, gyms: Gyms): string | null {
 }
 
 /**
- * The templates as their sessions run: the Program screen's edits laid over program.md's lists
- * (`applyToTemplate`, as `planSession` lays them), an exercise the catalog no longer has dropped.
- * Whether a phase runs a test's exercise is read from these, so the prefill follows the lists the
- * runner's routing and Swap offer.
+ * The templates as their sessions run: Shawn's added exercises laid after program.md's slots
+ * (`withAddedSlots`), then the Program screen's edits laid over them (`applyToTemplate`), in the
+ * order `planSession` lays them, an exercise the catalog no longer has dropped. Whether a phase runs
+ * a test's exercise, and logs both its sides, is read from these, so the prefill follows the lists
+ * the runner's routing and Swap offer, and an added slot of the test's own exercise counts (Batch C,
+ * PROGRAM-QUESTIONS 168). Extra-time slots need nothing here: they copy the phase's own slots or are
+ * upper-body and core work.
  */
-function templatesAsRun(program: Pick<ProgramLike, 'templates' | 'exercises'>, history: Pick<HistoryLike, 'programOverrides'>): SessionTemplate[] {
+function templatesAsRun(program: Pick<ProgramLike, 'templates' | 'exercises'>, history: Pick<HistoryLike, 'programOverrides' | 'addedSlots'>): SessionTemplate[] {
   const bySlot = overridesBySlot(history.programOverrides ?? [])
   // The catalog's exercises, as the runner hands them: an edit naming one the slot can't count or step is dropped here too.
   const known = new Map(program.exercises.map((e) => [e.id, e]))
-  return program.templates.map((template) => applyToTemplate(template, bySlot, known))
+  return program.templates.map((template) => applyToTemplate(withAddedSlots(template, history.addedSlots ?? [], known, program.templates), bySlot, known))
 }
 
 function symmetryEntry(item: GateItem, gate: Gate, history: HistoryLike, records: readonly WorkoutRecord[], injuredSide: Side, program: ProgramLike, gyms: Gyms): SymmetryEntry {

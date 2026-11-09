@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest'
 import programMd from '../../docs/program.md?raw'
 import raw from '../../data/program.json'
 import { program, templateFor } from '../program/program.ts'
+import { addedPrescriptionText, addedRepUnit, addedRule, notAddableReason, slotFromAdded } from '../rules/addedSlots.ts'
 import { DELOAD_WEEKS } from '../rules/calendar.ts'
+import { effectiveSlot } from '../rules/effectiveSlot.ts'
+import { extensionPool } from '../rules/extensions.ts'
+import { parseMarkdown, plainText, type Block } from '../rules/markdown.ts'
+import { substitutionProblem } from '../rules/overrides.ts'
 import { phaseRunsExercise } from '../rules/session.ts'
-import { DEFAULT_KIT } from './log.ts'
-import { Equipment, Exercise, Program, Requirement } from './program.ts'
+import { isLowerBody } from '../rules/wholeKnee.ts'
+import { ADDED_SETS_MAX, CUE_MAX, DEFAULT_KIT } from './log.ts'
+import { Accessory, Equipment, Exercise, Program, Requirement } from './program.ts'
 
 describe('data/program.json', () => {
   it('validates against the Program schema', () => {
@@ -195,8 +201,8 @@ describe('data/program.json equipment (M4b)', () => {
   const needs = (e: Exercise, id: string) => idsIn(allRequirements(e)).includes(id)
   const normalize = (text: string) => text.trim().toLowerCase()
 
-  it('every exercise carries requires, all 71 of them', () => {
-    expect(raw.exercises).toHaveLength(71)
+  it('every exercise carries requires, all 91 of them (71, and the 20 of the accessory and core catalog)', () => {
+    expect(raw.exercises).toHaveLength(91)
     for (const e of raw.exercises) expect(Array.isArray((e as { requires?: unknown }).requires), e.id).toBe(true)
   })
 
@@ -306,8 +312,8 @@ describe('data/program.json equipment (M4b)', () => {
     expect(program.exercises.find((e) => e.id === 'lateral-step-down')?.requires).toEqual(['step-platforms'])
   })
 
-  it('floor and space are assumed; a mat is needed only to balance on or under Nordic knees', () => {
-    expect(program.exercises.filter((e) => needs(e, 'mats')).map((e) => e.id).sort()).toEqual(['balance-mat-bosu', 'nordic-negatives', 'single-leg-balance'])
+  it('floor and space are assumed; a mat is needed only to balance on, under Nordic knees, or to kneel on for the ab rollout', () => {
+    expect(program.exercises.filter((e) => needs(e, 'mats')).map((e) => e.id).sort()).toEqual(['ab-rollout', 'balance-mat-bosu', 'nordic-negatives', 'single-leg-balance'])
     expect(program.exercises.find((e) => e.id === 'single-leg-balance')?.requires).toEqual([])
     for (const id of ['dead-bug', 'side-plank', 'wall-sit', 'split-squat', 'snap-down', 'pogo-hops', 'change-of-direction-45']) {
       expect(program.exercises.find((e) => e.id === id)?.requires, id).toEqual([])
@@ -330,14 +336,16 @@ describe('data/program.json equipment (M4b)', () => {
     expect(requiresOf('lateral-band-walk')).toEqual(['mini-band'])
   })
 
-  it('the flat bench covers every bench but the incline ones; the pinned eleven and two', () => {
+  it('the flat bench covers every bench but the incline ones; the pinned thirteen and two', () => {
     // PROGRAM-QUESTIONS 66 lists these for Shawn; a new bench exercise has to be added there too.
     expect(program.exercises.filter((e) => needs(e, 'flat-bench')).map((e) => e.id).sort()).toEqual([
+      'bench-dip',
       'bulgarian-split-squat',
       'copenhagen-plank-long',
       'copenhagen-plank-short',
       'db-bench-press',
       'db-hip-thrust',
+      'db-pullover',
       'goblet-squat-bench',
       'seated-db-shoulder-press',
       'single-leg-hip-thrust',
@@ -351,7 +359,8 @@ describe('data/program.json equipment (M4b)', () => {
   it('items no exercise needs stay on the list for typed matching; the pinned set', () => {
     const used = new Set(program.exercises.flatMap((e) => idsIn(allRequirements(e))))
     const unused = program.equipment.filter((e) => !used.has(e.id)).map((e) => e.id).sort()
-    expect(unused).toEqual(['cable-crossover', 'floor-tape', 'medicine-ball', 'rower', 'shoulder-press-machine', 'stair-climber', 'tape-measure', 'treadmill', 'upright-bike', 'weight-plate'])
+    // The cable fly uses the cable crossover and the overhead press machine the shoulder press machine (PROGRAM-QUESTIONS 172).
+    expect(unused).toEqual(['floor-tape', 'medicine-ball', 'rower', 'stair-climber', 'tape-measure', 'treadmill', 'upright-bike', 'weight-plate'])
   })
 
   it('planetFitness: program.md\'s club with Shawn\'s Nov 1 answers; nothing carried, no dumbbells, no lying leg curl', () => {
@@ -367,5 +376,293 @@ describe('data/program.json equipment (M4b)', () => {
 
   it('machines keep pounds in 5 lb steps alongside their requirements (Shawn, Nov 1)', () => {
     for (const e of program.exercises.filter((x) => x.loadType === 'stack')) expect([e.loadUnit, e.increment], e.id).toEqual(['lb', 5])
+  })
+})
+
+describe('the accessory and core catalog (Batch C, PROGRAM-QUESTIONS 169)', () => {
+  const ACCESSORY_IDS = [
+    'db-curl',
+    'hammer-curl',
+    'triceps-pressdown',
+    'overhead-triceps-extension',
+    'lateral-raise',
+    'push-up',
+    'front-raise',
+    'upright-row-cable',
+    'shrug',
+    'overhead-press-machine',
+    'cable-fly',
+    'db-pullover',
+    'straight-arm-pulldown',
+    'assisted-dip',
+    'bench-dip',
+    'inverted-row',
+    'cable-crunch',
+    'hanging-knee-raise',
+    'farmers-hold',
+    'ab-rollout',
+  ]
+  const accessories = program.exercises.filter((e) => e.accessory !== undefined)
+  const byId = new Map(program.exercises.map((e) => [e.id, e]))
+  const catalog = new Map(program.exercises.map((e) => [e.id, e]))
+
+  it('is exactly the twenty movements Shawn chose, in catalog order, after the 71 program.md runs', () => {
+    expect(accessories.map((e) => e.id)).toEqual(ACCESSORY_IDS)
+    expect(program.exercises.slice(71).map((e) => e.id)).toEqual(ACCESSORY_IDS)
+    // No session lists them: they are added or offered for extra time only.
+    for (const t of program.templates) for (const s of t.slots) expect(ACCESSORY_IDS, s.id).not.toContain(s.exerciseId)
+  })
+
+  it('is knee-neutral: push, pull or core only, nothing lower-body, no carry, cardio, jump or step, and nothing one-legged', () => {
+    for (const e of accessories) {
+      expect(['push', 'pull', 'core'], e.id).toContain(e.pattern)
+      expect(isLowerBody(e), e.id).toBe(false)
+      expect(notAddableReason(e), e.id).toBeNull()
+      expect(e.loadType, e.id).not.toBe('step-height')
+      // Unilateral would read "each leg" and run on the injured side's rep budget.
+      expect(e.unilateral, e.id).toBe(false)
+      expect(e.accessory?.tier, e.id).toBe(e.pattern === 'core' ? 'core' : 'upper')
+    }
+    // The farmer's hold is a hold, not a carry: a carry is counted in yards and can't be added.
+    expect(byId.get('farmers-hold')).toMatchObject({ pattern: 'core', loadType: 'dumbbell-each' })
+  })
+
+  it('has every field the catalog carries, with the defaults inside what an add can store', () => {
+    for (const e of accessories) {
+      const a = e.accessory
+      if (!a) throw new Error(e.id)
+      expect(a.sets, e.id).toBeLessThanOrEqual(ADDED_SETS_MAX)
+      expect(a.repsMax, e.id).toBeGreaterThanOrEqual(a.repsMin)
+      for (const cue of a.cues) expect(cue.length, `${e.id}: ${cue}`).toBeLessThanOrEqual(CUE_MAX)
+      if (e.loadType === 'bodyweight') expect([e.loadUnit, e.increment], e.id).toEqual(['none', 0])
+      else expect([e.loadUnit, e.increment], e.id).toEqual(['lb', 5])
+      if (e.loadType === 'dumbbell-each' || e.loadType === 'dumbbell-single') expect(e.requires, e.id).toContain('dumbbells')
+    }
+    // Only the farmer's hold is counted in seconds; it climbs by double progression over the seconds.
+    expect(accessories.filter((e) => e.accessory?.repUnit !== undefined).map((e) => [e.id, e.accessory?.repUnit])).toEqual([['farmers-hold', 'seconds']])
+    const hold = byId.get('farmers-hold')
+    if (!hold) throw new Error('farmers-hold')
+    expect([addedRepUnit(hold), addedRule(hold)]).toEqual(['seconds', 'double-progression'])
+    // The bodyweight ones repeat under the fixed rule and never progress (flagged for Shawn).
+    expect(accessories.filter((e) => addedRule(e) === 'fixed').map((e) => e.id)).toEqual(['push-up', 'bench-dip', 'inverted-row', 'hanging-knee-raise', 'ab-rollout'])
+  })
+
+  it('the schema keeps an accessory to seconds or reps, a range that runs forward, and at most six sets', () => {
+    const ok = { tier: 'upper', sets: 3, repsMin: 8, repsMax: 12, cues: ['Slow'], substitutionIds: [] }
+    expect(Accessory.safeParse(ok).success).toBe(true)
+    expect(Accessory.safeParse({ ...ok, repUnit: 'seconds' }).success).toBe(true)
+    for (const unit of ['yards', 'minutes', 'steps', 'reps']) expect(Accessory.safeParse({ ...ok, repUnit: unit }).success, unit).toBe(false)
+    expect(Accessory.safeParse({ ...ok, repsMin: 12, repsMax: 8 }).success).toBe(false)
+    expect(Accessory.safeParse({ ...ok, sets: 7 }).success).toBe(false)
+    expect(Accessory.safeParse({ ...ok, cues: [] }).success).toBe(false)
+    expect(Accessory.safeParse({ ...ok, tier: 'lower' }).success).toBe(false)
+  })
+
+  it('every substitution resolves, can be added, and can stand in on the slot the accessory runs as', () => {
+    for (const e of accessories) {
+      const subs = e.accessory?.substitutionIds ?? []
+      expect(subs.length, e.id).toBeGreaterThan(0)
+      expect(subs, e.id).not.toContain(e.id)
+      expect(new Set(subs).size, e.id).toBe(subs.length)
+      const defaults = { sets: e.accessory?.sets ?? 3, repsMin: e.accessory?.repsMin ?? 8, repsMax: e.accessory?.repsMax ?? 12 }
+      // The slot as it runs, its own list emptied, so the fit check reads each substitution on its merits.
+      const slot = { ...slotFromAdded({ id: `added-${e.id}`, ...defaults }, e, 1, 1), substitutionIds: [] }
+      for (const id of subs) {
+        const sub = byId.get(id)
+        expect(sub, `${e.id} -> ${id}`).toBeDefined()
+        if (!sub) continue
+        expect(notAddableReason(sub), `${e.id} -> ${id}`).toBeNull()
+        expect(substitutionProblem(slot, sub), `${e.id} -> ${id}`).toBeNull()
+        // A seconds slot never lists a carry.
+        if (slot.repUnit === 'seconds') expect(sub.pattern, `${e.id} -> ${id}`).not.toBe('carry')
+      }
+    }
+  })
+
+  it('a swap keeps program.md’s side words: a substitute it writes "each side" reads "each side" on the both-sides slot (PROGRAM-QUESTIONS 169(h))', () => {
+    // The side words program.md writes on its own slots of an exercise not logged per side; undefined where it writes none.
+    const writtenSides = (id: string): string | undefined => {
+      const labels = new Set(program.templates.flatMap((t) => t.slots.filter((s) => s.exerciseId === id && !s.unilateral).map((s) => s.perSideLabel)))
+      expect(labels.size, `${id} is written both ways`).toBeLessThanOrEqual(1)
+      return [...labels][0]
+    }
+    const perSide: string[] = []
+    for (const e of accessories) {
+      const a = e.accessory
+      if (!a) throw new Error(e.id)
+      const slot = slotFromAdded({ id: `added-${e.id}`, sets: a.sets, repsMin: a.repsMin, repsMax: a.repsMax }, e, 1, 1)
+      expect(slot.perSideLabel, e.id).toBeUndefined()
+      for (const id of a.substitutionIds) {
+        const sub = byId.get(id)
+        if (!sub) throw new Error(`${e.id} -> ${id}`)
+        // One-legged would read "each leg" and run on the injured side's rep budget, which an accessory slot never sets.
+        expect(sub.unilateral, `${e.id} -> ${id}`).toBe(false)
+        const written = writtenSides(id)
+        expect(effectiveSlot(slot, sub).perSideLabel, `${e.id} -> ${id}`).toBe(written)
+        if (written !== undefined) perSide.push(`${e.id} -> ${id}`)
+      }
+    }
+    // The ones that were losing "each side": anti-rotation and lateral trunk work done on one side only.
+    expect(perSide).toEqual([
+      'cable-crunch -> pallof-press',
+      'cable-crunch -> dead-bug',
+      'hanging-knee-raise -> dead-bug',
+      'hanging-knee-raise -> pallof-press',
+      'farmers-hold -> side-plank',
+      'ab-rollout -> dead-bug',
+      'ab-rollout -> pallof-press',
+    ])
+  })
+
+  it('an exercise carries perSideLabel exactly where program.md writes side words on work it doesn’t log per side', () => {
+    for (const e of program.exercises) {
+      const slots = program.templates.flatMap((t) => t.slots.filter((s) => s.exerciseId === e.id))
+      const words = new Set(slots.map((s) => s.perSideLabel))
+      if (e.unilateral || slots.length === 0 || words.has(undefined)) expect(e.perSideLabel, e.id).toBeUndefined()
+      else expect([e.perSideLabel], e.id).toEqual([...words])
+    }
+    expect(program.exercises.filter((e) => e.perSideLabel !== undefined).map((e) => [e.id, e.perSideLabel])).toEqual([
+      ['lateral-band-walk', 'each way'],
+      ['dead-bug', 'each side'],
+      ['side-plank', 'each side'],
+      ['pallof-press', 'each side'],
+      ['skater-bounds-stuck', 'each side'],
+      ['change-of-direction-45', 'each way'],
+    ])
+    // One-legged work says "each leg" through `unilateral`; the schema refuses both at once.
+    const deadBug = byId.get('dead-bug')
+    if (!deadBug) throw new Error('dead-bug')
+    expect(Exercise.safeParse({ ...deadBug, unilateral: true }).success).toBe(false)
+    expect(Exercise.safeParse({ ...deadBug, perSideLabel: '' }).success).toBe(false)
+  })
+
+  it('the kneeling and hanging ones say so in their cues, and name a swap (PROGRAM-QUESTIONS 171)', () => {
+    const cues = (id: string) => (byId.get(id)?.accessory?.cues ?? []).join(' ')
+    expect(cues('ab-rollout')).toMatch(/if kneeling hurts the injured knee, stop and do the dead bug instead/)
+    expect(cues('assisted-dip')).toMatch(/kneecaps; if that is sore at all, do the bench dip instead/)
+    expect(byId.get('assisted-dip')?.accessory?.substitutionIds[0]).toBe('bench-dip')
+    expect(cues('hanging-knee-raise')).toMatch(/No weight pinned/)
+    expect(cues('hanging-knee-raise')).toMatch(/never drop to the floor/)
+    expect(byId.get('hanging-knee-raise')?.name).toBe('Knee raise on the dip handles')
+    expect(cues('push-up')).toMatch(/On the toes, not the knees/)
+    expect(cues('push-up')).toMatch(/without kneeling/)
+    expect(cues('farmers-hold')).toMatch(/hip hinge/)
+    // The cable crunch stands: nobody asked for a kneeling one, and kneeling loads the kneecap.
+    expect(byId.get('cable-crunch')).toMatchObject({ name: 'Cable crunch (standing)', requires: ['cable-station'] })
+    expect(cues('cable-crunch')).toMatch(/^Stand facing away from the stack/)
+  })
+
+  it('program.md’s accessory and core table matches the seed cell by cell', () => {
+    const blocks = parseMarkdown(programMd)
+    const label = blocks.findIndex((b) => b.kind === 'paragraph' && plainText(b.inlines) === 'Accessory and core catalog')
+    expect(label).toBeGreaterThan(0)
+    const table = blocks.slice(label).find((b): b is Extract<Block, { kind: 'table' }> => b.kind === 'table')
+    if (!table) throw new Error('no accessory table in program.md')
+    expect(table.header.map((c) => plainText(c))).toEqual(['Exercise', 'Equipment', 'Added as', 'Cues', 'Use instead, in order'])
+    const expected = accessories.map((e) => {
+      const a = e.accessory
+      if (!a) throw new Error(e.id)
+      return [e.name, e.equipment, addedPrescriptionText(a, e), a.cues.join(' '), a.substitutionIds.map((id) => byId.get(id)?.name ?? id).join(', then ')]
+    })
+    expect(table.rows.map((r) => r.map((c) => plainText(c)))).toEqual(expected)
+    // The farmer's hold reads in seconds: addedPrescriptionText takes the exercise for its unit.
+    expect(plainText(table.rows.find((r) => plainText(r[0] ?? []) === 'Farmer’s hold' || plainText(r[0] ?? []) === "Farmer's hold")?.[2] ?? [])).toBe('3 × 30–45 s')
+  })
+
+  it('extra time offers program.md’s pulls and pushes first, then the upper accessories taking turns, then core (PROGRAM-QUESTIONS 170)', () => {
+    const p1a = templateFor(1, 'A')
+    const upper = extensionPool({ template: p1a, templates: program.templates, phaseWeek: 1, catalog }).filter((s) => s.label.startsWith('+U'))
+    expect(upper.map((s) => s.exerciseId)).toEqual([
+      // program.md's own, +U1 to +U7 as before Batch C (the rest already run in A or come from B and C first)
+      'single-arm-cable-pulldown',
+      'chest-press-machine',
+      'smith-bench-press',
+      'chest-supported-db-row',
+      'single-arm-cable-row',
+      'face-pull',
+      'rear-delt-machine',
+      // the upper tier, pulls and pushes taking turns
+      'db-curl',
+      'triceps-pressdown',
+      'hammer-curl',
+      'overhead-triceps-extension',
+      'upright-row-cable',
+      'lateral-raise',
+      'shrug',
+      'push-up',
+      'db-pullover',
+      'front-raise',
+      'straight-arm-pulldown',
+      'overhead-press-machine',
+      'inverted-row',
+      'cable-fly',
+      'assisted-dip',
+      'bench-dip',
+      // then core
+      'cable-crunch',
+      'hanging-knee-raise',
+      'farmers-hold',
+      'ab-rollout',
+    ])
+    expect(upper.map((s) => s.label)).toEqual(upper.map((_, i) => `+U${i + 1}`))
+  })
+})
+
+describe('the warm-up: its minutes and its warm-up sets (Batch C, PROGRAM-QUESTIONS 165, 166)', () => {
+  const lift = program.warmUp.lift
+
+  it('the knee circuit runs 5 minutes in Phases 1–2 and 3 from Phase 3, and the bike 5, as the intro says', () => {
+    expect(lift.circuitMinutesByPhase).toEqual({ '1': 5, '2': 5, '3': 3, '4': 3 })
+    expect(lift.bikeMinutes).toBe(5)
+    expect(lift.intro).toContain('5 minutes on the upright bike')
+    expect(lift.intro).toContain('5-minute knee circuit')
+    expect(lift.intro).toContain('shrinks to 3 minutes')
+  })
+
+  it('the ramp: 8 reps at half the working load, then 5 at three-quarters', () => {
+    expect(lift.ramp.percents).toEqual([0.5, 0.75])
+    expect(lift.ramp.reps).toEqual([8, 5])
+    expect(lift.ramp.patterns).toEqual(['squat', 'hinge', 'push'])
+    expect(lift.ramp.loadTypes).toEqual(['stack', 'plates', 'smith-plates', 'dumbbell-each', 'dumbbell-single'])
+    expect(lift.ramp.excludeRequires).toEqual(['back-extension-bench'])
+  })
+
+  it('the ramp’s words are program.md’s warm-up paragraph, verbatim, between the circuit and the run warm-up', () => {
+    expect(programMd).toContain(`\n\n${lift.ramp.text}\n\n`)
+    const at = programMd.indexOf(lift.ramp.text)
+    expect(programMd.lastIndexOf('Knee-to-wall ankle rocks', at)).toBeGreaterThan(0)
+    expect(programMd.indexOf('Before a run:', at)).toBeGreaterThan(at)
+    expect(lift.ramp.text).toMatch(/^Warm-up sets \(added Nov 9, 2026\)/)
+    expect(lift.ramp.text).toContain("They aren't logged and don't count as sets.")
+  })
+
+  it('covers exactly the eleven big two-legged, two-handed loaded lifts, and the text names every one of them', () => {
+    const r = lift.ramp
+    const eligible = program.exercises
+      .filter(
+        (e) =>
+          r.patterns.includes(e.pattern) &&
+          r.loadTypes.includes(e.loadType) &&
+          e.loadDirection === 'up' &&
+          !e.unilateral &&
+          e.accessory === undefined &&
+          !e.requires.flatMap((q) => (typeof q === 'string' ? [q] : q.anyOf)).some((id) => r.excludeRequires.includes(id)),
+      )
+      .map((e) => e.id)
+    expect(eligible).toEqual(['leg-press', 'leg-press-45', 'smith-box-squat', 'goblet-squat-bench', 'db-rdl', 'smith-rdl', 'db-bench-press', 'incline-db-press', 'chest-press-machine', 'smith-bench-press', 'seated-db-shoulder-press'])
+    for (const words of ['leg press', 'Smith box squat', 'goblet squat', '45° leg press', 'dumbbell or Smith RDL', 'dumbbell bench, incline or shoulder press', 'chest press machine', 'Smith bench press', 'back extension', 'accessory and core catalog'])
+      expect(r.text, words).toContain(words)
+  })
+
+  it('the schema wants one rep count per percent, rising percents under 1, and known patterns and load types', () => {
+    const ok = { ...raw.warmUp, lift: { ...raw.warmUp.lift } }
+    expect(Program.shape.warmUp.safeParse(ok).success).toBe(true)
+    const withRamp = (ramp: object) => Program.shape.warmUp.safeParse({ ...ok, lift: { ...ok.lift, ramp: { ...ok.lift.ramp, ...ramp } } }).success
+    expect(withRamp({ reps: [8] })).toBe(false)
+    expect(withRamp({ percents: [0.75, 0.5] })).toBe(false)
+    expect(withRamp({ percents: [0.5, 1] })).toBe(false)
+    expect(withRamp({ patterns: ['carry-ish'] })).toBe(false)
+    expect(withRamp({ loadTypes: ['kettlebell'] })).toBe(false)
+    expect(Program.shape.warmUp.safeParse({ ...ok, lift: { ...ok.lift, bikeMinutes: 0 } }).success).toBe(false)
   })
 })

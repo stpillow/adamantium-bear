@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ADDED_SLOTS_MAX, AddedSlot, type Exercise, type SessionTemplate, type Slot } from '../schema/index.ts'
-import { ADDED_SLOT_PREFIX, NOT_YET_WORDS, addableExercises, addedDefaults, addedFor, addedPrescriptionText, addedRepUnit, addedRule, addedSlotId, addedSlotProblem, isAddedSlotId, notAddableReason, phaseExerciseIds, slotFromAdded, withAddedSlots } from './addedSlots.ts'
+import { ADDED_SLOT_PREFIX, NOT_YET_WORDS, addableByPattern, addableExercises, addedDefaults, addedFor, addedPrescriptionText, addedRepUnit, addedRule, addedSlotId, addedSlotProblem, heldToPhase, isAddedSlotId, notAddableReason, phaseExerciseIds, slotFromAdded, withAddedSlots } from './addedSlots.ts'
 
 const ex = (over: Partial<Exercise> & { id: string }): Exercise => ({
   name: over.id,
@@ -25,6 +25,7 @@ const CARRY = ex({ id: 'carry', pattern: 'carry' })
 const SPLIT = ex({ id: 'split', unilateral: true })
 const LATE = ex({ id: 'late-lift' })
 const JUMP = ex({ id: 'jump', pattern: 'plyo', loadType: 'bodyweight', loadUnit: 'none', increment: 0 })
+const DEAD_BUG = ex({ id: 'dead-bug', pattern: 'core', loadType: 'bodyweight', loadUnit: 'none', increment: 0, perSideLabel: 'each side' })
 const CATALOG = new Map([CURL, PLANK, BRIDGE, BAND, BALANCE, STEP, CARRY, SPLIT, LATE, JUMP].map((e) => [e.id, e]))
 
 const slot = (order: number): Slot => ({
@@ -102,6 +103,8 @@ describe('what can be added, and how it runs', () => {
     expect(addedPrescriptionText({ sets: 3, repsMin: 8, repsMax: 10 }, CURL)).toBe('3 × 8–10')
     expect(addedPrescriptionText({ sets: 2, repsMin: 30, repsMax: 45 }, PLANK)).toBe('2 × 30–45 s')
     expect(addedPrescriptionText({ sets: 3, repsMin: 10, repsMax: 10 }, SPLIT)).toBe('3 × 10 each leg')
+    // Work program.md writes per side without logging it per side (the dead bug's "3 × 8 each side").
+    expect(addedPrescriptionText({ sets: 3, repsMin: 8, repsMax: 12 }, DEAD_BUG)).toBe('3 × 8–12 each side')
   })
 })
 
@@ -121,6 +124,10 @@ describe('slotFromAdded', () => {
     const made = slotFromAdded(add('a', 'split'), SPLIT, 1, 4)
     expect(made).toMatchObject({ id: 'added-a', order: 4, label: '+1', exerciseId: 'split', sets: 3, repsMin: 8, repsMax: 10, repUnit: 'reps', unilateral: true, injuredOnly: false, optional: false, progressionRule: 'double-progression', perSideLabel: 'each leg', substitutionIds: [], cues: [] })
     expect(made.prescriptionText).toBe('3 × 8–10 each leg')
+  })
+  it('carries the side words program.md writes on work it doesn’t log per side', () => {
+    const made = slotFromAdded({ id: 'added-d', sets: 3, repsMin: 8, repsMax: 12 }, DEAD_BUG, 1, 4)
+    expect(made).toMatchObject({ unilateral: false, perSideLabel: 'each side', prescriptionText: '3 × 8–12 each side' })
   })
 })
 
@@ -190,5 +197,67 @@ describe('staying inside the program', () => {
     expect(addableExercises([...CATALOG.values()], TEMPLATES, 2).map((e) => e.id)).not.toContain('jump')
     const rows = [add('a', 'late-lift'), add('b', 'jump'), add('c', 'curl')]
     expect(withAddedSlots(TEMPLATE, rows, CATALOG, TEMPLATES).slots.map((s) => s.id)).toEqual(['p1a-1', 'p1a-2', 'p1a-3', 'added-c'])
+  })
+})
+
+describe('the accessory and core catalog (Batch C, PROGRAM-QUESTIONS 169)', () => {
+  // No session of either phase lists these: without the catalog's exemption, neither could ever be added.
+  const RAISE = ex({ id: 'raise', name: 'Lateral raise', pattern: 'push', accessory: { tier: 'upper', sets: 3, repsMin: 12, repsMax: 15, cues: ['Soft elbow.', 'Keep it light.'], substitutionIds: ['curl', 'front-raise'] } })
+  const HOLD = ex({ id: 'hold', name: 'Farmer’s hold', pattern: 'core', accessory: { tier: 'core', repUnit: 'seconds', sets: 3, repsMin: 30, repsMax: 45, cues: ['Stand tall.'], substitutionIds: ['plank'] } })
+  const PUSHUP = ex({ id: 'push-up', name: 'Push-up', pattern: 'push', loadType: 'bodyweight', loadUnit: 'none', increment: 0, accessory: { tier: 'upper', sets: 3, repsMin: 8, repsMax: 12, cues: ['On the toes.'], substitutionIds: [] } })
+  const WITH = new Map([...CATALOG, [RAISE.id, RAISE], [HOLD.id, HOLD], [PUSHUP.id, PUSHUP]])
+
+  it('is held to no phase: addable in Phase 1, refused by nothing, while a later phase’s exercise still waits', () => {
+    expect(heldToPhase(RAISE, IN_PHASE_1)).toBe(false)
+    expect(heldToPhase(LATE, IN_PHASE_1)).toBe(true)
+    expect(heldToPhase(CURL, IN_PHASE_1)).toBe(false)
+    expect(addedSlotProblem(add('a', 'raise'), RAISE, 0, IN_PHASE_1)).toBeNull()
+    expect(addedSlotProblem(add('a', 'hold', { repsMin: 30, repsMax: 45 }), HOLD, 0, new Set())).toBeNull()
+    expect(addedSlotProblem(add('a', 'late-lift'), LATE, 0, IN_PHASE_1)).toBe(NOT_YET_WORDS)
+    expect(addableExercises([...WITH.values()], TEMPLATES, 1).map((e) => e.id)).toEqual(expect.arrayContaining(['raise', 'hold', 'push-up']))
+    expect(addableExercises([...WITH.values()], TEMPLATES, 1).map((e) => e.id)).not.toContain('late-lift')
+  })
+
+  it('runs with its own cues and ordered substitutions; anything else still runs with none', () => {
+    const made = slotFromAdded(add('a', 'raise'), RAISE, 1, 4)
+    expect(made).toMatchObject({ cues: ['Soft elbow.', 'Keep it light.'], substitutionIds: ['curl', 'front-raise'], repUnit: 'reps', progressionRule: 'double-progression', unilateral: false })
+    expect(slotFromAdded(add('a', 'curl'), CURL, 1, 4)).toMatchObject({ cues: [], substitutionIds: [] })
+  })
+
+  it('starts at its own sets and range; the farmer’s hold at 3 × 30–45 s, counted in seconds, climbing by load', () => {
+    expect(addedDefaults(RAISE)).toEqual({ sets: 3, repsMin: 12, repsMax: 15 })
+    expect(addedDefaults(HOLD)).toEqual({ sets: 3, repsMin: 30, repsMax: 45 })
+    expect(addedRepUnit(HOLD)).toBe('seconds')
+    expect(addedRule(HOLD)).toBe('double-progression')
+    expect(addedPrescriptionText(addedDefaults(HOLD), HOLD)).toBe('3 × 30–45 s')
+    expect(slotFromAdded({ id: 'added-h', ...addedDefaults(HOLD) }, HOLD, 1, 4)).toMatchObject({ repUnit: 'seconds', prescriptionText: '3 × 30–45 s' })
+    // A bodyweight accessory repeats under the fixed rule (flagged for Shawn).
+    expect(addedRule(PUSHUP)).toBe('fixed')
+    // Anything else keeps the old defaults.
+    expect(addedDefaults(CURL)).toEqual({ sets: 3, repsMin: 8, repsMax: 12 })
+  })
+
+  it('a stored add of one stays on its session in every phase', () => {
+    const rows = [add('a', 'raise'), add('b', 'hold', { repsMin: 30, repsMax: 45, addedOn: '2026-11-05' }), add('c', 'late-lift')]
+    expect(addedFor('p1-a', rows, WITH, IN_PHASE_1).map((a) => a.id)).toEqual(['added-a', 'added-b'])
+    const out = withAddedSlots(TEMPLATE, rows, WITH, TEMPLATES)
+    expect(out.slots.slice(3).map((s) => [s.id, s.label, s.repUnit])).toEqual([
+      ['added-a', '+1', 'reps'],
+      ['added-b', '+2', 'seconds'],
+    ])
+  })
+
+  it('the picker groups what can be added by pattern, in the enum’s order, each group by name', () => {
+    const groups = addableByPattern([...WITH.values()], TEMPLATES, 1)
+    expect(groups.map((g) => [g.pattern, g.exercises.map((e) => e.id)])).toEqual([
+      ['quad', ['split']],
+      ['hip', ['band-walk', 'bridge']],
+      ['balance', ['balance']],
+      ['push', ['raise', 'push-up']],
+      ['pull', ['curl']],
+      ['core', ['hold', 'plank']],
+    ])
+    // Nothing empty, nothing held back, nothing a session can't take.
+    expect(groups.flatMap((g) => g.exercises).map((e) => e.id).sort()).toEqual(addableExercises([...WITH.values()], TEMPLATES, 1).map((e) => e.id).sort())
   })
 })

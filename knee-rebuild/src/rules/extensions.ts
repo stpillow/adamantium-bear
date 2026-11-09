@@ -11,7 +11,11 @@ import { slotsForPhaseWeek } from './session.ts'
  *      and cardio are left out, as for an added exercise (`notAddableReason`);
  *   2. then upper-body work from the catalog, pulls and pushes taking turns. Shawn has no upper-body
  *      limit (Nov 3), so this is the fallback and is not held to the phase; it starts as 3 sets of
- *      8 to 12, the load his to choose the first time.
+ *      8 to 12, the load his to choose the first time;
+ *   3. then the accessory catalog (Batch C, PROGRAM-QUESTIONS 170): its upper tier, pulls and pushes
+ *      taking turns, then its core tier, each at its own default sets and range, with its own cues
+ *      and substitutions. EXTENSION_MAX stays 6, and every session offers 14 or more other-session
+ *      slots first, so these are reached only at a gym that lacks most of those machines.
  * Nothing here is stored: it is worked out again from the same inputs each time, so the same minutes
  * give the same session.
  */
@@ -35,11 +39,10 @@ function otherSessions(template: SessionTemplate, templates: readonly SessionTem
   return templates.filter((t) => t.phase === template.phase && t.id !== template.id).sort((a, b) => rank(a) - rank(b))
 }
 
-/** Upper-body work: the catalog's pulls and pushes, in catalog order. */
-function upperBody(catalog: ReadonlyMap<string, Exercise>): Exercise[] {
-  const fits = (pattern: Exercise['pattern']) => [...catalog.values()].filter((e) => e.pattern === pattern && notAddableReason(e) === null)
-  const pulls = fits('pull')
-  const pushes = fits('push')
+/** Pulls and pushes taking turns, each in catalog order: a pull, a push, a pull, and so on. */
+function alternate(exercises: readonly Exercise[]): Exercise[] {
+  const pulls = exercises.filter((e) => e.pattern === 'pull')
+  const pushes = exercises.filter((e) => e.pattern === 'push')
   const turns: Exercise[] = []
   for (let i = 0; i < Math.max(pulls.length, pushes.length); i++) {
     const pull = pulls[i]
@@ -48,6 +51,19 @@ function upperBody(catalog: ReadonlyMap<string, Exercise>): Exercise[] {
     if (push) turns.push(push)
   }
   return turns
+}
+
+/**
+ * Upper-body work, in three passes (Batch C, PROGRAM-QUESTIONS 170): program.md's own pulls and
+ * pushes taking turns, as before; then the accessory catalog's upper tier, pulls and pushes taking
+ * turns; then its core tier, in catalog order.
+ */
+function upperBody(catalog: ReadonlyMap<string, Exercise>): Exercise[] {
+  const addable = [...catalog.values()].filter((e) => notAddableReason(e) === null)
+  const own = addable.filter((e) => e.accessory === undefined && (e.pattern === 'pull' || e.pattern === 'push'))
+  const upper = addable.filter((e) => e.accessory?.tier === 'upper' && (e.pattern === 'pull' || e.pattern === 'push'))
+  const core = addable.filter((e) => e.accessory?.tier === 'core')
+  return [...alternate(own), ...alternate(upper), ...core]
 }
 
 /**

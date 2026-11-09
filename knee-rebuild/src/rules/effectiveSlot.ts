@@ -13,7 +13,10 @@ function loadable(exercise: Exercise): boolean {
  * The slot as it applies to the exercise actually being done. On the slot's own exercise it is the
  * slot unchanged. After a swap to a substitution of another kind, what is counted, the targets and
  * the progression rule follow the substitution: a wall sit counts seconds, a split squat has no step
- * height, a leg-extension range stop belongs to the leg extension only.
+ * height, a leg-extension range stop belongs to the leg extension only. A substitution program.md
+ * writes per side without logging it per side (the side plank, the Pallof press, the dead bug) carries
+ * its side words onto the slot, so a farmer's hold swapped to the side plank reads "each side" and isn't
+ * done on one side only (PROGRAM-QUESTIONS 169(h)).
  */
 export function effectiveSlot(slot: Slot, exercise: Exercise): Slot {
   if (exercise.id === slot.exerciseId) return slot
@@ -57,6 +60,7 @@ export function effectiveSlot(slot: Slot, exercise: Exercise): Slot {
     repsMin,
     repsMax,
     progressionRule,
+    ...(exercise.perSideLabel !== undefined ? { perSideLabel: exercise.perSideLabel } : {}),
     ...(stepHeight && heightIn !== undefined ? { heightIn } : {}),
     ...(stepHeight && heightMaxIn !== undefined ? { heightMaxIn } : {}),
     ...(stepHeight && loadBeforeHeightLb !== undefined ? { loadBeforeHeightLb } : {}),

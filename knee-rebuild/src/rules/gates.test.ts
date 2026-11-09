@@ -179,6 +179,23 @@ describe('evaluateGate (rule 8)', () => {
     expect(evaluateGate(gate2, { ...c, morningChecks: [] }).items[1]?.pass).toBe(false)
   })
 
+  it('calf raises: an added or extra-time slot of the same exercise counts, a different exercise never does, and two slots the same day are still one pass (Batch C, PROGRAM-QUESTIONS 168)', () => {
+    const w: Workout = { id: 'w5', date: '2026-11-15', templateId: 'p2-a', phase: 2, week: 6, isDeload: false, status: 'finished' }
+    const calf = (side: SetLog['side'], reps: number, slotId: string, exerciseId = 'single-leg-calf-raise-step'): SetLog => ({ id: `${slotId}-${side}-${reps}`, workoutId: 'w5', slotId, exerciseId, setNumber: 1, side, load: 0, loadUnit: 'lb', reps, stopped: false })
+    const c = ctx({ workouts: [w], morningChecks: [check('2026-11-16')] })
+    const pass = (setLogs: SetLog[]) => evaluateGate(gate2, { ...c, setLogs }).items[0]?.pass
+    // Shawn's added slot, and an extra-time slot copied from another session, count: the exercise is the same.
+    expect(pass([calf('right', 20, 'added-k1'), calf('left', 22, 'added-k1')])).toBe(true)
+    expect(pass([calf('right', 20, 'extra-p2a-6'), calf('left', 22, 'extra-p2a-6')])).toBe(true)
+    // A similar movement, or a substitution, never does, whatever its reps.
+    expect(pass([calf('right', 25, 'added-k1', 'standing-calf-raise'), calf('left', 25, 'added-k1', 'standing-calf-raise')])).toBe(false)
+    expect(pass([calf('right', 20, 'p2a-6'), calf('left', 25, 'added-k1', 'standing-calf-raise')])).toBe(false)
+    // Each side is a yes or no, so the same side 20+ on two slots is still one side, not a pass.
+    expect(pass([calf('right', 20, 'p2a-6'), calf('right', 21, 'added-k1')])).toBe(false)
+    // Each side did its 20 on a slot of the exercise: the left on the program's slot and the right on an added one passes.
+    expect(pass([calf('left', 20, 'p2a-6'), calf('right', 20, 'added-k1')])).toBe(true)
+  })
+
   it('the 4-mile run needs a clean morning after it; swaps and shorter runs do not count', () => {
     const run = (over: Partial<Run>): Run => ({ id: 'r1', date: '2026-11-20', type: 'long', miles: 4, minutes: 40, effort: 'easy', maxPain: 1, strides: false, tempo: false, ...over })
     expect(evaluateGate(gate1, ctx({ runs: [run({})], morningChecks: [check('2026-11-21')] })).items[3]?.pass).toBe(true)

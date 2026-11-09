@@ -1,5 +1,5 @@
 import { exerciseById, program, templateFor } from '../program/program.ts'
-import { availableEquipment, type Available, type SlotRoute } from '../rules/equipment.ts'
+import { availableEquipment, WARM_UP_BIKE, type Available, type SlotRoute } from '../rules/equipment.ts'
 import { attachChecks, recordsBefore, type WorkoutRecord } from '../rules/history.ts'
 import { isAddedSlotId, withAddedSlots } from '../rules/addedSlots.ts'
 import { extensionPool, isExtraSlotId } from '../rules/extensions.ts'
@@ -8,9 +8,14 @@ import { applyOverrides, overridesBySlot } from '../rules/overrides.ts'
 import { prescribe, type GymHere, type Prescription } from '../rules/prescription.ts'
 import { phaseWeekOf, slotsForPhaseWeek } from '../rules/session.ts'
 import { slotAtGym } from '../rules/slotExercise.ts'
+import { warmUpParts, type WarmUpParts } from '../rules/warmUp.ts'
+import { rampFor, rampReps, type Ramp } from '../rules/warmUpRamp.ts'
 import { kneeMorning, wholeKneeFor } from '../rules/wholeKnee.ts'
 import type { EquipmentId, Exercise, IsoDate, Location, SessionLetter, SessionTemplate, Settings, Slot } from '../schema/index.ts'
 import type { History } from '../db/repo.ts'
+
+/** A slot's warm-up sets, or why there are none (src/rules/warmUpRamp.ts): screens take the type from here, never from the rule (warmUpRamp.guard.test.ts). */
+export type { Ramp, RampSet } from '../rules/warmUpRamp.ts'
 
 export interface SlotPlan {
   slot: Slot
@@ -129,24 +134,74 @@ export function withExtensions(template: SessionTemplate, history: Pick<History,
   return { ...own, slots: [...own.slots, ...extensions] }
 }
 
+/** The lift warm-up's minutes at a gym (`warmUpParts`): the bike's where it has an upright bike, and the knee circuit's for the phase. */
+export function warmUpFor(phase: number, gym: Gym): WarmUpParts {
+  return warmUpParts(program.warmUp.lift, phase, availableAt(gym).has(WARM_UP_BIKE))
+}
+
+/**
+ * A slot's warm-up sets as the plan stands (`rampFor`, display only): from the exercise and load its
+ * prescription runs today, so a swap, a rack move, a back-off or a deload ramps from what is actually
+ * on the bar. Never part of `SlotPlan`: no prescription, log or rule reads it.
+ */
+export function slotRamp(plan: SlotPlan, opts: { late: boolean; alreadyWarm: boolean }): Ramp {
+  const prescription = plan.prescriptions[0]
+  const exercise = prescription ? (CATALOG.get(prescription.exerciseId) ?? plan.exercise) : plan.exercise
+  return rampFor({ exercise, slot: plan.slot, prescription, late: opts.late, alreadyWarm: opts.alreadyWarm, rule: program.warmUp.lift.ramp })
+}
+
+/** The exercise a plan runs today: the prescription's (a rack move changes it), else the plan's. */
+function runsExercise(plan: SlotPlan): string {
+  return plan.prescriptions[0]?.exerciseId ?? plan.exercise.id
+}
+
+/**
+ * Each plan's warm-up sets as the session order would show them: an exercise is warm once an
+ * earlier slot in the plan runs it, so only its first slot ramps (keyed on the exercise each slot
+ * runs, so a rack-moved slot and an extra of the same machine aren't both counted). The time window
+ * and the read-only Preview use it; the runner goes by what is logged instead (`slotRamp`).
+ */
+export function rampsInOrder(plans: readonly SlotPlan[], late: boolean): Ramp[] {
+  const seen = new Set<string>()
+  return plans.map((plan) => {
+    const id = runsExercise(plan)
+    const ramp = slotRamp(plan, { late, alreadyWarm: seen.has(id) })
+    seen.add(id)
+    return ramp
+  })
+}
+
 /**
  * Which of a session's slots fit the minutes Shawn has (`fitToWindow`): the plan's sets, reps and
- * the Settings rest, in session order. A slot with a set already logged is never dropped. Null
- * minutes is the full session.
+ * the Settings rest, in session order, door to door: the warm-up's minutes come off the top, and the
+ * warm-up sets of the slots that show them are counted (`ramps`: false for a session entered after
+ * the fact, which shows none). A slot with a set already logged is never dropped. Null minutes is
+ * the full session.
  */
-export function windowFit(plans: readonly SlotPlan[], restSeconds: number, minutes: number | null, loggedSlots: ReadonlySet<string> = new Set()): Fit {
-  const slots: WindowSlot[] = plans.map((p) => ({
-    slotId: p.slot.id,
-    ...(p.slot.groupId ? { groupId: p.slot.groupId } : {}),
-    added: isAddedSlotId(p.slot.id),
-    extra: isExtraSlotId(p.slot.id),
-    // An extra the gym can't run as it stands (a machine that isn't here) is never added for time.
-    eligible: p.route.kind === 'own',
-    optional: p.slot.optional,
-    logged: loggedSlots.has(p.slot.id),
-    sides: p.prescriptions.map((x) => ({ sets: x.sets, repsTarget: x.repsTarget, repUnit: x.repUnit })),
-  }))
-  return fitToWindow(slots, minutes, restSeconds)
+export function windowFit(
+  plans: readonly SlotPlan[],
+  restSeconds: number,
+  minutes: number | null,
+  opts: { warmUpMinutes: number; ramps: boolean; logged?: ReadonlySet<string> },
+): Fit {
+  const logged = opts.logged ?? new Set<string>()
+  const ramps = rampsInOrder(plans, !opts.ramps)
+  const slots: WindowSlot[] = plans.map((p, i) => {
+    const reps = rampReps(ramps[i] ?? { kind: 'none', why: 'not-eligible' })
+    return {
+      slotId: p.slot.id,
+      ...(p.slot.groupId ? { groupId: p.slot.groupId } : {}),
+      added: isAddedSlotId(p.slot.id),
+      extra: isExtraSlotId(p.slot.id),
+      // An extra the gym can't run as it stands (a machine that isn't here) is never added for time.
+      eligible: p.route.kind === 'own',
+      optional: p.slot.optional,
+      logged: logged.has(p.slot.id),
+      sides: p.prescriptions.map((x) => ({ sets: x.sets, repsTarget: x.repsTarget, repUnit: x.repUnit })),
+      ...(reps.length > 0 ? { rampReps: reps } : {}),
+    }
+  })
+  return fitToWindow(slots, minutes, restSeconds, opts.warmUpMinutes)
 }
 
 /** The template for a session letter in the phase the app is currently in. */

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { planSession } from '../app/session.ts'
 import { homeLocation } from '../db/migrations.ts'
 import { exerciseById, program } from '../program/program.ts'
+import { slotFromAdded } from '../rules/addedSlots.ts'
+import { effectiveSlot } from '../rules/effectiveSlot.ts'
 import { availableEquipment } from '../rules/equipment.ts'
 import { needsLoadPick } from '../rules/prefill.ts'
 import type { SlotRoute } from '../rules/equipment.ts'
@@ -59,7 +61,8 @@ import {
   todayGymWords,
   todayTooLabel,
   warmUpWords,
-  warmUpMinutes,
+  rampWords,
+  rampSetsWords,
   timedSets,
   withoutEnginePicks,
 } from './SessionRunner.helpers.ts'
@@ -241,6 +244,15 @@ describe('per-side words', () => {
     expect(countWords(10, 'reps', pallof)).toBe('10 reps each side')
     expect(countWords(30, 'seconds', slot({ unilateral: true, perSideLabel: 'each leg' }))).toBe('30 s')
   })
+  it('an added farmer’s hold swapped to its side plank reads "each side" on the card, as program.md writes the side plank', () => {
+    const hold = exerciseById('farmers-hold')
+    const plank = exerciseById('side-plank')
+    const added = slotFromAdded({ id: 'added-h', sets: 3, repsMin: 30, repsMax: 45 }, hold, 1, 10)
+    expect(countWords(30, 'seconds', added)).toBe('30 s')
+    const swapped = effectiveSlot(added, plank)
+    expect(countWords(30, 'seconds', swapped)).toBe('30 s each side')
+    expect(prescriptionWords(rx({ exerciseId: 'side-plank', sets: 3, repsTarget: 30, repUnit: 'seconds', load: null, loadUnit: 's' }), swapped, plank)).toBe('3 × 30 s each side')
+  })
 })
 
 describe('the gym in words (M4b, design section 4)', () => {
@@ -291,12 +303,34 @@ describe('the gym in words (M4b, design section 4)', () => {
     expect(notInBagWords(['ankle-strap'], items)).toBe('Not in your bag: cable ankle strap. "In your bag" in Where you train adds it.')
   })
   it('the warm-up drops the bike where there is none, and says nothing else is written for it', () => {
-    expect(warmUpWords(5, true)).toEqual({ line: 'Warm-up · bike 5 min · knee circuit 5 min', noBike: null })
-    expect(warmUpWords(10, false)).toEqual({ line: 'Warm-up · knee circuit 10 min', noBike: 'No upright bike here; nothing else is written for it.' })
-    expect(warmUpMinutes(5, true)).toBe(10)
-    expect(warmUpMinutes(3, false)).toBe(3)
-    expect(warmUpMinutes(undefined, true)).toBe(10)
-    expect(warmUpWords(undefined, true).line).toBe('Warm-up · bike 5 min · knee circuit 5 min')
+    expect(warmUpWords({ bike: 5, circuit: 5, total: 10 })).toEqual({ line: 'Warm-up · bike 5 min · knee circuit 5 min', noBike: null })
+    expect(warmUpWords({ bike: null, circuit: 10, total: 10 })).toEqual({ line: 'Warm-up · knee circuit 10 min', noBike: 'No upright bike here; nothing else is written for it.' })
+    expect(warmUpWords({ bike: 5, circuit: 3, total: 8 }).line).toBe('Warm-up · bike 5 min · knee circuit 3 min')
+  })
+
+  describe('warm-up sets in words (PROGRAM-QUESTIONS 165)', () => {
+    const sets = (...s: [number, number, ('empty-bar' | 'empty-sled' | 'lightest-plate' | null)?][]) => ({ kind: 'sets' as const, workingLoad: 100, sets: s.map(([load, reps, light]) => ({ load, reps, light: light ?? null })) })
+    it('says the sets above set 1, never logged, in the card’s load words', () => {
+      expect(rampWords(sets([90, 8], [135, 5]), exerciseById('leg-press'))).toBe('Warm-up sets first, not logged: 90 lb × 8, then 135 lb × 5.')
+      expect(rampWords(sets([20, 8], [30, 5]), exerciseById('db-bench-press'))).toBe('Warm-up sets first, not logged: 20 lb each × 8, then 30 lb each × 5.')
+      expect(rampWords(sets([20, 8], [30, 5]), exerciseById('goblet-squat-bench'))).toBe('Warm-up sets first, not logged: 20 lb × 8, then 30 lb × 5.')
+    })
+    it('one set in the singular; the empty bar, the empty sled and the lightest plate in words', () => {
+      expect(rampWords(sets([0, 8, 'empty-bar']), exerciseById('smith-box-squat'))).toBe('Warm-up set first, not logged: empty bar × 8.')
+      expect(rampWords(sets([0, 8, 'empty-sled']), exerciseById('leg-press-45'))).toBe('Warm-up set first, not logged: empty sled × 8.')
+      expect(rampWords(sets([5, 8, 'lightest-plate'], [10, 5]), exerciseById('chest-press-machine'))).toBe('Warm-up sets first, not logged: the lightest plate × 8, then 10 lb × 5.')
+      expect(rampSetsWords(sets([90, 8], [135, 5]), exerciseById('leg-press'))).toBe('90 lb × 8, then 135 lb × 5')
+    })
+    it('a load too light to warm up for says so; nothing on a stack or dumbbells says nothing', () => {
+      expect(rampWords({ kind: 'none', why: 'too-light', workingLoad: 5 }, exerciseById('db-bench-press'))).toBe('No warm-up sets today: 5 lb each is light enough to start on.')
+      expect(rampWords({ kind: 'none', why: 'too-light', workingLoad: 0 }, exerciseById('smith-box-squat'))).toBe('No warm-up sets today: the empty bar is light enough to start on.')
+      expect(rampWords({ kind: 'none', why: 'too-light', workingLoad: 0 }, exerciseById('leg-press-45'))).toBe('No warm-up sets today: the empty sled is light enough to start on.')
+      expect(rampWords({ kind: 'none', why: 'too-light', workingLoad: 0 }, exerciseById('db-bench-press'))).toBeNull()
+    })
+    it('no line for an exercise the rule doesn’t cover, a first time, one already warm, or a late entry', () => {
+      for (const why of ['not-eligible', 'no-load', 'already-warm', 'late'] as const) expect(rampWords({ kind: 'none', why, workingLoad: 40 }, exerciseById('db-bench-press')), why).toBeNull()
+      expect(rampSetsWords({ kind: 'none', why: 'late' }, exerciseById('leg-press'))).toBeNull()
+    })
   })
 
   it('Swap lists the slot’s own exercise and its substitutions in order, each here or not with what it needs', () => {

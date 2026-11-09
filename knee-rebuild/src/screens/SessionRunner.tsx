@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { navigate } from '../app/router.ts'
-import { availableAt, planSession, PROGRAM, sessionExtensions, windowFit, withExtensions, type Gym, type SlotPlan } from '../app/session.ts'
+import { availableAt, planSession, PROGRAM, sessionExtensions, slotRamp, warmUpFor, windowFit, withExtensions, type Gym, type SlotPlan } from '../app/session.ts'
 import { isExtraSlotId } from '../rules/extensions.ts'
 import { sessionPhaseWeek } from '../rules/compliance.ts'
 import { isLateEntry } from '../rules/retro.ts'
@@ -13,12 +13,12 @@ import { useHistory, useLocation, useLocations, useSetsFor, useSettings, useWork
 import { deleteSet, deleteWorkout, markOff, setActiveLocation, setDumbbellMax, setPresent, setWorkoutLocation, readWindow, SWAP_KEY_PREFIX, updateWorkout, upsertSet, writeWindow, type History } from '../db/repo.ts'
 import { exerciseById } from '../program/program.ts'
 import { effectiveSlot } from '../rules/effectiveSlot.ts'
-import { WARM_UP_BIKE } from '../rules/equipment.ts'
 import { gymLocked, listedLocations, locationIdOf } from '../rules/locations.ts'
 import { loggedPain, painRewriteAllowed, type Draft } from '../rules/prefill.ts'
 import { firstOpenStepOf, nextStep, openStepForSide, restAfter, sessionSteps, type Step } from '../rules/runOrder.ts'
 import { asksForRack, cardHoldsOff, notHereSlots, skipTakesBack, swapOffer, type SwapOffer } from '../rules/runnerGym.ts'
 import { healthySideTargets } from '../rules/unilateral.ts'
+import { warmUpParts } from '../rules/warmUp.ts'
 import type { IsoDate, Location, SessionTemplate, SetLog, SetSide, Settings, StopReason, Workout } from '../schema/index.ts'
 import { ActiveCard } from './session/ActiveCard.tsx'
 import { DoneBar } from './session/DoneBar.tsx'
@@ -62,7 +62,7 @@ import {
   todayGymWords,
   todayTooLabel,
   warmUpWords,
-  warmUpMinutes,
+  rampWords,
   timedSets,
   withoutEnginePicks,
   type GymMark,
@@ -157,8 +157,8 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
             workout,
             sets: timedSets(sets, (slotId) => summaryTemplate.slots.find((s) => s.id === slotId)?.repUnit),
             restSeconds: settings.restTimerSeconds,
-            // No gym is opened for a summary: the estimate counts the bike as the warm-up row does where there is one.
-            warmUpMinutes: warmUpMinutes(PROGRAM.warmUp.lift.circuitMinutesByPhase[String(workout.phase)], true),
+            // No gym is opened for a summary: the estimate counts the bike as present, as the warm-up row does where there is one.
+            warmUpMinutes: warmUpParts(PROGRAM.warmUp.lift, workout.phase, true).total,
           }}
         />
       </Screen>
@@ -232,7 +232,13 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
   const ownCount = useMemo(() => everySlot.filter((p) => !isExtraSlotId(p.slot.id)).length, [everySlot])
   // What the minutes leave out is decided on the unswapped plan, so a Swap never changes which exercises run; a slot with a set logged always stays.
   const loggedForFit = useMemo(() => new Set(sets.map((s) => s.slotId)), [sets])
-  const fit = useMemo(() => windowFit(everySlot, settings.restTimerSeconds, minutes, loggedForFit), [everySlot, settings.restTimerSeconds, minutes, loggedForFit])
+  // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym comes off the top; a late entry shows, and so counts, no warm-up sets.
+  const warmParts = useMemo(() => warmUpFor(workout.phase, gym), [workout.phase, gym])
+  const lateEntry = isLateEntry(workout)
+  const fit = useMemo(
+    () => windowFit(everySlot, settings.restTimerSeconds, minutes, { warmUpMinutes: warmParts.total, ramps: !lateEntry, logged: loggedForFit }),
+    [everySlot, settings.restTimerSeconds, minutes, loggedForFit, warmParts, lateEntry],
+  )
   const unswapped = useMemo(() => everySlot.filter((p) => fit.keep.includes(p.slot.id)), [everySlot, fit])
   const engineBySlot = useMemo(() => new Map(unswapped.map((p) => [p.slot.id, p.exercise.id])), [unswapped])
   // Only picks on their slot's list as it runs now: a Program edit mid-session can take one off, and the engine then runs the slot's history.
@@ -565,14 +571,21 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
   const staleDay = workout.date < today
   const busy = saving || cooling
   const lift = PROGRAM.warmUp.lift
-  const warmUp = warmUpWords(lift.circuitMinutesByPhase[String(workout.phase)], available.has(WARM_UP_BIKE))
+  const warmUp = warmUpWords(warmParts)
   // What Finish and End preset the session's minutes from: the sets' times, or for a late entry an estimate of them (metrics phase 1).
   const timing = {
     workout,
     sets: timedSets(sets, (slotId) => plans.find((p) => p.slot.id === slotId)?.prescriptions[0]?.repUnit),
     restSeconds: settings.restTimerSeconds,
-    warmUpMinutes: warmUpMinutes(lift.circuitMinutesByPhase[String(workout.phase)], available.has(WARM_UP_BIKE)),
+    warmUpMinutes: warmParts.total,
   }
+  // The active slot's warm-up sets (display only, PROGRAM-QUESTIONS 165): from the exercise and load it runs now, so a swap or a
+  // rack move follows; none for a late entry, and none once a set of that exercise is logged on any slot this session.
+  const activeExerciseId = activePlan?.prescriptions[0]?.exerciseId ?? activePlan?.exercise.id
+  const activeRamp =
+    activePlan && activeExerciseId
+      ? rampWords(slotRamp(activePlan, { late, alreadyWarm: sets.some((s) => s.exerciseId === activeExerciseId) }), exerciseById(activeExerciseId))
+      : null
 
   const stopOfActive = activePlan && stopped.has(activePlan.slot.id) ? slotSetsOf(activePlan.slot.id).find((s) => s.stopped) : undefined
   const nextName = fallback ? (plans.find((p) => p.slot.id === fallback.slotId)?.exercise.name ?? 'the next slot') : null
@@ -617,7 +630,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
             setMinutes(m)
             writeWindow(workout.id, m)
           }}
-          lines={windowWords(fit, minutes, ownCount, (slotId) => everySlot.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId)}
+          lines={windowWords(fit, minutes, ownCount, (slotId) => everySlot.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId, warmParts)}
         />
       ) : minutes !== null ? (
         <p className="text-small text-on-dark-dim">{`${fit.added.length > 0 ? `Fitted to ${minutes} min: all ${ownCount} exercises, and ${fit.added.length} added.` : `Fitted to ${minutes} min: ${fit.keep.length} of ${ownCount} exercises.`}`}</p>
@@ -682,6 +695,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
             step={editing ? null : current && current.slotId === activePlan.slot.id ? current : null}
             editing={editing}
             slotSets={slotSetsOf(activePlan.slot.id)}
+            ramp={activeRamp}
             setsBySide={Object.fromEntries(activePlan.prescriptions.map((p) => [p.side, p.sets]))}
             sides={sidesFor(activePlan)}
             injuredSide={settings.injuredSide}
