@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
-import { routeHash, useRoute } from './app/router.ts'
-import { useToday } from './app/today.ts'
+import { replaceRoute, routeHash, useRoute } from './app/router.ts'
+import { TimeZoneContext } from './app/timeZone.ts'
 import { Button } from './components/Button.tsx'
 import { storageFailedWords } from './components/ErrorBoundary.helpers.ts'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { TabBar } from './components/TabBar.tsx'
-import { useActiveLocation, useSettings } from './db/hooks.ts'
-import { defaultSettings, ensureLocations, ensureSettings, requestPersistentStorage } from './db/repo.ts'
+import { useActiveLocation, useOnboardingState, useSettings, useTimeZoneSetting } from './db/hooks.ts'
+import { getTimeZoneSetting, launch, requestPersistentStorage } from './db/repo.ts'
 import { program } from './program/program.ts'
+import { todayIn } from './rules/calendar.ts'
+import { needsFirstRun } from './rules/onboarding.ts'
 import { AclRsi } from './screens/AclRsi.tsx'
 import { Gates } from './screens/Gates.tsx'
 import { Koos } from './screens/Koos.tsx'
@@ -26,6 +28,7 @@ import { SessionRunner } from './screens/SessionRunner.tsx'
 import { Settings } from './screens/Settings.tsx'
 import { Today } from './screens/Today.tsx'
 import { Week } from './screens/Week.tsx'
+import { Welcome } from './screens/Welcome.tsx'
 
 /**
  * The app: the service worker's update prompt, then everything else inside a boundary of its own.
@@ -55,22 +58,36 @@ export function App() {
   )
 }
 
-/** Storage opened and seeded, then the screen for the route and the tab bar; or why storage couldn't be opened. */
+/**
+ * Storage opened, then: first run on a phone with no settings row (M-U1), or the screen for the
+ * route and the tab bar, every date counted in the stored time zone; or why storage couldn't be
+ * opened. Nothing shows until both whether the phone is set up and its zone have loaded, so first
+ * run never flashes on a set-up phone and no frame counts in the wrong zone.
+ */
 function Shell({ updateReady }: { updateReady: boolean }) {
   const route = useRoute()
+  const state = useOnboardingState()
+  const zoneSetting = useTimeZoneSetting()
   const settings = useSettings()
   const activeLocation = useActiveLocation()
-  const today = useToday()
   const [seedError, setSeedError] = useState<string | null>(null)
+  const firstRun = state !== undefined && needsFirstRun(state)
 
   useEffect(() => {
-    // Settings first: the home gym is written from the dumbbell max they hold (design section 2).
-    ensureSettings(defaultSettings(program))
-      .then(() => ensureLocations(program, today))
-      .then(() => requestPersistentStorage())
+    // Once, at launch: a set-up phone gets its home gym if it has none yet (one from before gyms), dated
+    // the day it opened in its own zone; a phone that isn't set up is left for first run, seeded with nothing.
+    getTimeZoneSetting()
+      .then((zone) => launch(program, todayIn(new Date(), zone.zone)))
+      .then((launched) => (launched === 'onboarded' ? requestPersistentStorage() : false))
       .catch((e: unknown) => setSeedError(e instanceof Error ? e.message : String(e)))
-    // Once, at launch: the day the home gym is first written is the day the app opened.
   }, [])
+
+  // First run only on a phone that isn't set up, and never once it is: a stale #/welcome lands on Today.
+  useEffect(() => {
+    if (state === undefined) return
+    if (firstRun && route.name !== 'welcome') replaceRoute({ name: 'welcome' })
+    if (!firstRun && route.name === 'welcome') replaceRoute({ name: 'today' })
+  }, [state, firstRun, route.name])
 
   if (seedError) {
     // With a new version waiting, its prompt above is the way on; otherwise Reload tries again.
@@ -88,18 +105,27 @@ function Shell({ updateReady }: { updateReady: boolean }) {
       </main>
     )
   }
-  // Every screen plans at a gym: wait for the home gym too, which ensureLocations writes right after the settings.
-  if (settings === undefined || settings === null || activeLocation === undefined || activeLocation === null) {
+  const opening = (
+    <main className="mx-auto flex min-h-dvh max-w-[36rem] flex-col gap-4 px-4 py-12">
+      <h1 className="font-display text-h2 text-on-dark">Knee Rebuild</h1>
+      <p className="text-body text-on-dark-dim">Opening storage…</p>
+    </main>
+  )
+  if (state === undefined || zoneSetting === undefined) return opening
+  if (firstRun) {
+    if (route.name !== 'welcome') return opening
     return (
-      <main className="mx-auto flex min-h-dvh max-w-[36rem] flex-col gap-4 px-4 py-12">
-        <h1 className="font-display text-h2 text-on-dark">Knee Rebuild</h1>
-        <p className="text-body text-on-dark-dim">Opening storage…</p>
-      </main>
+      // No tab bar: first run is the only way on from here.
+      <ErrorBoundary screen="welcome" resetKey={routeHash(route)}>
+        <Welcome step={route.step} storedZone={zoneSetting.stored === 'ok' ? zoneSetting.zone : null} />
+      </ErrorBoundary>
     )
   }
+  // Every screen plans at a gym: wait for the home gym too, which launch writes on a phone from before gyms.
+  if (route.name === 'welcome' || settings === undefined || settings === null || activeLocation === undefined || activeLocation === null) return opening
 
   return (
-    <>
+    <TimeZoneContext.Provider value={zoneSetting.zone}>
       {/* A throw inside a screen shows its name and a way out, not a blank app; the update prompt and the tab bar stay outside it. */}
       <ErrorBoundary screen={route.name} resetKey={routeHash(route)}>
         {(() => {
@@ -144,6 +170,6 @@ function Shell({ updateReady }: { updateReady: boolean }) {
         })()}
       </ErrorBoundary>
       {route.name === 'session' ? null : <TabBar route={route} />}
-    </>
+    </TimeZoneContext.Provider>
   )
 }

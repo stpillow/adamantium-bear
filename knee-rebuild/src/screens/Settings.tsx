@@ -1,17 +1,22 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
+import { canonicalZone, deviceTimeZone, supportedTimeZones, useTimeZone } from '../app/timeZone.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
+import { Choice, Note, Section } from '../components/FormParts.tsx'
 import { Screen } from '../components/Screen.tsx'
 import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
-import { exportBackup, markExported, readStored, replaceAll } from '../db/backup.ts'
-import { useHrSettings, useSettings } from '../db/hooks.ts'
-import { defaultSettings, ensureSettings, getSettings, resetAll, saveHrSettings, saveSettings, saveSettingsAndMoves } from '../db/repo.ts'
-import { backupFileName, backupText, downPeriodsOnImport, lostOnImport, parseBackup, settingsOnImport, sizeProblem, summarize, type Backup, type BackupSummary, type BackupTable } from '../rules/backup.ts'
+import { exportBackup, markExported, replaceAll } from '../db/backup.ts'
+import { useHrSettings, useSettings, useTimeZoneSetting } from '../db/hooks.ts'
+import { getSettings, resetAll, saveHrSettings, saveSettings, saveSettingsAndMoves, saveTimeZone } from '../db/repo.ts'
+import { backupFileName, backupText, summarize, type Backup, type BackupSummary } from '../rules/backup.ts'
+import { timeZoneChange } from '../rules/calendar.ts'
 import type { HrSettings, IsoDate, IsoDateTime, Settings as SettingsRecord } from '../schema/index.ts'
+import { forgetFirstRunDraft, leaveNotice } from './firstRun.ts'
 import { forgetSlotDrafts } from './program/drafts.ts'
+import { ImportSection, LINK_BUTTON, StartDatePicker } from './settings/parts.tsx'
 import {
   DUMBBELLS_LINE,
   HR_MAX_MAX,
@@ -26,57 +31,47 @@ import {
   hrSavePatch,
   hrSetButtonWords,
   hrUnsetWords,
-  IMPORT_CONFIRM,
   PHASE_NOTE,
+  RESET_CONFIRM,
   REST_MAX,
   REST_MIN,
   REST_STEP,
   SIDES,
-  checkStartDate,
   clearedSettings,
-  dateWords,
   errorWords,
-  exportedOnWords,
   heldWords,
   holdsLine,
-  importedWords,
   lastExportWords,
-  lostWords,
-  migratedWords,
   painWords,
   phaseWords,
   redFlagView,
   resetWords,
   restTimerWords,
-  settingsOnImportWords,
-  keptDownPeriodWords,
   shareFailure,
   shareRoute,
   sideWords,
+  checkStartDate,
   deloadWeeksLine,
   startDateChange,
+  timeZoneChangeWords,
+  timeZoneSectionWords,
   weekLine,
+  zoneOptions,
+  zoneWords,
+  cityOf,
   type FormHold,
   type HrPatch,
-  type StartDateCheck,
 } from './Settings.helpers.ts'
 
 const TITLE = 'Settings'
 const FLASH_MS = 1500
 
 /** Which part of the screen a save, a Saved word or a problem belongs to. */
-type Field = 'injuredSide' | 'startDate' | 'restTimerSeconds' | 'painPerSet' | 'heartRate' | 'redFlag' | 'export'
+type Field = 'injuredSide' | 'startDate' | 'timeZone' | 'restTimerSeconds' | 'painPerSet' | 'heartRate' | 'redFlag' | 'export'
 type Problem = { field: Field; text: string } | null
 type ResetStep = 'idle' | 'confirm' | 'erasing'
 /** What a reset came to (`resetWords`), said in the Reset section where Yes was tapped. */
 type ResetResult = ReturnType<typeof resetWords>
-
-/**
- * Resetting storage seeds the settings row and the home gym again in the same transaction, but if
- * the app shell swaps this screen out meanwhile, what the reset came to waits here for the next
- * mount to say it, in the Reset section.
- */
-let pendingReset: ResetResult | null = null
 
 /**
  * Set by Today's "No export in 9 days · Export": the next Settings mount opens at its Export
@@ -106,8 +101,10 @@ export function Settings() {
   }
   if (stored === null) {
     return (
-      <Screen title={TITLE} lead="No settings yet.">
-        <p className="text-body text-on-dark-dim">Open the app from Today once so it can seed its settings, then come back.</p>
+      <Screen title={TITLE} lead="This phone isn’t set up yet.">
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
+        </Button>
       </Screen>
     )
   }
@@ -116,6 +113,8 @@ export function Settings() {
 
 function SettingsForm({ stored }: { stored: SettingsRecord }) {
   const today = useToday()
+  const timeZone = useTimeZone()
+  const zoneSetting = useTimeZoneSetting()
   const [draft, setDraft] = useState(stored)
   const draftRef = useRef(stored)
   const storedRef = useRef(stored)
@@ -147,10 +146,6 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
 
   useEffect(() => {
     mounted.current = true
-    if (pendingReset !== null) {
-      setResetResult(pendingReset)
-      pendingReset = null
-    }
     return () => {
       mounted.current = false
     }
@@ -206,6 +201,27 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
    * that number, back to "not set". It waits on an import or a reset like every other section,
    * with the same refusal in words.
    */
+  /**
+   * Saves the time zone (M-U1) into its row of its own, never through save()/saveSettings: the
+   * settings row is never rewritten for it (PROGRAM-QUESTIONS 132, 203). It waits on an import or a
+   * reset like every other section. Resolves true once saved.
+   */
+  async function saveZone(zone: string): Promise<boolean> {
+    if (holdRef.current !== null) {
+      setProblem({ field: 'timeZone', text: heldWords(holdRef.current).refusal })
+      return false
+    }
+    setProblem(null)
+    try {
+      await saveTimeZone(canonicalZone(zone))
+      flashSaved('timeZone')
+      return true
+    } catch (e) {
+      setProblem({ field: 'timeZone', text: `That did not save (${errorWords(e)}); dates are still counted as before.` })
+      return false
+    }
+  }
+
   async function saveHr(patch: HrPatch): Promise<void> {
     if (holdRef.current !== null) {
       setProblem({ field: 'heartRate', text: heldWords(holdRef.current).refusal })
@@ -265,42 +281,29 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
     }
   }
 
+  /**
+   * Erases everything (M-U1: nothing is seeded in its place). Once erased the shell finds a phone
+   * with nothing stored and goes to first run, which says what happened; so its sentence is left for
+   * it before the write, and taken back if nothing was erased.
+   */
   async function erase(): Promise<void> {
     setResetStep('erasing')
     setProblem(null)
     setResetResult(null)
     pending.current += 1
-    pendingReset = resetWords({ kind: 'erased' })
+    leaveNotice('welcome', resetWords({ kind: 'erased' }).text)
     try {
-      await resetAll(defaultSettings(PROGRAM), PROGRAM, today)
+      await resetAll()
       // The Program screen's unsaved drafts were for lists that are gone: no Put it back after "There is no undo".
       forgetSlotDrafts()
+      // First run's answers, if any were typed before, go too: a reset phone asks the side again.
+      forgetFirstRunDraft()
     } catch (e) {
-      pending.current -= 1
-      pendingReset = null
+      leaveNotice('welcome', null)
       setResetStep('confirm')
       setResetResult(resetWords({ kind: 'not-erased', error: e }))
-      return
-    }
-    try {
-      const seeded = await ensureSettings(defaultSettings(PROGRAM))
+    } finally {
       pending.current -= 1
-      if (mounted.current) {
-        pendingReset = null
-        adopt(seeded)
-        setResetResult(resetWords({ kind: 'erased' }))
-        setResetStep('idle')
-      }
-    } catch (e) {
-      pending.current -= 1
-      const result = resetWords({ kind: 'not-seeded', error: e })
-      if (mounted.current) {
-        pendingReset = null
-        setResetStep('idle')
-        setResetResult(result)
-      } else {
-        pendingReset = result
-      }
     }
   }
 
@@ -366,6 +369,8 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
         onSave={(date) => void saveStartDate(date)}
       />
 
+      <TimeZoneSection setting={zoneSetting} zone={timeZone} today={today} saved={savedField === 'timeZone'} problem={problemFor('timeZone')} held={held} onSave={saveZone} />
+
       {/* Each gym's rack is its own from M4b; Settings' dumbbell max is frozen (the home gym was first written from it). */}
       <Section label="Dumbbells" saved={false} problem={null}>
         <p className="text-body text-on-dark-dim">{DUMBBELLS_LINE}</p>
@@ -428,9 +433,9 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
 
       {flagFirst ? null : redFlag}
 
-      <ExportSection today={today} lastExportedAt={draft.lastExportedAt} saved={savedField === 'export'} problem={problemFor('export')} onExported={recordExport} />
+      <ExportSection today={today} timeZone={timeZone} lastExportedAt={draft.lastExportedAt} saved={savedField === 'export'} problem={problemFor('export')} onExported={recordExport} />
 
-      <ImportSection today={today} held={hold === 'reset' ? held : null} onReplace={importFile} />
+      <ImportSection today={today} timeZone={timeZone} held={hold === 'reset' ? held : null} onReplace={(backup) => importFile(backup)} />
 
       <ResetSection
         step={resetStep}
@@ -466,74 +471,6 @@ function useFlash(): [Field | null, (field: Field) => void] {
     timer.current = window.setTimeout(() => setField(null), FLASH_MS)
   }
   return [field, flash]
-}
-
-/** A labelled group with a Saved word on its label row and a problem sentence under it. */
-function Section({ label, saved, problem, held = null, children }: { label: string; saved: boolean; problem: string | null; held?: string | null; children: ReactNode }) {
-  return (
-    <section aria-label={label} className="flex flex-col gap-3 border-t border-on-dark-faint pt-4">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="font-mono text-small font-normal uppercase tracking-[0.22em] text-on-dark-muted">{label}</h2>
-        <span role="status" aria-live="polite" className="font-mono text-small uppercase tracking-[0.22em] text-green-bright">
-          {saved ? '✓ Saved' : ''}
-        </span>
-      </div>
-      {held ? <Note>{held}</Note> : null}
-      {children}
-      {problem ? (
-        <p role="alert" className="text-body text-on-dark">
-          {problem}
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
-function Note({ children }: { children: ReactNode }) {
-  return <p className="text-small text-on-dark-muted">{children}</p>
-}
-
-/** One of several choices, styled like a Tap: the chosen one says so with a mark and a word, never by color alone. */
-function Choice({
-  label,
-  selected,
-  onSelect,
-  selectedWord = 'Chosen',
-  compact = false,
-  disabled = false,
-}: {
-  label: string
-  selected: boolean
-  onSelect: () => void
-  selectedWord?: string
-  compact?: boolean
-  disabled?: boolean
-}) {
-  const mark = <span className="font-mono text-small uppercase tracking-[0.22em]">{selected ? (compact ? '✓' : `✓ ${selectedWord}`) : '○'}</span>
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      disabled={disabled}
-      onClick={onSelect}
-      className={`tap flex w-full items-center rounded-sm border px-4 py-3 text-body disabled:opacity-50 ${compact ? 'justify-center gap-2' : 'justify-between gap-4 text-left'} ${
-        selected ? 'border-paper bg-navy-lift text-on-dark' : 'border-on-dark-faint bg-transparent text-on-dark-dim'
-      }`}
-    >
-      {compact ? (
-        <>
-          {mark}
-          <span>{label}</span>
-        </>
-      ) : (
-        <>
-          <span>{label}</span>
-          {mark}
-        </>
-      )}
-    </button>
-  )
 }
 
 /**
@@ -584,7 +521,7 @@ function HrNumber({
   )
 }
 
-/** A date input that only lets a Monday through; any other day is refused in words, with the nearest Mondays a tap away. */
+/** The start date: the shared picker (a Monday only, the nearest Mondays a tap away), saved only on an explicit tap. */
 function StartDateSection({
   startDate,
   today,
@@ -604,22 +541,14 @@ function StartDateSection({
   held: string | null
   onSave: (date: IsoDate) => void
 }) {
-  const id = useId()
   const [input, setInput] = useState<string>(startDate)
-  const [check, setCheck] = useState<StartDateCheck | null>(null)
   // A picker can pass through several Mondays on the way; each save rebases the stored moves, so
   // the date is saved only on an explicit tap.
-  const choose = (value: string) => {
-    setInput(value)
-    setCheck(checkStartDate(value))
-  }
-  const pending = check?.ok && check.date !== startDate ? check.date : null
+  const check = checkMonday(input)
+  const pending = check !== null && check !== startDate ? check : null
   return (
     <Section label="Start date" saved={saved} problem={problem} held={held}>
-      <label htmlFor={id} className="text-body text-on-dark-dim">
-        Week 1 starts on a Monday
-      </label>
-      <input id={id} type="date" value={input} disabled={held !== null} onChange={(e) => choose(e.target.value)} className="tap w-full rounded-sm bg-ink px-3 text-body text-on-dark disabled:opacity-50" />
+      <StartDatePicker value={input} onChange={setInput} disabled={held !== null} />
       <Note>
         {weekLine(today, startDate)} {deloadWeeksLine()}
       </Note>
@@ -634,20 +563,146 @@ function StartDateSection({
           {movesNotice}
         </p>
       ) : null}
-      {check && !check.ok ? (
+    </Section>
+  )
+}
+
+/**
+ * The time zone (M-U1, PROGRAM-QUESTIONS 203 to 205): what dates are counted in and today there, the
+ * phone's own zone a tap away when it differs, and a picker. A different zone asks first, inline (no
+ * modal), saying whether today's date moves and that nothing logged does; Yes asks again if the words
+ * have changed since they were shown (midnight passed), then saves. An unreadable stored zone gets a
+ * button that writes the zone dates are counted in over it, without asking, since no date moves.
+ */
+function TimeZoneSection({
+  setting,
+  zone,
+  today,
+  saved,
+  problem,
+  held,
+  onSave,
+}: {
+  setting: { zone: string; stored: 'none' | 'ok' | 'unreadable' } | undefined
+  zone: string
+  today: IsoDate
+  saved: boolean
+  problem: string | null
+  held: string | null
+  onSave: (zone: string) => Promise<boolean>
+}) {
+  const [asked, setAsked] = useState<{ to: string; lines: string[]; again: boolean } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const [device] = useState(deviceTimeZone)
+  const [supported] = useState(supportedTimeZones)
+  const words = timeZoneSectionWords(setting ?? { zone, stored: 'none' }, device, today)
+  const kept = words.keep
+  const linesFor = (to: string) => timeZoneChangeWords(timeZoneChange(new Date(), zone, to), zone, to)
+
+  const ask = (to: string) => {
+    setDone(null)
+    setAsked(to === zone ? null : { to, lines: linesFor(to), again: false })
+  }
+
+  // An unreadable row: keeping the zone dates are already counted in moves nothing, so it saves without asking.
+  const keep = async (done: string) => {
+    setAsked(null)
+    setDone(null)
+    setBusy(true)
+    const ok = await onSave(zone)
+    setBusy(false)
+    if (ok) setDone(done)
+  }
+
+  const confirm = async (shown: { to: string; lines: string[] }) => {
+    const now = linesFor(shown.to)
+    if (now.join('\n') !== shown.lines.join('\n')) {
+      setAsked({ to: shown.to, lines: now, again: true })
+      return
+    }
+    setBusy(true)
+    const ok = await onSave(shown.to)
+    setBusy(false)
+    if (ok) {
+      setAsked(null)
+      setDone(`Dates are now counted in ${cityOf(shown.to) === shown.to ? shown.to : `${cityOf(shown.to)} time`}.`)
+    }
+  }
+
+  return (
+    <Section label="Time zone" saved={saved} problem={problem} held={held}>
+      <p className="text-body text-on-dark">{words.line}</p>
+      {words.unreadable ? (
+        <p role="alert" className="text-body text-on-dark">
+          {words.unreadable}
+        </p>
+      ) : null}
+      {kept ? (
+        <Button wide disabled={held !== null || busy} onClick={() => void keep(kept.done)}>
+          {kept.button}
+        </Button>
+      ) : null}
+      {words.device ? (
         <>
-          <p role="alert" className="text-body text-on-dark">
-            {check.message}
-          </p>
-          {check.mondays.map((monday) => (
-            <Button key={monday} wide disabled={held !== null} onClick={() => choose(monday)}>
-              Use {dateWords(monday)}
-            </Button>
-          ))}
+          <Note>{words.device.note}</Note>
+          <Button wide disabled={held !== null || busy} onClick={() => ask(device)}>
+            {words.device.button}
+          </Button>
         </>
+      ) : null}
+      <select
+        aria-label="Time zone"
+        value={asked?.to ?? zone}
+        disabled={held !== null || busy}
+        onChange={(e) => ask(e.target.value)}
+        className="tap w-full rounded-sm bg-ink px-3 text-body text-on-dark disabled:opacity-50"
+      >
+        {zoneOptions(supported, zone, device).map((group) => (
+          <optgroup key={group.region} label={group.region}>
+            {group.zones.map((z) => (
+              <option key={z} value={z}>
+                {zoneWords(z)}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <Note>A trip of a few days needn’t change this; the date only moves near midnight.</Note>
+      {asked ? (
+        <div role="group" aria-label="Change the time zone?" className="flex flex-col gap-3">
+          {asked.again ? <p className="text-body text-on-dark">The clock has moved on since this was shown; here it is again.</p> : null}
+          {asked.lines.map((line) => (
+            <p key={line} className="text-body text-on-dark wrap-anywhere">
+              {line}
+            </p>
+          ))}
+          <Button variant="primary" wide disabled={held !== null || busy} onClick={() => void confirm(asked)}>
+            {busy ? 'Saving…' : `Yes, use ${zoneButtonWords(asked.to)}`}
+          </Button>
+          <Button variant="quiet" wide disabled={busy} onClick={() => setAsked(null)}>
+            Keep {zoneButtonWords(zone)}
+          </Button>
+        </div>
+      ) : null}
+      {done ? (
+        <p role="status" className="text-body text-on-dark">
+          {done}
+        </p>
       ) : null}
     </Section>
   )
+}
+
+/** "Los Angeles time"; "UTC". */
+function zoneButtonWords(zone: string): string {
+  return zone.includes('/') ? `${cityOf(zone)} time` : zone
+}
+
+/** The input's text as a Monday, or null when it isn't one. */
+function checkMonday(value: string): IsoDate | null {
+  const check = checkStartDate(value)
+  return check.ok ? check.date : null
 }
 
 /** The red-flag state in words; clearing it takes a note, and the rule's refusal of an empty one is shown as it is. */
@@ -739,9 +794,7 @@ function ResetSection({
         </Button>
       ) : (
         <>
-          <p className="text-body text-on-dark">
-            This erases every session, set, morning check, run, gate test, gym, Program edit and setting on this phone. There is no undo; export first to keep a copy.
-          </p>
+          <p className="text-body text-on-dark">{RESET_CONFIRM}</p>
           <Button wide disabled={step === 'erasing' || held !== null} onClick={onErase}>
             {step === 'erasing' ? 'Erasing…' : 'Yes, erase everything'}
           </Button>
@@ -765,9 +818,6 @@ function ResetSection({
   )
 }
 
-/** A link or file picker that looks and taps like a secondary Button: 44 px, a word on it. */
-const LINK_BUTTON = 'tap flex w-full items-center justify-center rounded-sm border border-on-dark-faint bg-navy-lift px-6 py-3 text-center font-sans text-body font-medium text-on-dark wrap-anywhere'
-
 /** A file ready to leave the phone: what it holds, and how it goes (the share sheet, or a link). */
 interface ReadyFile {
   file: File
@@ -788,12 +838,14 @@ interface ReadyFile {
  */
 function ExportSection({
   today,
+  timeZone,
   lastExportedAt,
   saved,
   problem,
   onExported,
 }: {
   today: IsoDate
+  timeZone: string
   lastExportedAt: IsoDateTime | undefined
   saved: boolean
   problem: string | null
@@ -871,7 +923,7 @@ function ExportSection({
   return (
     <Section label="Export" saved={saved} problem={problem}>
       <p ref={firstLine} className="text-body text-on-dark">
-        {lastExportWords(lastExportedAt, today)}
+        {lastExportWords(lastExportedAt, today, timeZone)}
       </p>
       <Note>One JSON file with everything on this phone. iOS can clear a home-screen app’s storage when it goes unused, so keep a recent file somewhere else.</Note>
       <Button wide disabled={busy} onClick={() => void prepare()}>
@@ -917,134 +969,6 @@ function ExportSection({
         <p role="alert" className="text-body text-on-dark">
           {error}
         </p>
-      ) : null}
-    </Section>
-  )
-}
-
-/** A file read and accepted by the rules, waiting on the inline confirm. */
-interface PendingImport {
-  name: string
-  backup: Backup
-  migratedFrom: number | null
-  file: BackupSummary
-  phone: BackupSummary
-  lost: { table: BackupTable; count: number }[]
-  /** What the import does to the settings, in words: the red flag it keeps on, and the settings the file changes. */
-  settings: ReturnType<typeof settingsOnImportWords>
-  /** The down period standing on this phone that the import keeps (PROGRAM-QUESTIONS 189), in words; null when none. */
-  keptDownPeriod: string | null
-}
-
-/**
- * Import (M6 brief, section 2): a file picker for `.json`. The whole file is read by the rules
- * before anything is touched; a refusal says why in words. An accepted file shows what it holds,
- * what this phone holds now and what the file lacks, then an inline confirm; Yes replaces every
- * table in one transaction, all or nothing, and says it did here, where Yes was tapped (the top of
- * the screen is a long scroll away).
- */
-function ImportSection({ today, held, onReplace }: { today: IsoDate; held: string | null; onReplace: (backup: Backup) => Promise<void> }) {
-  const inputId = useId()
-  const [pending, setPending] = useState<PendingImport | null>(null)
-  const [step, setStep] = useState<'idle' | 'reading' | 'writing'>('idle')
-  const [refusal, setRefusal] = useState<string | null>(null)
-  const [imported, setImported] = useState<string | null>(null)
-
-  async function choose(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const input = event.currentTarget
-    const picked = input.files?.[0]
-    // Cleared at once, so picking the same file again reads it again.
-    input.value = ''
-    if (!picked) return
-    setPending(null)
-    setRefusal(null)
-    setImported(null)
-    const size = sizeProblem(picked.size)
-    if (size) {
-      setRefusal(size)
-      return
-    }
-    setStep('reading')
-    try {
-      const read = parseBackup(await picked.text())
-      if (!read.ok) {
-        setRefusal(read.refusal)
-        return
-      }
-      const phone = await readStored()
-      setPending({
-        name: picked.name,
-        backup: read.backup,
-        migratedFrom: read.migratedFrom,
-        file: summarize(read.backup),
-        phone: summarize(phone),
-        // A standing down period stays (downPeriodsOnImport), so it is never named among what the import erases.
-        lost: lostOnImport(phone, { ...read.backup, downPeriods: downPeriodsOnImport(phone.downPeriods, read.backup.downPeriods, today) }),
-        settings: settingsOnImportWords(settingsOnImport(phone.settings, read.backup.settings), PROGRAM.redFlags, PROGRAM.phases),
-        keptDownPeriod: keptDownPeriodWords(phone.downPeriods, read.backup.downPeriods, today),
-      })
-    } catch (e) {
-      setRefusal(`The file couldn’t be read (${errorWords(e)}). Nothing was imported.`)
-    } finally {
-      setStep('idle')
-    }
-  }
-
-  async function replace(file: PendingImport): Promise<void> {
-    setStep('writing')
-    setRefusal(null)
-    try {
-      await onReplace(file.backup)
-      setPending(null)
-      setImported(importedWords(file.name, file.file))
-    } catch (e) {
-      setRefusal(`Nothing was imported (${errorWords(e)}); this phone still holds what it held.`)
-    } finally {
-      setStep('idle')
-    }
-  }
-
-  return (
-    <Section label="Import" saved={false} problem={null} held={held}>
-      <Note>A file from Export JSON. Importing replaces everything on this phone with what the file holds; nothing is merged.</Note>
-      <label htmlFor={inputId} aria-disabled={step !== 'idle' || held !== null} className={`${LINK_BUTTON} ${step === 'idle' && held === null ? '' : 'pointer-events-none opacity-50'}`}>
-        {step === 'reading' ? 'Reading the file…' : 'Choose a backup file'}
-      </label>
-      <input id={inputId} type="file" accept=".json,application/json" disabled={step !== 'idle' || held !== null} onChange={(e) => void choose(e)} className="sr-only" />
-      {/* A refusal can quote a key from the file, cut to 40 characters but unbroken: it wraps anywhere, like the lines beside it. */}
-      {refusal ? (
-        <p role="alert" className="text-body text-on-dark wrap-anywhere">
-          {refusal}
-        </p>
-      ) : null}
-      {imported ? (
-        <p role="status" className="text-body text-on-dark wrap-anywhere">
-          {imported}
-        </p>
-      ) : null}
-      {pending ? (
-        <div className="flex flex-col gap-3">
-          <p className="text-body text-on-dark wrap-anywhere">
-            {pending.name}, exported {exportedOnWords(pending.backup.exportedAt, today)}: {holdsLine(pending.file)}
-          </p>
-          {migratedWords(pending.migratedFrom) ? <Note>{migratedWords(pending.migratedFrom)}</Note> : null}
-          <p className="text-body text-on-dark-dim">This phone now: {holdsLine(pending.phone)}</p>
-          {lostWords(pending.lost) ? <p className="text-body text-on-dark">{lostWords(pending.lost)}</p> : null}
-          {pending.settings.changes.map((line) => (
-            <p key={line} className="text-body text-on-dark wrap-anywhere">
-              {line}
-            </p>
-          ))}
-          {pending.settings.redFlag ? <p className="text-body text-on-dark wrap-anywhere">{pending.settings.redFlag}</p> : null}
-          {pending.keptDownPeriod ? <p className="text-body text-on-dark wrap-anywhere">{pending.keptDownPeriod}</p> : null}
-          <p className="text-lead font-medium text-on-dark">{IMPORT_CONFIRM}</p>
-          <Button wide disabled={step === 'writing' || held !== null} onClick={() => void replace(pending)}>
-            {step === 'writing' ? 'Replacing…' : 'Yes, replace everything'}
-          </Button>
-          <Button variant="quiet" wide disabled={step === 'writing'} onClick={() => setPending(null)}>
-            Keep what’s here
-          </Button>
-        </div>
       ) : null}
     </Section>
   )

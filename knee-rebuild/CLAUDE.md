@@ -78,13 +78,13 @@ knee-rebuild/
 - **Swap**: replacing a slot's exercise with the next substitution in its ordered list; the slot's job stays the same.
 - **Effective reading**: what the last two combined readings add up to for one exercise: clean twice, clean once, hold, or back-off (two holds in a row read back-off).
 - **Pain per exercise**: when `Settings.painPerSet` is false, the runner stores the exercise's one pain value on every set it logs; the engine reads pain per set either way.
-- **Today**: screens compute the date once with `todayIn(new Date())` in America/New_York and pass it to the engine; nothing in `src/rules/` reads the clock.
+- **Today**: screens compute the date once with `todayIn(new Date(), zone)` in the user's time zone (a setting, America/New_York by default; M-U1) and pass it to the engine; nothing in `src/rules/` reads the clock or the phone's time zone.
 
 ## Design
 
 spdc-design is installed and applied: Duke navy ground, Fraunces display (SOFT 0, WONK 0, upright), IBM Plex Sans body, IBM Plex Mono for short labels only, the 4px spacing scale, radii 0/2/4, one green accent word per surface. Tailwind's default palette, fonts, sizes and radii are cleared in `src/index.css`, so an off-system value won't compile into a utility.
 
-Gym rules on top of that: text-first; 44 px minimum tap targets (`tap` utility); numeric keypads (`inputmode="decimal"`) and steppers, not free text; no modals that trap; every logging interaction under 10 seconds without reading. Units: pounds, miles, seconds. Dates in America/New_York; weeks start Monday.
+Gym rules on top of that: text-first; 44 px minimum tap targets (`tap` utility); numeric keypads (`inputmode="decimal"`) and steppers, not free text; no modals that trap; every logging interaction under 10 seconds without reading. Units: pounds, miles, seconds. Dates in the user's time zone (a setting, New York by default); weeks start Monday.
 
 ## Working agreements, short form
 

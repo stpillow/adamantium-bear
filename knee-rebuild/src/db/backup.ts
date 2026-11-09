@@ -1,7 +1,7 @@
 import { db } from './db.ts'
 import { ensureLocations, forgetSwaps, getSettings, getSettingsRow, getStoredSettings, saveExportStamp, saveSettings, type HomeLists } from './repo.ts'
-import { BACKUP_TABLES, backupFrom, buildBackup, downPeriodsOnImport, importStamp, redFlagOnImport, type Backup, type ExportResult, type StoredContents } from '../rules/backup.ts'
-import { DownPeriod, Settings, type IsoDate, type IsoDateTime } from '../schema/index.ts'
+import { BACKUP_TABLES, backupFrom, buildBackup, downPeriodsOnImport, importStamp, redFlagOnImport, timeZoneOnImport, type Backup, type ExportResult, type StoredContents } from '../rules/backup.ts'
+import { DownPeriod, Settings, TimeZoneSetting, type IsoDate, type IsoDateTime } from '../schema/index.ts'
 
 /**
  * Export and import (M6 brief, section 2): read every table, and replace every table in one
@@ -40,7 +40,16 @@ export async function readStored(): Promise<StoredContents> {
       koosEntries: await db.koosEntries.toArray(),
       aclRsiEntries: await db.aclRsiEntries.toArray(),
       downPeriods: await db.downPeriods.toArray(),
+      timeZoneSettings: await db.timeZoneSettings.toArray(),
     }
+  })
+}
+
+/** The phone's time zone rows, each read through its schema: an unreadable row never blocks a restore, and counts as none. */
+export async function phoneTimeZoneRows(): Promise<TimeZoneSetting[]> {
+  return (await db.timeZoneSettings.toArray()).flatMap((row) => {
+    const parsed = TimeZoneSetting.safeParse(row)
+    return parsed.success ? [parsed.data] : []
   })
 }
 
@@ -73,7 +82,9 @@ export async function markExported(exportedAt: IsoDateTime): Promise<void> {
  * (`importStamp`); except a red flag the phone has on, which stays on until Settings
  * clears it with a note (`redFlagOnImport`, PROGRAM-QUESTIONS 128); a down period the phone has
  * standing (on today, ended today, or dated ahead) stays too, and a file period overlapping it is
- * left out (`downPeriodsOnImport`, PROGRAM-QUESTIONS 189), `createdOn` being today; a file with no home gym gets
+ * left out (`downPeriodsOnImport`, PROGRAM-QUESTIONS 189), `createdOn` being today; the time zone is the
+ * file's, or the phone's when the file carries none or one this phone doesn't know (`timeZoneOnImport`,
+ * PROGRAM-QUESTIONS 206); a file with no home gym gets
  * one through `ensureLocations`, the launch path, from its own settings. The runner's stored swaps
  * go, as on Reset.
  */
@@ -91,7 +102,7 @@ export async function replaceAll(backup: Backup, lists: HomeLists, createdOn: Is
       const parsed = DownPeriod.safeParse(row)
       return parsed.success ? [parsed.data] : []
     })
-    const tables = { ...file, downPeriods: downPeriodsOnImport(phonePeriods, file.downPeriods, createdOn) }
+    const tables = { ...file, downPeriods: downPeriodsOnImport(phonePeriods, file.downPeriods, createdOn), timeZoneSettings: timeZoneOnImport(await phoneTimeZoneRows(), file.timeZoneSettings) }
     for (const table of db.tables) await table.clear()
     await saveSettings(settings)
     await saveExportStamp(importStamp(file.exportedAt, now))

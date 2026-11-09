@@ -90,8 +90,10 @@ export function RunLogger() {
   }
   if (settings === null || activeLocation === null) {
     return (
-      <Screen title={TITLE} lead="No settings yet.">
-        <p className="text-body text-on-dark-dim">Open the app from Today once so it can seed its settings, then come back.</p>
+      <Screen title={TITLE} lead="This phone isn’t set up yet.">
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
+        </Button>
       </Screen>
     )
   }

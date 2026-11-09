@@ -70,11 +70,12 @@ export const DEFAULT_START: Location['startedFrom'] = 'planet-fitness'
 
 /**
  * What a new gym starts with, said before it is made. Started from Planet Fitness's list, it gets
- * program.md's list, not Shawn's club: the home gym's 45° leg press is its own (PROGRAM-QUESTIONS 71).
+ * program.md's list and nothing else (no 45° leg press assumed, PROGRAM-QUESTIONS 71); the words
+ * name no one's club (M-U1, PROGRAM-QUESTIONS 211).
  */
 export function startWords(startedFrom: Location['startedFrom']): string {
   return startedFrom === 'planet-fitness'
-    ? 'Everything on program.md’s Planet Fitness list is marked here to start; your own club’s extras, like its 45° leg press, aren’t copied. Untick what this gym lacks.'
+    ? 'Everything on program.md’s Planet Fitness list is marked here to start, and nothing else is. Untick what this gym lacks; tick what it adds.'
     : 'Nothing is marked here to start; tick what this gym has.'
 }
 

@@ -659,8 +659,8 @@ export function runSuggestionAtGym(
  * a week old, or, never exported, once the first thing logged is (src/rules/backup.ts
  * `exportNudge`); null otherwise, and with nothing logged.
  */
-export function exportLine(lastExportedAt: IsoDateTime | undefined, today: IsoDate, history: Pick<History, 'workouts' | 'runs' | 'morningChecks' | 'gateTests'>): string | null {
-  const nudge = exportNudge(lastExportedAt, today, loggedRange(history).first)
+export function exportLine(lastExportedAt: IsoDateTime | undefined, today: IsoDate, history: Pick<History, 'workouts' | 'runs' | 'morningChecks' | 'gateTests'>, timeZone: string): string | null {
+  const nudge = exportNudge(lastExportedAt, today, loggedRange(history).first, timeZone)
   if (!nudge) return null
   return nudge.kind === 'since-export' ? `No export in ${nudge.days} days` : `No export yet; the logs go back ${nudge.days} days`
 }

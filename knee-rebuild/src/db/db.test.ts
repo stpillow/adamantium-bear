@@ -1,11 +1,12 @@
 import 'fake-indexeddb/auto'
 import Dexie from 'dexie'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { program } from '../program/program.ts'
 import { PLANET_FITNESS_LOCATION_ID } from '../schema/index.ts'
 import { db } from './db.ts'
 import { homeLocation } from './migrations.ts'
-import { defaultSettings, ensureLocations, getSettings, loadHistory, resetAll } from './repo.ts'
+import { onboardingState } from '../rules/onboarding.ts'
+import { defaultSettings, ensureLocations, ensureSettings, getSettings, getTimeZoneSetting, loadHistory, onboardingFacts, resetAll, saveExportStamp, saveTimeZone } from './repo.ts'
 
 /*
  * Dexie version 3 (M4b, design section 2): purely additive. A phone that ran week 1 on version 2
@@ -63,8 +64,8 @@ describe('a week-1 version 2 database opened at version 3 and on', () => {
     await writeVersionTwo()
 
     await db.open()
-    expect(db.verno).toBe(11)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v2Rows), 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods'].sort())
+    expect(db.verno).toBe(12)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v2Rows), 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods', 'timeZoneSettings'].sort())
     expect(await db.programOverrides.count()).toBe(0)
     const sorted = (rows: unknown[]) => [...rows].sort((a, b) => String((a as { id: string }).id).localeCompare(String((b as { id: string }).id)))
     const before = await rawRows()
@@ -93,20 +94,31 @@ describe('a week-1 version 2 database opened at version 3 and on', () => {
 })
 
 describe('resetAll', () => {
-  it('clears every table, locations included, and seeds the defaults and the home gym through the launch path', async () => {
+  it('clears every table, settings, gyms, the export stamp and the time zone included, and writes nothing: first run comes next (M-U1)', async () => {
     await db.locations.put({ ...homeLocation(25, [], '2026-11-12', 1), id: 'loc-1', name: 'Marriott Downtown', startedFrom: 'empty' })
-    const defaults = defaultSettings(program)
-    await resetAll(defaults, program, '2026-11-21')
-    expect(await getSettings()).toEqual(defaults)
-    expect(await db.locations.toArray()).toEqual([homeLocation(defaults.dumbbellMax, program.planetFitness, '2026-11-21', program.equipmentListVersion)])
+    await saveExportStamp('2026-11-20T12:00:00.000Z')
+    await saveTimeZone('America/Los_Angeles')
+    await resetAll()
+    expect(await getSettings()).toBeUndefined()
+    for (const table of db.tables) expect(await table.count(), table.name).toBe(0)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'none' })
+    expect(onboardingState(await onboardingFacts())).toBe('fresh')
     const history = await loadHistory()
     expect(Object.values(history).every((rows) => rows.length === 0)).toBe(true)
   })
 
-  it('erases nothing when the home gym it would seed fails its parse, after the tables were cleared', async () => {
+  it('a failed clear erases nothing', async () => {
+    await ensureSettings(defaultSettings(program))
+    await ensureLocations(program, '2026-11-02')
     await db.workouts.put({ id: 'w', date: '2026-11-23', templateId: 'p1-a', phase: 1, week: 4, isDeload: true, status: 'finished' })
-    await expect(resetAll(defaultSettings(program), { planetFitness: ['Not an id'], equipmentListVersion: 1 }, '2026-11-23')).rejects.toThrow()
+    const runs = db.table('runs')
+    const clear = vi.spyOn(runs, 'clear').mockImplementation(() => {
+      throw new Error('disk full')
+    })
+    await expect(resetAll()).rejects.toThrow('disk full')
+    clear.mockRestore()
     expect(await db.workouts.count()).toBe(1)
     expect(await db.locations.count()).toBe(1)
+    expect(await getSettings()).toEqual(defaultSettings(program))
   })
 })

@@ -27,6 +27,8 @@ const TAB_OF: Record<Route['name'], TabName> = {
   koos: 'progress',
   /** The ACL-RSI form: reached from gate 3's item row (Batch A). */
   'acl-rsi': 'gates',
+  /** First run (M-U1): the tab bar is hidden while it shows; Today is where it ends. */
+  welcome: 'today',
 }
 
 export function activeTab(route: Route): TabName {

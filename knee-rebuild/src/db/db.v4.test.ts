@@ -76,8 +76,8 @@ describe('a version 3 database opened at version 4', () => {
     await writeVersionThree()
 
     await db.open()
-    expect(db.verno).toBe(11)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v3Rows), 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods'].sort())
+    expect(db.verno).toBe(12)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v3Rows), 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods', 'timeZoneSettings'].sort())
     expect(db.programOverrides.schema.primKey.keyPath).toBe('slotId')
     const before = await rawRows()
     for (const [name, rows] of Object.entries(v3Rows)) expect(before[name], name).toEqual(byId(rows))

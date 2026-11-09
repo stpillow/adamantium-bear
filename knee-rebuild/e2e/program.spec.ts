@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { onboardAsShawn } from './firstRun.ts'
 
 /*
  * The Program screen's editor on the built app, held the way Shawn holds the phone. What the unit
@@ -20,7 +21,7 @@ test.beforeEach(async ({ page }) => {
   })
   await page.clock.install({ time: new Date(TUESDAY_WEEK_1) })
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible()
+  await onboardAsShawn(page)
   await page.goto('/#/program')
   await expect(page.getByRole('heading', { name: 'Program', level: 1 })).toBeVisible()
   await expect(page.getByText('Opening storage…')).toHaveCount(0)
@@ -172,7 +173,9 @@ test('Reset all data and an import let go of what the editor held for the lists 
   await viaMore(page, 'Settings')
   await page.getByRole('button', { name: 'Reset all data' }).click()
   await page.getByRole('button', { name: 'Yes, erase everything' }).click()
-  await expect(page.getByText('Everything on this phone was erased. Settings are back to their defaults.')).toBeVisible()
+  // Nothing is seeded in its place (M-U1): first run asks again, and says why it is there.
+  await expect(page.getByText('Everything on this phone was erased. The setup questions come next.')).toBeVisible()
+  await onboardAsShawn(page)
   await viaMore(page, 'Program')
   await expectNoDrafts(page)
   await doneButton(page).click()

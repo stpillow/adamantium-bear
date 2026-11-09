@@ -23,6 +23,7 @@ export const SCREEN_NAMES: Readonly<Record<Route['name'], string>> = {
   strava: 'Import from Strava',
   koos: 'KOOS',
   'acl-rsi': 'ACL-RSI',
+  welcome: 'Set up Knee Rebuild',
 }
 
 export interface CrashWords {

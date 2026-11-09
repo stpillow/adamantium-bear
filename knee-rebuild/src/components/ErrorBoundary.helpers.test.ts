@@ -39,6 +39,7 @@ describe('crashWords: what a screen that threw says instead of a blank app', () 
       strava: 'Import from Strava',
       koos: 'KOOS',
       'acl-rsi': 'ACL-RSI',
+      welcome: 'Set up Knee Rebuild',
     })
     const names = Object.values(SCREEN_NAMES)
     expect(new Set(names).size).toBe(names.length)

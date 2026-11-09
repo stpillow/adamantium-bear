@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
+import { onboardAsShawn } from './firstRun.ts'
 
 /*
  * Settings' import, on the built app: a file exported from this phone, changed the way an older
@@ -38,7 +39,7 @@ const restField = (page: Page) => page.getByRole('textbox', { name: 'Rest betwee
 
 async function openSettings(page: Page): Promise<void> {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible()
+  await onboardAsShawn(page)
   await page.goto('/#/settings')
   await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible()
   await expect(page.getByText('Opening storage…')).toHaveCount(0)
@@ -101,4 +102,39 @@ test('a refused import quoting a long unbroken key wraps inside the phone’s wi
   await expect(refusal).toContainText('WWWWWWWWWW')
   expect(await refusal.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('an unreadable stored zone on a phone in New York is cleared by keeping New York, with no date change on the way', async ({ page }) => {
+  await openSettings(page)
+  // A row this build can't parse (one a later build wrote, say), put there straight into IndexedDB.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('knee-rebuild')
+        open.onerror = () => reject(open.error)
+        open.onsuccess = () => {
+          const db = open.result
+          const tx = db.transaction('timeZoneSettings', 'readwrite')
+          tx.objectStore('timeZoneSettings').put({ id: 'time-zone', zone: 'America/New_York', later: true })
+          tx.oncomplete = () => {
+            db.close()
+            resolve()
+          }
+          tx.onerror = () => reject(tx.error)
+        }
+      }),
+  )
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible()
+  const unreadable = page.getByText('The stored time zone isn’t one this phone knows, so dates are counted in New York time until you pick one.')
+  await expect(unreadable).toBeVisible()
+  // The phone is in New York too, so no "Use" for its own zone; the picker already shows New York.
+  await expect(page.getByRole('button', { name: /^Use .* time$/ })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Use New York time', exact: true }).click()
+  await expect(page.getByText('Saved: dates stay in New York time.')).toBeVisible()
+  await expect(unreadable).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Use New York time', exact: true })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByText('Dates are counted in New York time (America/New_York). Today there is Tuesday Nov 3.')).toBeVisible()
+  await expect(unreadable).toHaveCount(0)
 })

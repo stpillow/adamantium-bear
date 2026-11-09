@@ -69,7 +69,8 @@ const MENTIONS: readonly string[] = [
   '/src/screens/MorningCheck.tsx',
   '/src/screens/SessionRunner.tsx',
   '/src/screens/Settings.helpers.ts',
-  '/src/screens/Settings.tsx',
+  // The import section, shared by Settings and first run since M-U1: a standing period stays through an import.
+  '/src/screens/settings/parts.tsx',
 ]
 
 /** The engine's other rules: none may know a down period exists. */

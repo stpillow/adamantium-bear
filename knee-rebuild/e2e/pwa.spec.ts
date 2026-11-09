@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Page } from '@playwright/test'
+import { onboardAsShawn } from './firstRun.ts'
 import { serveDist, type StaticServer } from './staticServer.ts'
 
 /*
@@ -34,6 +35,9 @@ const SCREENS: { hash: string; title: string }[] = [
   { hash: '#/next-update', title: 'For the next program update' },
   { hash: '#/program', title: 'Program' },
   { hash: '#/settings', title: 'Settings' },
+  // First run, once the phone is set up: a stale link lands on Today (M-U1).
+  { hash: '#/welcome', title: 'Today' },
+  { hash: '#/welcome/side', title: 'Today' },
 ]
 
 const TABS = ['Today', 'Week', 'Progress', 'Gates', 'More'] as const
@@ -64,9 +68,10 @@ async function rendered(page: Page, title: string): Promise<void> {
   await expect(page.getByText('Opening storage…')).toHaveCount(0)
 }
 
-/** First visit, then a reload: the worker installed (precache done) is controlling the page. */
+/** First visit (set up through first run, as Shawn), then a reload: the worker installed (precache done) is controlling the page. */
 async function controlled(page: Page, url: string): Promise<string> {
   await page.goto(`${url}/`)
+  await onboardAsShawn(page)
   await rendered(page, 'Today')
   await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready
@@ -81,6 +86,9 @@ async function controlled(page: Page, url: string): Promise<string> {
 test('the manifest is installable: name, standalone, theme color, icons 192, 512 and maskable at their stated sizes, no installability errors', async ({ page }) => {
   server = await serveDist(DIST, VERCEL_JSON)
   await page.goto(`${server.url}/`)
+  // A fresh phone opens on first run, under vercel.json's policy with nothing to complain of (afterEach); then Today.
+  await rendered(page, 'Set up Knee Rebuild')
+  await onboardAsShawn(page)
   await rendered(page, 'Today')
 
   const href = await page.locator('link[rel="manifest"]').getAttribute('href')

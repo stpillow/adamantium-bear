@@ -117,7 +117,45 @@ export const GateEvaluator = z.enum([
 ])
 export type GateEvaluator = z.infer<typeof GateEvaluator>
 
-/** Calendar date in America/New_York, as YYYY-MM-DD, and a real date on the calendar. */
+/**
+ * The time zone dates are counted in when the user has stored none (M-U1, PROGRAM-QUESTIONS 203):
+ * Shawn's, so a phone set up before the setting existed computes exactly the dates it did.
+ */
+export const DEFAULT_TIME_ZONE = 'America/New_York'
+
+/**
+ * An IANA time zone name by its shape alone ("America/Los_Angeles", "UTC", "Etc/GMT+5"): what a
+ * stored row and a backup file may hold. Whether this phone's time zone data knows the name is
+ * asked at use (`isKnownTimeZone`), never here, so a file from a phone with newer zone data
+ * ("Europe/Kyiv" on an older iOS) still imports, and the phone keeps its own zone instead
+ * (PROGRAM-QUESTIONS 204, 206).
+ */
+export const TimeZone = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+){0,2}$/, 'expected a time zone name like America/New_York')
+export type TimeZone = z.infer<typeof TimeZone>
+
+/**
+ * Whether this phone's time zone data knows a zone: constructing a formatter for it succeeds. Not
+ * membership in the phone's list of zones, which leaves out UTC and the old aliases a phone may
+ * still report (PROGRAM-QUESTIONS 204).
+ */
+export function isKnownTimeZone(zone: string): boolean {
+  if (!TimeZone.safeParse(zone).success) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** A time zone this phone knows: what Settings and first run save. */
+export const KnownTimeZone = TimeZone.refine(isKnownTimeZone, 'not a time zone this phone knows')
+
+/** Calendar date in the user's time zone (New York by default; M-U1), as YYYY-MM-DD, and a real date on the calendar. */
 export const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')

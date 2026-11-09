@@ -119,8 +119,8 @@ describe('start and rack choices', () => {
   it("preselects Planet Fitness's list and offers starting empty", () => {
     expect(DEFAULT_START).toBe('planet-fitness')
     expect(START_CHOICES.map((c) => c.label)).toEqual(['Start from Planet Fitness’s list', 'Start empty'])
-    // program.md's list, not Shawn's club: a new gym gets no 45° leg press (PROGRAM-QUESTIONS 71).
-    expect(startWords('planet-fitness')).toBe('Everything on program.md’s Planet Fitness list is marked here to start; your own club’s extras, like its 45° leg press, aren’t copied. Untick what this gym lacks.')
+    // program.md's list and nothing else: a new gym gets no 45° leg press (PROGRAM-QUESTIONS 71); the words name no one's club (M-U1, PROGRAM-QUESTIONS 211).
+    expect(startWords('planet-fitness')).toBe('Everything on program.md’s Planet Fitness list is marked here to start, and nothing else is. Untick what this gym lacks; tick what it adds.')
     expect(startWords('empty')).toBe('Nothing is marked here to start; tick what this gym has.')
     expect(startedFromWords('empty')).toBe('Started empty.')
     expect(startedFromWords('planet-fitness')).toBe('Started from Planet Fitness’s list.')
