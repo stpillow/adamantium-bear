@@ -239,6 +239,53 @@ describe('done criterion: gate 1 evaluates from logged data alone', () => {
     expect(row.entry.prefillLine).toBe('Phase 1 runs this exercise (Single-leg leg press) only on a slot logged for both legs at once, so no session can prefill this test. Enter the loads from the test.')
   })
 
+  describe('an added slot of the test’s own exercise (Batch C, PROGRAM-QUESTIONS 168)', () => {
+    // A program where Phase 1 lists the single-leg leg press only as a substitution on the both-legs leg press:
+    // the phase runs it but never logs a side, so today no session can prefill gate 1's test.
+    const templates = program.templates.map((t) =>
+      t.id !== 'p1-a' ? t : { ...t, slots: t.slots.map((s) => (s.id === 'p1a-1' ? { ...s, substitutionIds: [...s.substitutionIds, 'single-leg-leg-press'] } : s)) },
+    )
+    const FIXTURE = { ...PROGRAM, templates }
+    const addedSl = { id: 'added-sl', templateId: 'p1-a', exerciseId: 'single-leg-leg-press', sets: 3, repsMin: 8, repsMax: 10, addedOn: '2026-11-16' }
+    const withSets = (over: Partial<HistoryLike> = {}): HistoryLike => {
+      const logged = loggedPhase1()
+      const sl = workout('2026-11-19', { id: 'w-sl' })
+      const slSets = [set('w-sl', 'single-leg-leg-press', 'right', 1, 80, { reps: 10, slotId: 'added-sl' }), set('w-sl', 'single-leg-leg-press', 'left', 1, 100, { reps: 10, slotId: 'added-sl' })]
+      return { ...logged, workouts: [...logged.workouts, sl], setLogs: [...logged.setLogs, ...slSets], ...over }
+    }
+    const entry = (history: HistoryLike, program = FIXTURE) => {
+      const row = byId(gatesView({ today: TODAY, settings: settings(), history, program, aclRsiEntries: [] }), 'g1-sl-leg-press')
+      if (row.kind !== 'symmetry') throw new Error('expected a symmetry item')
+      return row.entry
+    }
+
+    it('without the add, the phase logs it only for both legs, and says no session can prefill it', () => {
+      expect(entry(loggedPhase1()).prefill).toBeNull()
+      expect(entry(loggedPhase1()).prefillLine).toBe('Phase 1 runs this exercise (Single-leg leg press) only on a slot logged for both legs at once, so no session can prefill this test. Enter the loads from the test.')
+    })
+
+    it('with an added slot of the exact exercise the phase logs its sides: "yet" until a session does, then that session prefills the test', () => {
+      const waiting = entry({ ...loggedPhase1(), addedSlots: [addedSl] })
+      expect(waiting.prefill).toBeNull()
+      expect(waiting.prefillLine).toBe('Nothing to prefill: no session has logged both sides of this exercise (Single-leg leg press) yet. Enter the loads from the test.')
+      const e = entry(withSets({ addedSlots: [addedSl] }))
+      expect(e.prefill).toMatchObject({ date: '2026-11-19', injured: 80, other: 100 })
+      expect(e.prefillLine).toBe('Prefilled from Thursday Nov 19’s session: Single-leg leg press, 80 lb right and 100 lb left, the heaviest set on each side. Change either to what the test lifted.')
+    })
+
+    it('an added slot of a different exercise does not count, even a similar one', () => {
+      const e = entry({ ...loggedPhase1(), addedSlots: [{ ...addedSl, exerciseId: 'bulgarian-split-squat' }] })
+      expect(e.prefill).toBeNull()
+      expect(e.prefillLine).toMatch(/^Phase 1 runs this exercise \(Single-leg leg press\) only on a slot logged for both legs at once/)
+    })
+
+    it('on the real seed, Phase 1 still can’t add the single-leg leg press, so gate 1 is unchanged', () => {
+      const e = entry(withSets({ addedSlots: [addedSl] }), PROGRAM)
+      expect(e.prefill).toBeNull()
+      expect(e.prefillLine).toBe('Phase 1 doesn’t run this exercise (Single-leg leg press), so no session can prefill this test. Enter the loads from the test.')
+    })
+  })
+
   it('a phase that runs the test’s exercise but hasn’t logged both sides yet says "yet"', () => {
     const phase2 = settings({ currentPhase: 2, phaseEnteredWeek: 4 })
     const row = byId(gatesView({ today: '2026-11-24', settings: phase2, history: { ...loggedPhase1(), gateTests: [] }, program: PROGRAM, aclRsiEntries: [] }), 'g2-sl-leg-press')

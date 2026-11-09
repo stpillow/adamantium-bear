@@ -1,7 +1,7 @@
-import type { SlotPlan } from '../app/session.ts'
+import type { Ramp, SlotPlan } from '../app/session.ts'
 import { addDays, dateOf, isDeloadWeek, scheduledSession, weekOf } from '../rules/calendar.ts'
 import type { IsoDate, Program, SessionMove, SessionTemplate, Settings, Side, Workout } from '../schema/index.ts'
-import { prescriptionWords, routeLines, sideWords, type ItemLike } from './SessionRunner.helpers.ts'
+import { prescriptionWords, rampSetsWords, routeLines, sideWords, type ItemLike } from './SessionRunner.helpers.ts'
 import { dateWords, phaseName, sessionLabel, sessionLetter, sessionNote, shortDateWords, todaysLift } from './Today.helpers.ts'
 
 /**
@@ -126,6 +126,15 @@ export interface PreviewSlot {
   cues: string[]
   /** "Cues written for Leg press, both legs" when another exercise runs in the slot. */
   cuesFor: string | null
+  /** "Warm-up sets: 90 lb × 8, then 135 lb × 5 (not logged)." before a big lift (PROGRAM-QUESTIONS 165); null for none. */
+  ramp: string | null
+}
+
+/** A slot's warm-up sets as the Preview says them, or null. */
+export function previewRampWords(ramp: Ramp | undefined, exercise: Parameters<typeof rampSetsWords>[1]): string | null {
+  const sets = ramp ? rampSetsWords(ramp, exercise) : null
+  if (sets === null || ramp?.kind !== 'sets') return null
+  return `${ramp.sets.length === 1 ? 'Warm-up set' : 'Warm-up sets'}: ${sets} (not logged).`
 }
 
 function listWords(labels: readonly string[]): string {
@@ -133,9 +142,12 @@ function listWords(labels: readonly string[]): string {
   return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
 }
 
-/** Each planned slot in words, the way the runner's cards will say it. */
-export function previewSlots(plans: readonly SlotPlan[], ctx: { injuredSide: Side; gymName: string; items: readonly ItemLike[]; nameOf: (exerciseId: string) => string }): PreviewSlot[] {
-  return plans.map((plan) => {
+/** Each planned slot in words, the way the runner's cards will say it; `ramps` runs alongside `plans` (`rampsInOrder`). */
+export function previewSlots(
+  plans: readonly SlotPlan[],
+  ctx: { injuredSide: Side; gymName: string; items: readonly ItemLike[]; nameOf: (exerciseId: string) => string; ramps?: readonly Ramp[] },
+): PreviewSlot[] {
+  return plans.map((plan, index) => {
     const { slot, exercise, prescriptions } = plan
     const members = slot.groupId ? plans.filter((p) => p.slot.groupId === slot.groupId && p.slot.id !== slot.id).map((p) => p.slot.label) : []
     const lines = prescriptions.map((p) => {
@@ -161,6 +173,7 @@ export function previewSlots(plans: readonly SlotPlan[], ctx: { injuredSide: Sid
       gymLines: routeLines({ route: plan.route, swapped: false, gymName: ctx.gymName, items: ctx.items, nameOf: ctx.nameOf }),
       cues: slot.cues,
       cuesFor: exercise.id !== slot.exerciseId && slot.cues.length > 0 ? `Cues written for ${ctx.nameOf(slot.exerciseId)}` : null,
+      ramp: previewRampWords(ctx.ramps?.[index], first ? (plan.substitutions.find((e) => e.id === first.exerciseId) ?? exercise) : exercise),
     }
   })
 }

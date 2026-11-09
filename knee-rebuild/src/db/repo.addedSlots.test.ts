@@ -28,6 +28,16 @@ describe('saving an added exercise', () => {
     expect((await getAddedSlots()).map((a) => a.id)).toEqual(['added-p2'])
   })
 
+  it('takes an accessory on a Phase 1 session, though no session of any phase lists it (Batch C, PROGRAM-QUESTIONS 169)', async () => {
+    for (const id of ['db-curl', 'ab-rollout', 'farmers-hold']) expect(phaseExerciseIds(program.templates, 3).has(id), id).toBe(false)
+    await saveAddedSlot(add({ id: 'added-c1', exerciseId: 'db-curl', repsMin: 10, repsMax: 12 }), program)
+    await saveAddedSlot(add({ id: 'added-c2', exerciseId: 'farmers-hold', repsMin: 30, repsMax: 45 }), program)
+    expect((await getAddedSlots()).map((a) => [a.id, a.exerciseId])).toEqual([
+      ['added-c1', 'db-curl'],
+      ['added-c2', 'farmers-hold'],
+    ])
+  })
+
   it('stores the row, reads it back, and hands it to the engine with the history', async () => {
     const saved = await saveAddedSlot(add(), program)
     expect(await getAddedSlots()).toEqual([saved])

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { navigate } from '../app/router.ts'
-import { PROGRAM, availableAt, planSession, sessionExtensions, windowFit } from '../app/session.ts'
+import { PROGRAM, availableAt, planSession, sessionExtensions, warmUpFor, windowFit } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../components/ReadingWord.tsx'
@@ -482,9 +482,11 @@ function FitBlock({
 }) {
   const extend = useMemo(() => sessionExtensions(template, history, settings, week), [template, history, settings, week])
   const plans = useMemo(() => planSession({ template, week, settings, history, gym: { location: gym, kit: settings.kit }, before, extend }), [template, week, settings, history, gym, before, extend])
-  const fit = windowFit(plans, settings.restTimerSeconds, minutes)
+  // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym off the top, and the warm-up sets the runner will show counted.
+  const warm = warmUpFor(template.phase, { location: gym, kit: settings.kit })
+  const fit = windowFit(plans, settings.restTimerSeconds, minutes, { warmUpMinutes: warm.total, ramps: true })
   const nameOf = (slotId: string) => plans.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId
-  return <TimeWindow minutes={minutes} onChange={onChange} lines={windowWords(fit, minutes, plans.filter((p) => !isExtraSlotId(p.slot.id)).length, nameOf)} />
+  return <TimeWindow minutes={minutes} onChange={onChange} lines={windowWords(fit, minutes, plans.filter((p) => !isExtraSlotId(p.slot.id)).length, nameOf, warm)} />
 }
 
 function FinishedBlock({ body }: { body: Lift }) {

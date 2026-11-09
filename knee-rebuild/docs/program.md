@@ -4,6 +4,9 @@ Edits to the export: image paths point at docs/media/, and a transcription table
 under each of the two chart images so the numbers are readable without the image.
 Training content is otherwise verbatim. This file wins on training content; PROMPT.md wins
 on app behavior.
+Nov 9, 2026 (Batch C, at Shawn's request): the warm-up sets paragraph in the warm-up section
+and the accessory and core catalog at the end of the setup notes were added; neither is from
+the export.
 -->
 
 # Knee Rebuild: Full-Body Program
@@ -293,6 +296,8 @@ Bike setup: seat high enough that the knee is slightly bent at the bottom of the
 
 6.  Knee-to-wall ankle rocks, 10 each side; your existing ankle work carries straight over.
 
+Warm-up sets (added Nov 9, 2026): after the knee circuit, before the first working set of the leg press, the Smith box squat, goblet squat or 45° leg press, the dumbbell or Smith RDL, or the dumbbell bench, incline or shoulder press (or the chest press machine or Smith bench press standing in for one), do two lighter sets of the same exercise: 8 reps at half the day's working load, then 5 reps at three-quarters of it, each rounded down to the nearest step the machine, plates or dumbbells allow. Nothing on the Smith bar or the sled is the empty bar or sled, and a stack under its lightest plate is the lightest plate. None on single-leg, bodyweight, band, balance, timed or jumping work, on the back extension, or on the accessory and core catalog. They aren't logged and don't count as sets.
+
 Before a run: 3–5 minutes of walking, then the leg swings and 10 bodyweight squats to a comfortable depth.
 
 Off days: keep the thoracic, hip and ankle routine you already run. Add a 2 × 60 s couch stretch for the hip flexors and a 2 × 45 s calf stretch each side. If the knee doesn't fully straighten yet, add a heel prop, 3 × 2 min with the heel on a rolled towel and the knee hanging; full extension matters more than full bend for running.
@@ -358,3 +363,30 @@ Planet Fitness has everything this program needs except a barbell, so the cues b
 | Calf machine                     | Calf raises on the leg press, then single-leg on a step                                  |
 | Bosu or balance pad              | Folded mat, then eyes closed on the floor                                                |
 | Medicine ball (Phase 3)          | Cable rotational chop and lift                                                           |
+
+**Accessory and core catalog**
+
+Added Nov 9, 2026 at Shawn's request, for adding to a session and for extra time; no session lists them. None of them bends the knee under load; the ones that kneel, and the ones that pick a weight up from the floor, say so in their cues.
+
+| Exercise | Equipment | Added as | Cues | Use instead, in order |
+|---|---|---|---|---|
+| Dumbbell curl | Dumbbells | 3 × 10–12 | Stand tall with soft knees, elbows pinned at your sides; lower for 2 s. No swinging: if the hips or knees help, the weight is too heavy. | Hammer curl |
+| Hammer curl | Dumbbells | 3 × 10–12 | Palms face each other the whole way; elbows stay at your sides. Stand tall with soft knees; lower for 2 s. | Dumbbell curl |
+| Triceps pressdown (cable) | Cable station, straight bar | 3 × 10–12 | Elbows pinned at your sides; press down to straight arms, squeeze 1 s, back up to 90°. Stand tall with soft knees; don't lean over the bar. | Overhead triceps extension, then Bench dip |
+| Overhead triceps extension | One dumbbell | 3 × 10–12 | One dumbbell in both hands overhead; lower behind the head with the elbows pointing up, then straighten. Stand tall, ribs down, knees soft, or sit on a bench. | Triceps pressdown (cable), then Bench dip |
+| Lateral raise | Dumbbells | 3 × 12–15 | Raise out to the sides to shoulder height with a soft elbow; lower for 2 s. Keep it light: if you shrug or swing it up, go down 5 lb. | Upright row (cable), then Front raise |
+| Push-up | Floor | 3 × 8–12 | On the toes, not the knees: kneeling push-ups put weight on the kneecap. Get down and up without kneeling: hands to the floor, step the feet back into a plank, and walk them back in to stand. Body in one line, chest to a fist off the floor; too hard, put the hands on a bench. | Chest press machine, then Dumbbell bench press |
+| Front raise | Dumbbells | 3 × 10–12 | Raise in front to eye level with a soft elbow; lower for 2 s. Alternate arms if both together makes you lean back; knees soft. | Lateral raise |
+| Upright row (cable) | Cable station, straight bar | 3 × 10–12 | Hands shoulder-width or wider; pull to the lower chest, elbows no higher than the shoulders. Stop the set if the front of the shoulder pinches. | Lateral raise, then Dumbbell shrug |
+| Dumbbell shrug | Dumbbells | 3 × 10–15 | Straight up toward the ears, squeeze 1 s, straight down; no rolling. Pick the dumbbells up and set them down with a hip hinge and soft knees, not a squat. | Upright row (cable) |
+| Overhead press machine | Shoulder press machine | 3 × 8–10 | Seat set so the handles start at shoulder height; press up without a hard lockout, lower for 2 s. Back flat on the pad, feet flat; the legs stay out of it. | Seated dumbbell shoulder press |
+| Cable fly | Cable crossover | 3 × 10–12 | Handles at chest height, one foot ahead with soft knees; bring the hands together in a wide arc, elbows soft and fixed. Stop the stretch where the front of the shoulder stays comfortable. | Chest press machine, then Push-up |
+| Dumbbell pullover | One dumbbell, flat bench | 3 × 10–12 | Lie along the bench, feet flat on the floor; one dumbbell over the chest in both hands. Lower behind the head only as far as the shoulders allow, ribs down; pull back over the chest. | Straight-arm pulldown, then Lat pulldown |
+| Straight-arm pulldown | Cable station, straight bar | 3 × 10–12 | Arms long with a soft elbow; sweep the bar from eye level to the thighs. Hinge a little at the hips with soft knees; the legs stay out of it. | Dumbbell pullover, then Lat pulldown |
+| Assisted dip | Assisted pull-up/dip machine | 3 × 6–10 | Kneeling on the pad pushes the assist up through the kneecaps; if that is sore at all, do the bench dip instead. Lower until the upper arms are level with the floor, no deeper; press up. | Bench dip, then Triceps pressdown (cable) |
+| Bench dip | Flat bench | 3 × 8–12 | Hands on the bench edge behind you, knees bent about 90° with the feet flat: the legs only steady you. Lower until the upper arms are level with the floor, no deeper; stop if the front of the shoulder pinches. | Triceps pressdown (cable), then Assisted dip |
+| Inverted row (Smith bar) | Smith machine | 3 × 8–12 | Smith bar at about hip height, safety stops set; hang under it, heels on the floor, body straight. Pull the chest to the bar, lower for 2 s; too hard, raise the bar a notch. | Seated cable row, then Lat pulldown |
+| Cable crunch (standing) | Cable station, straight bar or handle | 3 × 10–15 | Stand facing away from the stack, the bar or handle held by your ears; knees soft, hips still. Curl the ribs down toward the hips, then back up slowly; the legs stay out of it. | Pallof press, standing, then Dead bug |
+| Knee raise on the dip handles | Assisted pull-up/dip machine, dip handles | 3 × 8–12 | No weight pinned, the knee pad folded or locked down; climb on and off by the steps. Support on the dip handles with straight arms; raise the knees to hip height without swinging, lower for 2 s. Step down onto the platform at the end; never drop to the floor. | Dead bug, then Pallof press, standing |
+| Farmer's hold | Dumbbells | 3 × 30–45 s | Stand tall with a heavy dumbbell in each hand, shoulders down, ribs down, knees soft; breathe. A hold, not a carry: pick up and set down with a hip hinge and soft knees, not a deep squat. | Side plank |
+| Ab rollout (stability ball) | Stability ball or ab wheel, a mat | 3 × 6–10 | Kneel on a folded mat, forearms on the ball (or hands on an ab wheel); if kneeling hurts the injured knee, stop and do the dead bug instead. Roll out only as far as the low back stays flat, then pull back with the abs. | Dead bug, then Pallof press, standing |

@@ -36,8 +36,6 @@ describe('copyText', () => {
       COPY_HEADING,
       '- Weight plate (at Planet Fitness: on program.md’s list, but no session uses it)',
       '- Floor tape (at Planet Fitness: on program.md’s list, but no session uses it)',
-      '- Cable crossover (at Planet Fitness: on program.md’s list, but no session uses it)',
-      '- Shoulder press machine (at Planet Fitness: on program.md’s list, but no session uses it)',
       '- Treadmill (at Planet Fitness: on program.md’s list, but no session uses it)',
       '- Stair climber (at Planet Fitness: on program.md’s list, but no session uses it)',
       '- Kettlebells (typed at Marriott Downtown, Nov 10)',

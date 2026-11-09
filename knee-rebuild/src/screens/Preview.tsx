@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { navigate } from '../app/router.ts'
-import { PROGRAM, planSession, type SlotPlan } from '../app/session.ts'
+import { PROGRAM, planSession, rampsInOrder, type SlotPlan } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { Screen } from '../components/Screen.tsx'
@@ -60,7 +60,8 @@ export function Preview({ date }: { date: IsoDate }) {
     gymName = gym.name
     try {
       const plans: SlotPlan[] = planSession({ template: body.template, week: body.week, settings, history, gym: { location: gym, kit: settings.kit }, before: date })
-      slots = previewSlots(plans, { injuredSide: settings.injuredSide, gymName: gym.name, items: PROGRAM.equipment, nameOf })
+      // Warm-up sets as the session order shows them (display only, PROGRAM-QUESTIONS 165); a past day logged after the fact shows none.
+      slots = previewSlots(plans, { injuredSide: settings.injuredSide, gymName: gym.name, items: PROGRAM.equipment, nameOf, ramps: rampsInOrder(plans, date < today) })
     } catch (e: unknown) {
       planError = `This session could not be planned (${e instanceof Error ? e.message : String(e)}).`
     }
@@ -236,6 +237,7 @@ function SlotItem({ slot }: { slot: PreviewSlot }) {
           {line}
         </span>
       ))}
+      {slot.ramp ? <span className="text-small text-on-dark wrap-anywhere">{slot.ramp}</span> : null}
       {slot.gymLines.map((line) => (
         <span key={line} className="text-small text-on-dark wrap-anywhere">
           {line}

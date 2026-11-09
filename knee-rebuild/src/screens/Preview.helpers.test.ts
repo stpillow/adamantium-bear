@@ -4,7 +4,7 @@ import { homeLocation } from '../db/migrations.ts'
 import type { History } from '../db/repo.ts'
 import { exerciseById } from '../program/program.ts'
 import { DEFAULT_KIT, Settings, type Workout } from '../schema/index.ts'
-import { caveatWords, nextLiftWords, previewRange, previewSlots, previewView, relationWords } from './Preview.helpers.ts'
+import { caveatWords, nextLiftWords, previewRampWords, previewRange, previewSlots, previewView, relationWords } from './Preview.helpers.ts'
 
 const settings = Settings.parse({ injuredSide: 'right', startDate: '2026-11-02', dumbbellMax: 80, restTimerSeconds: 60, painPerSet: false, currentPhase: 1, phaseEnteredWeek: 1 })
 const empty: History = { workouts: [], setLogs: [], morningChecks: [], runs: [], gateTests: [], sessionMoves: [] }
@@ -93,5 +93,17 @@ describe('previewSlots, on the live seed', () => {
     const moved = awaySlots.find((s) => s.gymLines.some((l) => l.startsWith('Not at Marriott Downtown')))
     expect(moved).toBeDefined()
     expect(moved?.cuesFor).toMatch(/^Cues written for /)
+  })
+  it('says the warm-up sets before a big lift, from the ramps it is given, and none without them (PROGRAM-QUESTIONS 165)', () => {
+    expect(slots.every((s) => s.ramp === null)).toBe(true)
+    const ramps = plans.map((_, i) => (i === 0 ? { kind: 'sets' as const, workingLoad: 180, sets: [{ load: 90, reps: 8, light: null }, { load: 135, reps: 5, light: null }] } : { kind: 'none' as const, why: 'not-eligible' as const }))
+    const withRamps = previewSlots(plans, { injuredSide: 'right', gymName: 'Planet Fitness', items: PROGRAM.equipment, nameOf, ramps })
+    expect(withRamps[0]?.ramp).toBe('Warm-up sets: 90 lb × 8, then 135 lb × 5 (not logged).')
+    expect(withRamps.slice(1).every((s) => s.ramp === null)).toBe(true)
+  })
+  it('one warm-up set in the singular, the empty bar in words', () => {
+    expect(previewRampWords({ kind: 'sets', workingLoad: 10, sets: [{ load: 0, reps: 8, light: 'empty-bar' }] }, exerciseById('smith-box-squat'))).toBe('Warm-up set: empty bar × 8 (not logged).')
+    expect(previewRampWords({ kind: 'none', why: 'too-light', workingLoad: 5 }, exerciseById('db-bench-press'))).toBeNull()
+    expect(previewRampWords(undefined, exerciseById('db-bench-press'))).toBeNull()
   })
 })

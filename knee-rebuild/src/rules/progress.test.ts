@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MileageWeek, MorningCheck, Run, SessionMove, SetLog, Settings, WeeklyTemplate, Workout } from '../schema/index.ts'
 import { attachChecks, type SubjectReading } from './history.ts'
-import { advancePhase, advanceWaitsFor, awaitingMorningCheck, consecutiveCleanDays, loadSeries, loadTestPrefill, milesSeries, phaseEntryWeek, symmetryLeftOut, symmetrySeries } from './progress.ts'
+import { advancePhase, advanceWaitsFor, awaitingMorningCheck, consecutiveCleanDays, loadSeries, loadTestPrefill, milesSeries, phaseEntryWeek, slotPairs, symmetryLeftOut, symmetrySeries } from './progress.ts'
 
 const workout = (id: string, date: string, status: Workout['status'] = 'finished'): Workout => ({ id, date, templateId: 'p2-b', phase: 2, week: 5, isDeload: false, status })
 const set = (workoutId: string, side: SetLog['side'], n: number, load: number, reps: number, exerciseId = 'bulgarian-split-squat'): SetLog => ({ id: `${workoutId}-${side}-${n}`, workoutId, slotId: 'p2b-1', exerciseId, setNumber: n, side, load, loadUnit: 'lb', reps, painDuring: 1, stopped: false })
@@ -80,6 +80,60 @@ describe('loadTestPrefill: the loads a gate load test opens on (PROGRAM-QUESTION
     )
     expect(loadTestPrefill(records, 'bulgarian-split-squat', 'right')).toEqual({ prefill: null, passedOver: { rackCapped: 1, noLoad: 0 } })
     expect(loadTestPrefill([], 'bulgarian-split-squat', 'right')).toEqual({ prefill: null, passedOver: { rackCapped: 0, noLoad: 0 } })
+  })
+})
+
+describe('sides are paired within one slot: a program slot and an added slot of the same exercise the same day (Batch C, PROGRAM-QUESTIONS 168)', () => {
+  const on = (slotId: string, s: SetLog): SetLog => ({ ...s, id: `${s.id}-${slotId}`, slotId })
+  // Slot p2b-1 (program.md's) logged 40 against 50; Shawn's added slot of the same exercise logged 50 against 50.
+  const twoSlots = [set('w2', 'right', 1, 40, 8), set('w2', 'left', 1, 50, 8), on('added-x', set('w2', 'right', 1, 50, 8)), on('added-x', set('w2', 'left', 1, 50, 8))]
+
+  it('slotPairs gives one pair per slot that logged both sides, each side’s best on that slot, in slot-id order', () => {
+    const [record] = attachChecks([workout('w2', '2026-12-08')], twoSlots, [])
+    if (!record) throw new Error('no record')
+    expect(slotPairs(record, 'bulgarian-split-squat', 'right').map((p) => [p.slotId, p.injured.load, p.other.load])).toEqual([
+      ['added-x', 50, 50],
+      ['p2b-1', 40, 50],
+    ])
+    expect(slotPairs(record, 'split-squat', 'right')).toEqual([])
+  })
+
+  it('the prefill takes the least symmetric pair, never the injured side’s best from one slot against the other side’s from another', () => {
+    const records = attachChecks([workout('w2', '2026-12-08')], twoSlots, [])
+    // Across slots the heaviest sets read 50 against 50 (100%); the pair the knee actually did side by side reads 40 against 50.
+    expect(loadSeries(records, 'bulgarian-split-squat').map((p) => p.load)).toEqual([50, 50])
+    expect(loadTestPrefill(records, 'bulgarian-split-squat', 'right').prefill).toMatchObject({ workoutId: 'w2', injured: 40, other: 50 })
+    // Progress reads the session the same way, so the two screens agree.
+    expect(symmetrySeries(records, 'bulgarian-split-squat', 'right')).toEqual([{ date: '2026-12-08', percent: 80, basis: 'load', injured: 40, other: 50 }])
+  })
+
+  it('a better side on a different slot can’t make up symmetry: a session whose sides were logged only on different slots is not a both-sides session', () => {
+    const split = [set('w2', 'right', 1, 50, 8), on('added-x', set('w2', 'left', 1, 50, 8))]
+    const records = attachChecks([workout('w1', '2026-12-01'), workout('w2', '2026-12-08')], [set('w1', 'right', 1, 30, 8), set('w1', 'left', 1, 40, 8), ...split], [])
+    expect(loadTestPrefill(records, 'bulgarian-split-squat', 'right')).toEqual({
+      prefill: { date: '2026-12-01', workoutId: 'w1', locationId: 'planet-fitness', injured: 30, other: 40 },
+      passedOver: { rackCapped: 0, noLoad: 0 },
+    })
+    expect(symmetrySeries(records, 'bulgarian-split-squat', 'right')).toEqual([{ date: '2026-12-01', percent: 75, basis: 'load', injured: 30, other: 40 }])
+    expect(symmetryLeftOut(records, 'bulgarian-split-squat', 'right')).toEqual([])
+  })
+
+  it('one rack-capped pair passes the whole session over, whichever slot it was on', () => {
+    const capped = (s: SetLog): SetLog => ({ ...s, rackCapped: true })
+    const w2 = [set('w2', 'right', 1, 40, 8), set('w2', 'left', 1, 50, 8), capped(on('added-x', set('w2', 'right', 1, 25, 8))), capped(on('added-x', set('w2', 'left', 1, 25, 8)))]
+    const records = attachChecks([workout('w1', '2026-12-01'), workout('w2', '2026-12-08')], [set('w1', 'right', 1, 30, 8), set('w1', 'left', 1, 40, 8), ...w2], [])
+    expect(loadTestPrefill(records, 'bulgarian-split-squat', 'right')).toEqual({
+      prefill: { date: '2026-12-01', workoutId: 'w1', locationId: 'planet-fitness', injured: 30, other: 40 },
+      passedOver: { rackCapped: 1, noLoad: 0 },
+    })
+    expect(symmetrySeries(records, 'bulgarian-split-squat', 'right').map((p) => p.date)).toEqual(['2026-12-01'])
+  })
+
+  it('a pair with no load on a side is passed over for one with loads on both; with none, the session counts as no load', () => {
+    const bodyweight = [set('w2', 'right', 1, 0, 8), set('w2', 'left', 1, 0, 8)]
+    const records = attachChecks([workout('w2', '2026-12-08')], [...bodyweight, on('added-x', set('w2', 'right', 1, 45, 8)), on('added-x', set('w2', 'left', 1, 50, 8))], [])
+    expect(loadTestPrefill(records, 'bulgarian-split-squat', 'right').prefill).toMatchObject({ injured: 45, other: 50 })
+    expect(loadTestPrefill(attachChecks([workout('w2', '2026-12-08')], bodyweight, []), 'bulgarian-split-squat', 'right')).toEqual({ prefill: null, passedOver: { rackCapped: 0, noLoad: 1 } })
   })
 })
 

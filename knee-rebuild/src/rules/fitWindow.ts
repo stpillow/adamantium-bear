@@ -2,8 +2,13 @@ import type { RepUnit } from '../schema/index.ts'
 import { EXTENSION_MAX } from './extensions.ts'
 
 /*
- * "I have 40 minutes": how much of a session fits the time he has. Shawn gives the minutes; this
- * estimates what each exercise takes (its sets, the work in each, the rest after it) and drops whole
+ * "I have 40 minutes": how much of a session fits the time he has. The minutes are door to door
+ * (Shawn, Nov 8, decision 14: "45 minutes means door-to-door"): the warm-up's minutes (the bike and
+ * the knee circuit, src/rules/warmUp.ts) come off the top before any exercise is fitted, both when
+ * the session is cut and when extra time is filled, and every minutes figure here includes them
+ * (PROGRAM-QUESTIONS 166). Shawn gives the minutes; this
+ * estimates what each exercise takes (its sets, the work in each, the rest after it, and the warm-up
+ * sets shown before set 1 of a big lift, each followed by a full rest: PROGRAM-QUESTIONS 167) and drops whole
  * exercises, never trims a set, until the rest fits. What goes first: the exercises he added, then
  * the ones program.md marks optional, then program.md's own from the end of the session backwards,
  * so the work the program leads with (the prep, the main lifts) is what stays. An exercise already
@@ -47,6 +52,8 @@ export interface WindowSlot {
   extra?: boolean
   /** An extra the gym can run as it stands; one it can't is never added. Absent means it can. */
   eligible?: boolean
+  /** The reps of each warm-up set shown before set 1 (`rampReps`, src/rules/warmUpRamp.ts); absent or [] = none. Counted, never logged. */
+  rampReps?: readonly number[]
 }
 
 /** The minutes as stored: whole minutes in range, or null for the full session. */
@@ -72,10 +79,14 @@ export function setWorkSeconds(side: Pick<WindowSide, 'repsTarget' | 'repUnit'>)
   }
 }
 
-/** A slot's work in seconds, and its rounds (the sets across its sides, each followed by a rest). */
+/** A slot's work in seconds, and its rounds (the sets across its sides, each followed by a rest); a warm-up set is a round of its own. */
 function slotWork(slot: WindowSlot): { work: number; rounds: number } {
   let work = 0
   let rounds = 0
+  for (const reps of slot.rampReps ?? []) {
+    work += setWorkSeconds({ repsTarget: reps, repUnit: 'reps' })
+    rounds += 1
+  }
   for (const side of slot.sides) {
     work += side.sets * setWorkSeconds(side)
     rounds += side.sets
@@ -123,20 +134,34 @@ export interface Fit {
   added: string[]
   /** The slots left out, in the order they were dropped. */
   dropped: string[]
-  /** The estimate for the full session and for what is kept, in minutes. */
+  /** The estimate for the full session and for what is kept, in minutes, door to door: the warm-up included. */
   fullMinutes: number
   keptMinutes: number
   /** What is kept fits the minutes given. False only when the session's first exercise, or what is logged, is already past it. */
   fits: boolean
+  /** The warm-up's minutes taken off the top. */
+  warmUpMinutes: number
+  /** The warm-up alone takes all the minutes given, or more. */
+  warmUpPastWindow: boolean
+  /** With a warm-up, what it leaves is shorter than the session's first exercise: only that one (and anything logged) stays. */
+  firstPastWindow: boolean
+  /** Kept slots whose warm-up sets are counted in the time, in session order. */
+  ramped: string[]
 }
 
-/** Which slots fit `minutes` (null: the full session): some left out, or, with time to spare, extras added. */
-export function fitToWindow(slots: readonly WindowSlot[], minutes: number | null, restSeconds: number): Fit {
+/**
+ * Which slots fit `minutes` (null: the full session) once the warm-up's minutes are taken off the
+ * top: some left out, or, with time to spare, extras added. A window no longer than the warm-up
+ * leaves nothing for the exercises: the first exercise still stays, and `fits` says it runs past.
+ */
+export function fitToWindow(slots: readonly WindowSlot[], minutes: number | null, restSeconds: number, warmUpMinutes: number): Fit {
+  const warm = Math.max(0, warmUpMinutes)
   const base = slots.filter((s) => !s.extra)
   const pool = slots.filter((s) => s.extra)
   const all = units(base, restSeconds)
   const full = all.reduce((sum, u) => sum + u.seconds, 0)
-  const limit = minutes === null ? Infinity : minutes * 60
+  // The time the exercises have: the cut and the add both read it.
+  const limit = minutes === null ? Infinity : Math.max(0, (minutes - warm) * 60)
   const dropOrder = all
     .filter((u) => u.index !== 0 && !u.slots.some((s) => s.logged))
     .sort((a, b) => {
@@ -171,12 +196,18 @@ export function fitToWindow(slots: readonly WindowSlot[], minutes: number | null
   }
   const out = new Set(dropped)
   const addedIds = new Set(added)
+  const kept = slots.filter((s) => (s.extra ? addedIds.has(s.slotId) : !out.has(s.slotId)))
+  const first = all[0]
   return {
-    keep: slots.filter((s) => (s.extra ? addedIds.has(s.slotId) : !out.has(s.slotId))).map((s) => s.slotId),
+    keep: kept.map((s) => s.slotId),
     added: slots.filter((s) => addedIds.has(s.slotId)).map((s) => s.slotId),
     dropped,
-    fullMinutes: minutesOf(full),
-    keptMinutes: minutesOf(total),
+    fullMinutes: minutesOf(full) + warm,
+    keptMinutes: minutesOf(total) + warm,
     fits: total <= limit,
+    warmUpMinutes: warm,
+    warmUpPastWindow: minutes !== null && minutes <= warm,
+    firstPastWindow: minutes !== null && warm > 0 && first !== undefined && first.seconds > limit,
+    ramped: kept.filter((s) => (s.rampReps?.length ?? 0) > 0).map((s) => s.slotId),
   }
 }

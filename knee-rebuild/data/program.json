@@ -2759,7 +2759,8 @@
       "loadType": "band",
       "loadUnit": "none",
       "increment": 0,
-      "unilateral": false
+      "unilateral": false,
+      "perSideLabel": "each way"
     },
     {
       "id": "copenhagen-plank-short",
@@ -3272,7 +3273,8 @@
       "loadType": "bodyweight",
       "loadUnit": "none",
       "increment": 0,
-      "unilateral": false
+      "unilateral": false,
+      "perSideLabel": "each side"
     },
     {
       "id": "side-plank",
@@ -3283,7 +3285,8 @@
       "loadType": "time",
       "loadUnit": "s",
       "increment": 5,
-      "unilateral": false
+      "unilateral": false,
+      "perSideLabel": "each side"
     },
     {
       "id": "pallof-press",
@@ -3296,7 +3299,8 @@
       "loadType": "stack",
       "loadUnit": "lb",
       "increment": 5,
-      "unilateral": false
+      "unilateral": false,
+      "perSideLabel": "each side"
     },
     {
       "id": "farmers-carry",
@@ -3417,7 +3421,8 @@
       "loadType": "bodyweight",
       "loadUnit": "none",
       "increment": 0,
-      "unilateral": false
+      "unilateral": false,
+      "perSideLabel": "each side"
     },
     {
       "id": "single-leg-forward-hop-stick",
@@ -3472,7 +3477,548 @@
       "loadType": "bodyweight",
       "loadUnit": "none",
       "increment": 0,
-      "unilateral": false
+      "unilateral": false,
+      "perSideLabel": "each way"
+    },
+    {
+      "id": "db-curl",
+      "name": "Dumbbell curl",
+      "pattern": "pull",
+      "equipment": "Dumbbells",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-each",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Stand tall with soft knees, elbows pinned at your sides; lower for 2 s.",
+          "No swinging: if the hips or knees help, the weight is too heavy."
+        ],
+        "substitutionIds": [
+          "hammer-curl"
+        ]
+      }
+    },
+    {
+      "id": "hammer-curl",
+      "name": "Hammer curl",
+      "pattern": "pull",
+      "equipment": "Dumbbells",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-each",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Palms face each other the whole way; elbows stay at your sides.",
+          "Stand tall with soft knees; lower for 2 s."
+        ],
+        "substitutionIds": [
+          "db-curl"
+        ]
+      }
+    },
+    {
+      "id": "triceps-pressdown",
+      "name": "Triceps pressdown (cable)",
+      "pattern": "push",
+      "equipment": "Cable station, straight bar",
+      "requires": [
+        "cable-station"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Elbows pinned at your sides; press down to straight arms, squeeze 1 s, back up to 90°.",
+          "Stand tall with soft knees; don't lean over the bar."
+        ],
+        "substitutionIds": [
+          "overhead-triceps-extension",
+          "bench-dip"
+        ]
+      }
+    },
+    {
+      "id": "overhead-triceps-extension",
+      "name": "Overhead triceps extension",
+      "pattern": "push",
+      "equipment": "One dumbbell",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-single",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "One dumbbell in both hands overhead; lower behind the head with the elbows pointing up, then straighten.",
+          "Stand tall, ribs down, knees soft, or sit on a bench."
+        ],
+        "substitutionIds": [
+          "triceps-pressdown",
+          "bench-dip"
+        ]
+      }
+    },
+    {
+      "id": "lateral-raise",
+      "name": "Lateral raise",
+      "pattern": "push",
+      "equipment": "Dumbbells",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-each",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 12,
+        "repsMax": 15,
+        "cues": [
+          "Raise out to the sides to shoulder height with a soft elbow; lower for 2 s.",
+          "Keep it light: if you shrug or swing it up, go down 5 lb."
+        ],
+        "substitutionIds": [
+          "upright-row-cable",
+          "front-raise"
+        ]
+      }
+    },
+    {
+      "id": "push-up",
+      "name": "Push-up",
+      "pattern": "push",
+      "equipment": "Floor",
+      "requires": [],
+      "loadType": "bodyweight",
+      "loadUnit": "none",
+      "increment": 0,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 8,
+        "repsMax": 12,
+        "cues": [
+          "On the toes, not the knees: kneeling push-ups put weight on the kneecap.",
+          "Get down and up without kneeling: hands to the floor, step the feet back into a plank, and walk them back in to stand.",
+          "Body in one line, chest to a fist off the floor; too hard, put the hands on a bench."
+        ],
+        "substitutionIds": [
+          "chest-press-machine",
+          "db-bench-press"
+        ]
+      }
+    },
+    {
+      "id": "front-raise",
+      "name": "Front raise",
+      "pattern": "push",
+      "equipment": "Dumbbells",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-each",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Raise in front to eye level with a soft elbow; lower for 2 s.",
+          "Alternate arms if both together makes you lean back; knees soft."
+        ],
+        "substitutionIds": [
+          "lateral-raise"
+        ]
+      }
+    },
+    {
+      "id": "upright-row-cable",
+      "name": "Upright row (cable)",
+      "pattern": "pull",
+      "equipment": "Cable station, straight bar",
+      "requires": [
+        "cable-station"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Hands shoulder-width or wider; pull to the lower chest, elbows no higher than the shoulders.",
+          "Stop the set if the front of the shoulder pinches."
+        ],
+        "substitutionIds": [
+          "lateral-raise",
+          "shrug"
+        ]
+      }
+    },
+    {
+      "id": "shrug",
+      "name": "Dumbbell shrug",
+      "pattern": "pull",
+      "equipment": "Dumbbells",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-each",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 15,
+        "cues": [
+          "Straight up toward the ears, squeeze 1 s, straight down; no rolling.",
+          "Pick the dumbbells up and set them down with a hip hinge and soft knees, not a squat."
+        ],
+        "substitutionIds": [
+          "upright-row-cable"
+        ]
+      }
+    },
+    {
+      "id": "overhead-press-machine",
+      "name": "Overhead press machine",
+      "pattern": "push",
+      "equipment": "Shoulder press machine",
+      "requires": [
+        "shoulder-press-machine"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 8,
+        "repsMax": 10,
+        "cues": [
+          "Seat set so the handles start at shoulder height; press up without a hard lockout, lower for 2 s.",
+          "Back flat on the pad, feet flat; the legs stay out of it."
+        ],
+        "substitutionIds": [
+          "seated-db-shoulder-press"
+        ]
+      }
+    },
+    {
+      "id": "cable-fly",
+      "name": "Cable fly",
+      "pattern": "push",
+      "equipment": "Cable crossover",
+      "requires": [
+        "cable-crossover"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "notes": "A pec deck does the same job; the rear-delt machine at some clubs turns round for it.",
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Handles at chest height, one foot ahead with soft knees; bring the hands together in a wide arc, elbows soft and fixed.",
+          "Stop the stretch where the front of the shoulder stays comfortable."
+        ],
+        "substitutionIds": [
+          "chest-press-machine",
+          "push-up"
+        ]
+      }
+    },
+    {
+      "id": "db-pullover",
+      "name": "Dumbbell pullover",
+      "pattern": "pull",
+      "equipment": "One dumbbell, flat bench",
+      "requires": [
+        "dumbbells",
+        "flat-bench"
+      ],
+      "loadType": "dumbbell-single",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Lie along the bench, feet flat on the floor; one dumbbell over the chest in both hands.",
+          "Lower behind the head only as far as the shoulders allow, ribs down; pull back over the chest."
+        ],
+        "substitutionIds": [
+          "straight-arm-pulldown",
+          "lat-pulldown"
+        ]
+      }
+    },
+    {
+      "id": "straight-arm-pulldown",
+      "name": "Straight-arm pulldown",
+      "pattern": "pull",
+      "equipment": "Cable station, straight bar",
+      "requires": [
+        "cable-station"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 12,
+        "cues": [
+          "Arms long with a soft elbow; sweep the bar from eye level to the thighs.",
+          "Hinge a little at the hips with soft knees; the legs stay out of it."
+        ],
+        "substitutionIds": [
+          "db-pullover",
+          "lat-pulldown"
+        ]
+      }
+    },
+    {
+      "id": "assisted-dip",
+      "name": "Assisted dip",
+      "pattern": "push",
+      "equipment": "Assisted pull-up/dip machine",
+      "requires": [
+        "assisted-pull-up"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "loadDirection": "down",
+      "unilateral": false,
+      "notes": "The stack is the assist: a lower number is harder.",
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 6,
+        "repsMax": 10,
+        "cues": [
+          "Kneeling on the pad pushes the assist up through the kneecaps; if that is sore at all, do the bench dip instead.",
+          "Lower until the upper arms are level with the floor, no deeper; press up."
+        ],
+        "substitutionIds": [
+          "bench-dip",
+          "triceps-pressdown"
+        ]
+      }
+    },
+    {
+      "id": "bench-dip",
+      "name": "Bench dip",
+      "pattern": "push",
+      "equipment": "Flat bench",
+      "requires": [
+        "flat-bench"
+      ],
+      "loadType": "bodyweight",
+      "loadUnit": "none",
+      "increment": 0,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 8,
+        "repsMax": 12,
+        "cues": [
+          "Hands on the bench edge behind you, knees bent about 90° with the feet flat: the legs only steady you.",
+          "Lower until the upper arms are level with the floor, no deeper; stop if the front of the shoulder pinches."
+        ],
+        "substitutionIds": [
+          "triceps-pressdown",
+          "assisted-dip"
+        ]
+      }
+    },
+    {
+      "id": "inverted-row",
+      "name": "Inverted row (Smith bar)",
+      "pattern": "pull",
+      "equipment": "Smith machine",
+      "requires": [
+        "smith-machine"
+      ],
+      "loadType": "bodyweight",
+      "loadUnit": "none",
+      "increment": 0,
+      "unilateral": false,
+      "accessory": {
+        "tier": "upper",
+        "sets": 3,
+        "repsMin": 8,
+        "repsMax": 12,
+        "cues": [
+          "Smith bar at about hip height, safety stops set; hang under it, heels on the floor, body straight.",
+          "Pull the chest to the bar, lower for 2 s; too hard, raise the bar a notch."
+        ],
+        "substitutionIds": [
+          "seated-cable-row",
+          "lat-pulldown"
+        ]
+      }
+    },
+    {
+      "id": "cable-crunch",
+      "name": "Cable crunch (standing)",
+      "pattern": "core",
+      "equipment": "Cable station, straight bar or handle",
+      "requires": [
+        "cable-station"
+      ],
+      "loadType": "stack",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "core",
+        "sets": 3,
+        "repsMin": 10,
+        "repsMax": 15,
+        "cues": [
+          "Stand facing away from the stack, the bar or handle held by your ears; knees soft, hips still.",
+          "Curl the ribs down toward the hips, then back up slowly; the legs stay out of it."
+        ],
+        "substitutionIds": [
+          "pallof-press",
+          "dead-bug"
+        ]
+      }
+    },
+    {
+      "id": "hanging-knee-raise",
+      "name": "Knee raise on the dip handles",
+      "pattern": "core",
+      "equipment": "Assisted pull-up/dip machine, dip handles",
+      "requires": [
+        "assisted-pull-up"
+      ],
+      "loadType": "bodyweight",
+      "loadUnit": "none",
+      "increment": 0,
+      "unilateral": false,
+      "accessory": {
+        "tier": "core",
+        "sets": 3,
+        "repsMin": 8,
+        "repsMax": 12,
+        "cues": [
+          "No weight pinned, the knee pad folded or locked down; climb on and off by the steps.",
+          "Support on the dip handles with straight arms; raise the knees to hip height without swinging, lower for 2 s.",
+          "Step down onto the platform at the end; never drop to the floor."
+        ],
+        "substitutionIds": [
+          "dead-bug",
+          "pallof-press"
+        ]
+      }
+    },
+    {
+      "id": "farmers-hold",
+      "name": "Farmer's hold",
+      "pattern": "core",
+      "equipment": "Dumbbells",
+      "requires": [
+        "dumbbells"
+      ],
+      "loadType": "dumbbell-each",
+      "loadUnit": "lb",
+      "increment": 5,
+      "unilateral": false,
+      "accessory": {
+        "tier": "core",
+        "repUnit": "seconds",
+        "sets": 3,
+        "repsMin": 30,
+        "repsMax": 45,
+        "cues": [
+          "Stand tall with a heavy dumbbell in each hand, shoulders down, ribs down, knees soft; breathe.",
+          "A hold, not a carry: pick up and set down with a hip hinge and soft knees, not a deep squat."
+        ],
+        "substitutionIds": [
+          "side-plank"
+        ]
+      }
+    },
+    {
+      "id": "ab-rollout",
+      "name": "Ab rollout (stability ball)",
+      "pattern": "core",
+      "equipment": "Stability ball or ab wheel, a mat",
+      "requires": [
+        "stability-ball",
+        "mats"
+      ],
+      "loadType": "bodyweight",
+      "loadUnit": "none",
+      "increment": 0,
+      "unilateral": false,
+      "accessory": {
+        "tier": "core",
+        "sets": 3,
+        "repsMin": 6,
+        "repsMax": 10,
+        "cues": [
+          "Kneel on a folded mat, forearms on the ball (or hands on an ab wheel); if kneeling hurts the injured knee, stop and do the dead bug instead.",
+          "Roll out only as far as the low back stays flat, then pull back with the abs."
+        ],
+        "substitutionIds": [
+          "dead-bug",
+          "pallof-press"
+        ]
+      }
     }
   ],
   "equipment": [
@@ -4043,6 +4589,33 @@
         "2": 5,
         "3": 3,
         "4": 3
+      },
+      "bikeMinutes": 5,
+      "ramp": {
+        "text": "Warm-up sets (added Nov 9, 2026): after the knee circuit, before the first working set of the leg press, the Smith box squat, goblet squat or 45° leg press, the dumbbell or Smith RDL, or the dumbbell bench, incline or shoulder press (or the chest press machine or Smith bench press standing in for one), do two lighter sets of the same exercise: 8 reps at half the day's working load, then 5 reps at three-quarters of it, each rounded down to the nearest step the machine, plates or dumbbells allow. Nothing on the Smith bar or the sled is the empty bar or sled, and a stack under its lightest plate is the lightest plate. None on single-leg, bodyweight, band, balance, timed or jumping work, on the back extension, or on the accessory and core catalog. They aren't logged and don't count as sets.",
+        "percents": [
+          0.5,
+          0.75
+        ],
+        "reps": [
+          8,
+          5
+        ],
+        "patterns": [
+          "squat",
+          "hinge",
+          "push"
+        ],
+        "loadTypes": [
+          "stack",
+          "plates",
+          "smith-plates",
+          "dumbbell-each",
+          "dumbbell-single"
+        ],
+        "excludeRequires": [
+          "back-extension-bench"
+        ]
       }
     },
     "run": "Before a run: 3–5 minutes of walking, then the leg swings and 10 bodyweight squats to a comfortable depth.",
