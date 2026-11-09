@@ -9,13 +9,16 @@ export function phaseWeekOf(week: number, phaseEnteredWeek: number): number {
   return week - phaseEnteredWeek + 1
 }
 
+/** Whether a slot runs in a given week of its phase: a banded slot (snap-downs, plyo blocks) only in its weeks. */
+export function slotRunsInPhaseWeek(slot: Partial<Pick<Slot, 'phaseWeeks'>>, phaseWeek: number): boolean {
+  if (!slot.phaseWeeks) return true
+  const [from, to] = slot.phaseWeeks
+  return phaseWeek >= from && (to === null || phaseWeek <= to)
+}
+
 /** The slots a template runs in a given week of its phase: banded slots (snap-downs, plyo blocks) only in their weeks. */
 export function slotsForPhaseWeek(template: SessionTemplate, phaseWeek: number): Slot[] {
-  return template.slots.filter((slot) => {
-    if (!slot.phaseWeeks) return true
-    const [from, to] = slot.phaseWeeks
-    return phaseWeek >= from && (to === null || phaseWeek <= to)
-  })
+  return template.slots.filter((slot) => slotRunsInPhaseWeek(slot, phaseWeek))
 }
 
 /**

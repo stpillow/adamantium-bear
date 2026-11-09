@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { navigate } from '../app/router.ts'
 import { availableAt, planSession, PROGRAM, sessionExtensions, windowFit, withExtensions, type Gym, type SlotPlan } from '../app/session.ts'
 import { isExtraSlotId } from '../rules/extensions.ts'
+import { sessionPhaseWeek } from '../rules/compliance.ts'
 import { isLateEntry } from '../rules/retro.ts'
 import { TimeWindow } from '../components/TimeWindow.tsx'
 import { useToday } from '../app/today.ts'
@@ -151,6 +152,7 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
           template={summaryTemplate}
           sets={sets}
           injuredSide={settings.injuredSide}
+          phaseWeek={sessionPhaseWeek(workout, settings)}
           timing={{
             workout,
             sets: timedSets(sets, (slotId) => summaryTemplate.slots.find((s) => s.id === slotId)?.repUnit),

@@ -18,6 +18,7 @@ import {
   symmetryName,
   visibleRows,
   vo2Entry,
+  type AdherenceView,
   type CleanDaysView,
   type ExerciseRow,
   type ExerciseView,
@@ -97,7 +98,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
 
   return (
     <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max and KOOS.">
-      <CleanDays clean={view.clean} />
+      <CleanDays clean={view.clean} adherence={view.adherence} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
       <MilesSection miles={view.miles} />
@@ -108,8 +109,12 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
   )
 }
 
-/** 1. The stat: a Fraunces number with its unit, and the line that makes it mean something. */
-function CleanDays({ clean }: { clean: CleanDaysView }) {
+/**
+ * 1. The stat: a Fraunces number with its unit, and the line that makes it mean something. Under it
+ * (Batch B), each program week's sessions done of those scheduled, in words, newest first: a record
+ * beside the count, never a streak.
+ */
+function CleanDays({ clean, adherence }: { clean: CleanDaysView; adherence: AdherenceView }) {
   return (
     <section aria-label="Consecutive clean days" className={SECTION}>
       <h2 className={HEADING}>Consecutive clean days</h2>
@@ -122,6 +127,18 @@ function CleanDays({ clean }: { clean: CleanDaysView }) {
         </span>
       </p>
       {clean.note ? <p className="text-small text-on-dark-muted">{clean.note}</p> : null}
+      {adherence.note ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-small text-on-dark-muted">{adherence.note}</p>
+          <ul aria-label="Sessions done by week" className="flex flex-col gap-1">
+            {adherence.lines.map((line) => (
+              <li key={line} className="text-body text-on-dark">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -245,7 +262,7 @@ function MilesSection({ miles }: { miles: MilesView }) {
 
 /**
  * 5. Weekly training load (metrics phase 1): RPE × minutes for every session and run, by program
- * week, and the warning when the 7 days through yesterday run well above or below the weeks before.
+ * week, and the warning when the smoothed recent rate runs well above or below the longer one (Batch B: EWMA).
  * The warning is a word with an arrow, never a color, and plain text (no live region: the history
  * re-reads on every write, and a status line would announce again each time). Metrics phase 2 adds
  * this week's HR load (TRIMP) in words under the warning; the warning reads the RPE load alone, so
@@ -256,7 +273,8 @@ function TrainingLoadSection({ training }: { training: TrainingLoadView }) {
     <section aria-label="Weekly training load" className={SECTION}>
       <h2 className={HEADING}>Weekly training load</h2>
       <p className="text-small text-on-dark-muted">
-        RPE × minutes for every session and run, swaps included, by program week. A warning only: nothing here changes a prescription. HR load (TRIMP) is shown beside the training load; the
+        RPE × minutes for every session and run, swaps included, by program week. The comparison below is smoothed day by day, weighted toward yesterday. A warning only: nothing here
+        changes a prescription. HR load (TRIMP) is shown beside the training load; the
         warning reads the RPE load alone.
       </p>
       <p className="text-body text-on-dark">
