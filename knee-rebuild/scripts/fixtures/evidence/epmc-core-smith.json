@@ -1,0 +1,30 @@
+{
+ "hitCount": 1,
+ "resultList": {
+  "result": [
+   {
+    "id": "28596288",
+    "source": "MED",
+    "pmid": "28596288",
+    "pmcid": "PMC5739826",
+    "doi": "10.1136/bjsports-2016-097383",
+    "title": "Should exercises be painful in the management of chronic musculoskeletal pain? A systematic review and meta-analysis.",
+    "authorString": "Smith BE, Hendrick P, Smith TO, Bateman M, Moffatt F, Rathleff MS, Selfe J, Logan P.",
+    "pubYear": "2017",
+    "pubTypeList": {
+     "pubType": [
+      "Meta-Analysis",
+      "Systematic Review",
+      "systematic-review",
+      "Journal Article"
+     ]
+    },
+    "journalInfo": {
+     "journal": {
+      "title": "British journal of sports medicine"
+     }
+    }
+   }
+  ]
+ }
+}

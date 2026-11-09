@@ -1,0 +1,38 @@
+{
+ "hitCount": 1,
+ "resultList": {
+  "result": [
+   {
+    "id": "42295412",
+    "source": "MED",
+    "pmid": "42295412",
+    "doi": "10.1007/s00590-026-04823-w",
+    "title": "Thermo-mobility coupling: continuous knee temperature-step interaction patterns predict functional recovery after total knee arthroplasty.",
+    "authorString": "Carr AJ, Lohmander S, Khalil Z, Gardner TJ, Vicario E, Pagnano MJ, Roberts HC, Takahashi K, Dwyer LM, Naila H.",
+    "pubYear": "2026",
+    "pubTypeList": {
+     "pubType": [
+      "Retracted Publication",
+      "Journal Article"
+     ]
+    },
+    "commentCorrectionList": {
+     "commentCorrection": [
+      {
+       "source": "MED",
+       "id": "42983106",
+       "reference": "Eur J Orthop Surg Traumatol. 2026 Nov 5;37(1):5. doi: 10.1007/s00590-026-04986-6.",
+       "type": "Retraction in",
+       "orderIn": 1
+      }
+     ]
+    },
+    "journalInfo": {
+     "journal": {
+      "title": "European journal of orthopaedic surgery & traumatology : orthopedie traumatologie"
+     }
+    }
+   }
+  ]
+ }
+}

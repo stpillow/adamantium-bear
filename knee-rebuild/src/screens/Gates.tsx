@@ -10,6 +10,7 @@ import { useAclRsiEntries, useHistory, useLocations, useSettings } from '../db/h
 import { addGateTest, saveSettings, type History } from '../db/repo.ts'
 import { advancePhase } from '../rules/progress.ts'
 import type { AclRsiEntry, GateItem, IsoDate, Location, Settings } from '../schema/index.ts'
+import { gateEvidenceLines, rationaleView } from './Evidence.helpers.ts'
 import {
   advanceErrorSentence,
   advancedWords,
@@ -38,6 +39,7 @@ import {
   type SymmetryForm,
   type Trial,
 } from './Gates.helpers.ts'
+import { GateCitation } from './program/Evidence.tsx'
 
 const TITLE = 'Gates'
 const LABEL = 'font-mono text-small font-normal uppercase tracking-[0.22em] text-on-dark-muted'
@@ -255,6 +257,12 @@ function GateScreen({ today, settings, history, locations, aclRsiEntries }: { to
             />
           ))}
         </ol>
+        {/* Batch F: the attribution once any item has a "Why this test", and the note when some don't (PROGRAM-QUESTIONS 197). */}
+        {gateEvidenceLines(view.items.map((r) => r.item.id)).map((line) => (
+          <p key={line} className="text-small text-on-dark-muted">
+            {line}
+          </p>
+        ))}
       </section>
 
       {/* The KOOS offer (Batch A): plain routing words, never a score — scores live on Progress alone (PROGRAM-QUESTIONS 158). */}
@@ -342,6 +350,7 @@ function ItemRow({
         <p className="text-body text-on-dark">{row.item.text}</p>
       )}
       <p className="text-small text-on-dark-dim">{row.detail}</p>
+      <WhyThisTest itemId={row.item.id} />
       {ticking ? <p className="text-small text-on-dark-muted">Saving…</p> : null}
       {error ? (
         <p role="alert" className="text-body text-on-dark">
@@ -367,6 +376,38 @@ function ItemRow({
         />
       ) : null}
     </li>
+  )
+}
+
+/**
+ * "Why this test" (Batch F): where a curated study speaks to the item, a sentence in our words and the
+ * citations behind it, collapsed until asked for. Display only: it reads nothing the gate decides
+ * from and changes no verdict; its open state lives here and nowhere else.
+ */
+function WhyThisTest({ itemId }: { itemId: string }) {
+  const [open, setOpen] = useState(false)
+  const view = rationaleView(itemId)
+  if (view === null) return null
+  const id = `why-${itemId}`
+  return (
+    <div className="flex flex-col gap-2">
+      <Button variant="quiet" className="self-start px-0!" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide why' : 'Why this test'}
+      </Button>
+      {/* Always in the page, so aria-controls names an element that exists, open or not. */}
+      <div id={id}>
+        {open ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-small text-on-dark-dim">{view.why}</p>
+            <ul className="flex flex-col">
+              {view.citations.map((c) => (
+                <GateCitation key={c.id} citation={c} />
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 

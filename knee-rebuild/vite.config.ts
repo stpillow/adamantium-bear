@@ -45,7 +45,7 @@ export default defineConfig({
   ],
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'api/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'api/**/*.test.ts', 'scripts/**/*.test.ts'],
     // The guards (src/rules/guard.test.ts, src/db/dumbbellMax.guard.test.ts) glob the sources; a
     // cached transform keeps the old list, so a file added since the last run would pass them.
     fsModuleCache: false,

@@ -181,6 +181,12 @@ test('the service worker controls the page, and every screen renders offline aft
   // Every chart decoded: a broken one is complete with no width, and the poll runs out.
   await expect.poll(() => images.evaluateAll((all) => all.every((img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0))).toBe(true)
 
+  // The Evidence view, offline: the citations are bundled, so the studies list with no network (Batch F).
+  await page.getByRole('radio', { name: /Evidence/ }).click()
+  const phaseOne = page.getByRole('region', { name: 'Phase 1 · Foundation' })
+  await phaseOne.getByRole('button', { name: 'Show 5 studies' }).click()
+  await expect(phaseOne.getByRole('heading', { name: /^Shedding light on the non-operative treatment/, level: 4 })).toBeVisible()
+
   // The three vendored families came out of the cache: titles, body and labels in their own faces.
   const faces = await page.evaluate(async () => {
     await document.fonts.ready

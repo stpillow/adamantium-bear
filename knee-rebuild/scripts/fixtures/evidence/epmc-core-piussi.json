@@ -1,0 +1,40 @@
+{
+ "hitCount": 1,
+ "resultList": {
+  "result": [
+   {
+    "id": "38032099",
+    "source": "MED",
+    "pmid": "38032099",
+    "doi": "10.2519/jospt.2023.11977",
+    "title": "Better Safe Than Sorry? A Systematic Review with Meta-analysis on Time to Return to Sport After ACL Reconstruction as a Risk Factor for Second ACL Injury.",
+    "authorString": "Piussi R, Simonson R, Zsidai B, Grassi A, Karlsson J, Della Villa F, Samuelsson K, Senorski EH.",
+    "pubYear": "2024",
+    "pubTypeList": {
+     "pubType": [
+      "Meta-Analysis",
+      "Research Support, Non-U.S. Gov't",
+      "Systematic Review",
+      "Journal Article"
+     ]
+    },
+    "commentCorrectionList": {
+     "commentCorrection": [
+      {
+       "source": "MED",
+       "id": "39350595",
+       "reference": "J Orthop Sports Phys Ther. 2024 Oct;54(10):679. doi: 10.2519/jospt.2024.54.10.679.",
+       "type": "Erratum in",
+       "orderIn": 1
+      }
+     ]
+    },
+    "journalInfo": {
+     "journal": {
+      "title": "The Journal of orthopaedic and sports physical therapy"
+     }
+    }
+   }
+  ]
+ }
+}
