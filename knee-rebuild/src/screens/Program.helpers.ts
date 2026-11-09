@@ -27,10 +27,12 @@ export function exerciseName(id: string): string {
   return nameOf(id)
 }
 
-export type ProgramView = 'phase' | 'reference'
+/** The third view, the published studies (Batch F), is read from src/screens/Evidence.helpers.ts; this file only names it. */
+export type ProgramView = 'phase' | 'reference' | 'evidence'
 export const VIEW_CHOICES: readonly { value: ProgramView; label: string }[] = [
   { value: 'phase', label: 'This phase' },
   { value: 'reference', label: 'program.md' },
+  { value: 'evidence', label: 'Evidence' },
 ]
 
 export const REFERENCE_LEAD = 'program.md as written, for reference. The app runs on its transcription, with your slot edits on top; program.md itself never changes.'

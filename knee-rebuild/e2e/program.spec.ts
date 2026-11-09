@@ -239,3 +239,66 @@ async function opensWhereTapped(page: Page): Promise<void> {
   expect(Math.abs((await topOf(heading)) - before)).toBeLessThan(4)
   await expect(heading).toBeInViewport()
 }
+
+test('the Evidence view lists studies as words, links them out as plain navigations, and the page never leaves its origin', async ({ page }) => {
+  // Every request the page makes, from a reload on: none may go to another host (Batch F: zero literature calls).
+  const origin = new URL(page.url()).origin
+  const elsewhere: string[] = []
+  page.on('request', (r) => {
+    if (!r.url().startsWith('data:') && new URL(r.url()).origin !== origin) elsewhere.push(r.url())
+  })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Program', level: 1 })).toBeVisible()
+
+  await page.getByRole('radio', { name: /Evidence/ }).click()
+  await expect(page.getByText('Published studies behind this phase', { exact: false })).toBeVisible()
+  const phase = page.getByRole('region', { name: 'Phase 1 · Foundation' })
+  await expect(phase.getByRole('heading', { name: 'Phase 1 · Foundation', level: 3 })).toBeVisible()
+  await expect(phase.getByText('5 studies', { exact: true })).toBeVisible()
+
+  // Rules the app runs on, opened: the pain-monitoring studies, each grade a word beside its population.
+  const rules = page.getByRole('region', { name: 'Rules the app runs on' })
+  const show = rules.getByRole('button', { name: /^Show \d+ studies$/ })
+  await expect(show).toHaveAttribute('aria-expanded', 'false')
+  await show.click()
+  await expect(rules.getByRole('button', { name: 'Hide studies' })).toHaveAttribute('aria-expanded', 'true')
+  const silbernagel = rules.getByRole('listitem').filter({ hasText: 'Continued sports activity, using a pain-monitoring model' })
+  await expect(silbernagel.getByText('Randomized trial · Low certainty (GRADE)')).toBeVisible()
+  await expect(silbernagel.getByText(/^Studied: adults with Achilles tendinopathy/)).toBeVisible()
+  await expect(page.getByText('Citations found through Europe PMC and PubMed (US National Library of Medicine).')).toBeVisible()
+
+  // The DOI link: a plain anchor to doi.org that opens the browser, at least 44 px tall.
+  const doi = silbernagel.getByRole('link', { name: 'DOI: Silbernagel et al., 2007, opens in the browser' })
+  await expect(doi).toHaveAttribute('href', 'https://doi.org/10.1177/0363546506298279')
+  await expect(doi).toHaveAttribute('target', '_blank')
+  await expect(doi).toHaveAttribute('rel', 'noopener noreferrer')
+  expect((await doi.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+
+  // Every pattern now has a study (PROGRAM-QUESTIONS 202): Push, empty in the first build, shows its count and a button.
+  const push = page.getByRole('region', { name: 'Push' })
+  await expect(push.getByText('3 studies', { exact: true })).toBeVisible()
+  await expect(push.getByRole('button', { name: 'Show 3 studies' })).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByText('No study listed yet', { exact: true })).toHaveCount(0)
+
+  // Gates: "Why this test" on the clean-weeks item, then the attribution and the no-study note.
+  await page.goto('/#/gates')
+  await expect(page.getByRole('heading', { name: 'Gates', level: 1 })).toBeVisible()
+  const cleanWeeks = page.getByRole('listitem').filter({ hasText: 'two consecutive clean weeks' })
+  const why = cleanWeeks.getByRole('button', { name: 'Why this test' })
+  await expect(why).toHaveAttribute('aria-expanded', 'false')
+  await why.click()
+  await expect(cleanWeeks.getByRole('button', { name: 'Hide why' })).toHaveAttribute('aria-expanded', 'true')
+  await expect(cleanWeeks.getByText(/^Loading through pain that stays within set limits/)).toBeVisible()
+  await expect(cleanWeeks.getByText('Sprague et al., 2021, Randomized trial: Low certainty (GRADE).')).toBeVisible()
+  await expect(page.getByText('Citations found through Europe PMC and PubMed (US National Library of Medicine).')).toBeVisible()
+  // Every Gate 1 item now has a study, so the no-study note is gone; the stance item's citations put who was studied beside each grade.
+  await expect(page.getByText('Items without “Why this test” have no study listed yet; their lines come from program.md.')).toHaveCount(0)
+  const stance = page.getByRole('listitem').filter({ hasText: '30 s of single-leg stance' }).first()
+  await stance.getByRole('button', { name: 'Why this test' }).click()
+  await expect(stance.getByText(/the 30 s line is the program’s own\.$/)).toBeVisible()
+  const negahban = stance.getByRole('listitem').filter({ hasText: 'Negahban et al., 2014, Systematic review: Very low certainty (GRADE).' })
+  await expect(negahban.getByText(/^Studied: people with an ACL injury not treated surgically/)).toBeVisible()
+  await expect(negahban.getByText(/\(abstract only\)/)).toBeVisible()
+
+  expect(elsewhere).toEqual([])
+})

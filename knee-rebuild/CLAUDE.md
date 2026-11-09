@@ -33,6 +33,7 @@ npm run build        # tsc -b && vite build → dist/ (includes sw.js and manife
 npm run preview      # serve dist/ locally; test the service worker here, not in dev
 npm run e2e          # Playwright on a fresh build: the Session A smoke test and the PWA checklist (docs/pwa-audit.md); needs Chromium, not in check
 npm run program -- --week 5 --session B   # prints a session from the seed data, deload-aware
+npm run evidence     # monthly digest: re-runs saved searches, verifies entries; prints only (docs/evidence-digest.md)
 ```
 
 Deploy: Vercel project `knee-rebuild` (SPDC team), root directory `knee-rebuild/`, framework Vite. Every push gets a preview deploy; `main` is production. Builds are skipped when this folder didn't change.
@@ -44,13 +45,16 @@ knee-rebuild/
   PROMPT.md  PLAN.md  PROGRAM-QUESTIONS.md  CLAUDE.md
   docs/program.md          the program (source of truth for training content), images in docs/media/
   data/program.json        seed data transcribed by hand from docs/program.md; validated by src/schema/program.test.ts
+  data/evidence.json       hand-curated citations (Batch F), validated by src/schema/evidence.test.ts; evidence.notes.json holds the curator's notes, read by scripts only
   scripts/program.ts       prints a session (npm run program)
+  scripts/evidence.ts      the monthly evidence digest, dev-only (npm run evidence, docs/evidence-digest.md)
   public/                  icons, static assets
   src/
     main.tsx  App.tsx  index.css (tokens live here)
     rules/                 the engine: calendar, reading, unilateral, prescription, mileage, gates, redFlags, history; pure functions + tests, nothing else decides anything
     schema/                Zod schemas for the domain model (enums, program, logs)
     program/               the validated seed and lookups (exerciseById, templateFor, nominalPhaseForWeek)
+    evidence/              the validated citation list and its lookups, read only by the Evidence helpers; never by src/rules
     db/                    Dexie database and versions
     screens/               Today, Session runner, Morning check, Run logger, Week, Progress, Gates, Program, Settings (M3+)
     components/            shared UI (steppers, tab bar, timers)
