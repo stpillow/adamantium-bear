@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Page } from '@playwright/test'
+import { onboardAsShawn } from './firstRun.ts'
 import { serveDist, type StaticServer } from './staticServer.ts'
 
 /*
@@ -51,7 +52,7 @@ test('storage this build can’t read stops the app in words, with Reload, and a
   await page.clock.install({ time: new Date(TUESDAY_WEEK_1) })
   server = await serveDist(DIST, VERCEL_JSON)
   await page.goto(`${server.url}/`)
-  await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible()
+  await onboardAsShawn(page)
   await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready
     const worker = registration.active
@@ -77,8 +78,13 @@ test('storage this build can’t read stops the app in words, with Reload, and a
   await reloaded
   expect(await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => (r?.waiting ?? null) !== null))).toBe(false)
 
-  // Once the row reads again, Reload opens the app.
+  // Once the row reads again, the app opens: on its own, since the settings query is live, or through
+  // Reload if the stopped screen is still up. Either way it must open; waiting on a Reload that the live
+  // recovery already took away was a race.
   await patchSettingsRow(page, { restTimerSeconds: 60 })
-  await page.getByRole('button', { name: 'Reload', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible()
+  const today = page.getByRole('heading', { name: 'Today', level: 1 })
+  const reload = page.getByRole('button', { name: 'Reload', exact: true })
+  await expect(today.or(reload)).toBeVisible()
+  if (!(await today.isVisible())) await reload.click({ timeout: 5_000 }).catch(() => undefined)
+  await expect(today).toBeVisible()
 })

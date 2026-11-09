@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
 
+/** First run's steps (M-U1), in order, after its first screen (`#/welcome`): one hash each, so the back gesture steps back. */
+export const FIRST_RUN_STEPS = ['side', 'start', 'gym', 'equipment', 'time', 'ready'] as const
+export type FirstRunStep = (typeof FIRST_RUN_STEPS)[number]
+
+function isFirstRunStep(text: string | undefined): text is FirstRunStep {
+  return (FIRST_RUN_STEPS as readonly string[]).includes(text ?? '')
+}
+
 export type Route =
   | { name: 'today' }
   | { name: 'session'; workoutId: string }
@@ -28,6 +36,8 @@ export type Route =
   | { name: 'koos' }
   /** The ACL-RSI questionnaire (Batch A): from gate 3's item row. */
   | { name: 'acl-rsi' }
+  /** First run (M-U1): `#/welcome`, then `#/welcome/side` … `#/welcome/ready`. Shown only on a phone with no settings row. */
+  | { name: 'welcome'; step?: FirstRunStep }
 
 /** The editor's id segment that means a gym not made yet. Stored gyms are `planet-fitness` and `loc-N` (src/rules/locations.ts), never this. */
 const NEW = 'new'
@@ -85,6 +95,8 @@ export function parseHash(hash: string): Route {
     case 'koos':
     case 'acl-rsi':
       return { name: head }
+    case 'welcome':
+      return isFirstRunStep(arg) ? { name: 'welcome', step: arg } : { name: 'welcome' }
     case 'strava': {
       const result = new URLSearchParams(query).get('result')
       return result ? { name: 'strava', result } : { name: 'strava' }
@@ -106,6 +118,8 @@ export function routeHash(route: Route): string {
       return `#/preview/${route.date}`
     case 'morning':
       return route.date ? `#/morning/${route.date}` : '#/morning'
+    case 'welcome':
+      return route.step ? `#/welcome/${route.step}` : '#/welcome'
     default:
       return `#/${route.name}`
   }
@@ -121,6 +135,42 @@ export function navigate(route: Route): void {
  */
 export function replaceRoute(route: Route): void {
   window.location.replace(routeHash(route))
+}
+
+/** `history.state` on an entry `navigateFrom` pushed: the hash of the entry under it. */
+type Below = { below: string }
+
+/** The `history.state` `navigateFrom` leaves on the entry it pushes from `from`. */
+export function stateFrom(from: Route): Below {
+  return { below: routeHash(from) }
+}
+
+/** Whether going back to `to` is a step back through history: the entry under this one, as `navigateFrom` recorded it, is `to`. */
+export function backPops(state: unknown, to: Route): boolean {
+  return typeof state === 'object' && state !== null && (state as Partial<Below>).below === routeHash(to)
+}
+
+/**
+ * Goes to a route as a new history entry, recording the route it was left from, so a Back button on
+ * the new screen (`backTo`) can step back through history instead of stacking a second copy of `from`.
+ */
+export function navigateFrom(route: Route, from: Route): void {
+  navigate(route)
+  try {
+    window.history.replaceState(stateFrom(from), '')
+  } catch {
+    // Without the record, Back replaces in place: the screen is still right.
+  }
+}
+
+/**
+ * A screen's own Back to `to`: a step back through history when the entry under this one is `to`
+ * (it was reached from there by `navigateFrom`), so the next back gesture leaves `to` too; in place
+ * of this entry otherwise (a link, a redirect, a route reached from somewhere else).
+ */
+export function backTo(to: Route): void {
+  if (backPops(window.history.state, to)) window.history.back()
+  else replaceRoute(to)
 }
 
 export function useRoute(): Route {

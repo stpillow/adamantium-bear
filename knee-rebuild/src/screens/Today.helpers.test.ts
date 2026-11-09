@@ -678,15 +678,20 @@ describe('the export reminder (M6)', () => {
   const none = { workouts: [], runs: [], morningChecks: [], gateTests: [] }
 
   it('says nothing until the last export is more than 7 days old, then counts the days', () => {
-    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-17', logged)).toBeNull()
-    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-18', logged)).toBe('No export in 8 days')
-    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-19', logged)).toBe('No export in 9 days')
+    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-17', logged, 'America/New_York')).toBeNull()
+    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-18', logged, 'America/New_York')).toBe('No export in 8 days')
+    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-19', logged, 'America/New_York')).toBe('No export in 9 days')
   })
 
   it('never exported: counts from the first day logged, and says nothing with nothing logged', () => {
-    expect(exportLine(undefined, '2026-11-09', logged)).toBeNull()
-    expect(exportLine(undefined, '2026-11-11', logged)).toBe('No export yet; the logs go back 9 days')
-    expect(exportLine(undefined, '2026-12-20', none)).toBeNull()
+    expect(exportLine(undefined, '2026-11-09', logged, 'America/New_York')).toBeNull()
+    expect(exportLine(undefined, '2026-11-11', logged, 'America/New_York')).toBe('No export yet; the logs go back 9 days')
+    expect(exportLine(undefined, '2026-12-20', none, 'America/New_York')).toBeNull()
+  })
+
+  it('counts the export’s day in the user’s zone (M-U1)', () => {
+    expect(exportLine('2026-11-10T03:00:00Z', '2026-11-18', logged, 'America/New_York')).toBe('No export in 9 days')
+    expect(exportLine('2026-11-10T03:00:00Z', '2026-11-18', logged, 'Asia/Tokyo')).toBe('No export in 8 days')
   })
 })
 

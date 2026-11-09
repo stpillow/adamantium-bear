@@ -1,10 +1,13 @@
 import { z } from 'zod'
-import { Day, Effort, IsoDate, IsoDateTime, LoadUnit, MorningTag, Pain, ReadingResult, Rpe, RunType, SetSide, Side, StopReason, WholeRpe, WorkoutStatus } from './enums.ts'
+import { Day, Effort, IsoDate, IsoDateTime, TimeZone, LoadUnit, MorningTag, Pain, ReadingResult, Rpe, RunType, SetSide, Side, StopReason, WholeRpe, WorkoutStatus } from './enums.ts'
 import { EquipmentId, Slot } from './program.ts'
 
 const id = z.string().min(1)
 
-/** The gym every install starts at, and where a workout with no `locationId` happened (M4b). */
+/**
+ * The home gym's id, and where a workout with no `locationId` happened (M4b). Its name and
+ * equipment come from first run (M-U1); the id stays, since stored workouts point at it.
+ */
 export const PLANET_FITNESS_LOCATION_ID = 'planet-fitness'
 
 /** The two items program.md says to bring (its "Bring" row); a seed test keeps this in step with the list. */
@@ -257,6 +260,21 @@ export const HrSettings = z
   })
   .refine((s) => s.maxHr === undefined || s.restingHr === undefined || s.restingHr < s.maxHr, { message: 'resting heart rate is under max', path: ['restingHr'] })
 export type HrSettings = z.infer<typeof HrSettings>
+
+/** The key of the one time zone row (M-U1). */
+export const TIME_ZONE_ID = 'time-zone'
+
+/**
+ * The zone dates are counted in (M-U1), in a one-row table of its own (src/db/db.ts, Dexie version
+ * 12), never on the settings row: older builds parse that row strictly on every read, so a new key
+ * there would brick a rollback (PROGRAM-QUESTIONS 132, 150, 203). No row means America/New_York.
+ * The zone is checked by shape here; whether this phone knows it is asked at use (`isKnownTimeZone`).
+ */
+export const TimeZoneSetting = z.strictObject({
+  id: z.literal(TIME_ZONE_ID),
+  zone: TimeZone,
+})
+export type TimeZoneSetting = z.infer<typeof TimeZoneSetting>
 
 /** A VO2 max reading's plausible bounds, in whole mL/kg/min: what the Progress entry takes, and all a stored row or a backup may hold (metrics phase 3). */
 export const VO2_MIN = 20

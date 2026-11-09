@@ -90,6 +90,15 @@ describe('subjectFor', () => {
     const bare = workout('bare', { startedAt: undefined })
     expect(subjectFor([bare], [], '2026-11-03')?.kind).toBe('workout')
   })
+  it('sorts a late entry by its fixed 17:00 UTC marker, whatever the zone (PROGRAM-QUESTIONS 212)', () => {
+    // In Tokyo, 17:00 UTC is 2 am the next day: a session entered late for Nov 3 sorts after one started live at 8 pm Tokyo time (11:00 UTC).
+    const live = workout('live', { startedAt: '2026-11-03T11:00:00.000Z' })
+    const late = workout('late', { startedAt: '2026-11-03T17:00:00.000Z' })
+    expect(subjectFor([live, late], [], '2026-11-03')).toEqual({ kind: 'workout', workout: late })
+    // In New York, 17:00 UTC is noon: a session started live at 8 pm New York time (01:00 UTC the next day) sorts after it.
+    const evening = workout('evening', { startedAt: '2026-11-04T01:00:00.000Z' })
+    expect(subjectFor([late, evening], [], '2026-11-03')).toEqual({ kind: 'workout', workout: evening })
+  })
 })
 
 describe('appliesTo and words', () => {

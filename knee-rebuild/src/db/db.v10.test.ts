@@ -100,8 +100,8 @@ describe('a version 10 database opened at version 11', () => {
     await writeVersionTen()
 
     await db.open()
-    expect(db.verno).toBe(11)
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v10Rows), 'downPeriods'].sort())
+    expect(db.verno).toBe(12)
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v10Rows), 'downPeriods', 'timeZoneSettings'].sort())
     const before = await rawRows()
     for (const [name, rows] of Object.entries(v10Rows)) expect(before[name], name).toEqual(sorted(rows))
     expect(before.downPeriods).toEqual([])

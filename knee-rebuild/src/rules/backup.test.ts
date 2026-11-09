@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import appSource from '../App.tsx?raw'
-import type { DownPeriod, Location, Settings } from '../schema/index.ts'
+import type { DownPeriod, Location, Settings, TimeZoneSetting } from '../schema/index.ts'
 import {
   BACKUP_MAX_BYTES,
   BACKUP_SCHEMA_VERSION,
@@ -24,6 +24,8 @@ import {
   settingsOnImport,
   sizeProblem,
   summarize,
+  timeZoneImportChange,
+  timeZoneOnImport,
   type Backup,
   type BackupTables,
   type StoredContents,
@@ -132,6 +134,7 @@ function tables(): BackupTables {
       { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', endedOn: '2026-11-17', declaredAt: '2026-11-14T13:00:00.000Z', note: 'Flu, “bad” one' },
       { id: 'dp-2026-11-19', start: '2026-11-19', plannedEnd: '2026-11-23', declaredAt: '2026-11-19T13:00:00.000Z' },
     ],
+    timeZoneSettings: [{ id: 'time-zone', zone: 'America/Los_Angeles' }],
   }
 }
 
@@ -180,7 +183,7 @@ describe('the export file', () => {
 
   it('is two-space JSON with a final newline, named for the day it is written', () => {
     const text = backupText(built())
-    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 11,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
+    expect(text.startsWith('{\n  "app": "knee-rebuild",\n  "schemaVersion": 12,\n  "exportedAt": "2026-11-21T14:05:00.000Z",\n')).toBe(true)
     expect(text.endsWith('}\n')).toBe(true)
     expect(backupFileName('2026-11-21')).toBe('knee-rebuild-2026-11-21.json')
   })
@@ -207,10 +210,10 @@ describe('reading a file back', () => {
   })
 
   it('refuses a newer schema version, saying how to get an app that reads it, in the update prompt’s own words', () => {
-    expect(parseBackup(fileText({ ...built(), schemaVersion: 12 }))).toEqual({
+    expect(parseBackup(fileText({ ...built(), schemaVersion: 13 }))).toEqual({
       ok: false,
       refusal:
-        'This backup is from a newer version of the app (schema version 12; this one reads up to 11). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
+        'This backup is from a newer version of the app (schema version 13; this one reads up to 12). Open the app with a signal and tap Reload now when “A new version is ready” shows, then import it again. Nothing was imported.',
     })
     // The prompt the refusal sends Shawn to is the one the app shows (src/App.tsx): its sentence and its button.
     expect(appSource).toContain('<span>A new version is ready. It will not reload on its own.</span>')
@@ -355,6 +358,8 @@ describe('older files carried forward', () => {
     if (!first || !second) throw new Error('fixture has two checks')
     return { ...v9(), schemaVersion: 10, morningChecks: [{ ...first, tags: ['poor-sleep', 'nsaid'] }, { ...second, loggedOn: '2026-11-14' }] }
   }
+  // Version 11 as the build before M-U1 wrote it: v10 with Batch E's down periods, and no time zone list.
+  const v11 = () => ({ ...v10(), schemaVersion: 11, downPeriods: tables().downPeriods })
 
   it('has a step for every version from the oldest up to this one', () => {
     for (let v = OLDEST_SCHEMA_VERSION; v < BACKUP_SCHEMA_VERSION; v++) expect(MIGRATIONS[v], `version ${v}`).toBeTypeOf('function')
@@ -373,6 +378,22 @@ describe('older files carried forward', () => {
     expect(MIGRATIONS[9]?.(v9())).toEqual({ ...v9(), schemaVersion: 10 })
     // Batch E: an empty down periods list; no period is invented.
     expect(MIGRATIONS[10]?.(v10())).toEqual({ ...v10(), schemaVersion: 11, downPeriods: [] })
+    // M-U1: an empty time zone list; no zone is invented, so an older file means "keep this phone's" (timeZoneOnImport).
+    expect(MIGRATIONS[11]?.(v11())).toEqual({ ...v11(), schemaVersion: 12, timeZoneSettings: [] })
+  })
+
+  it('reads a version 11 file with no time zone list as one with none', () => {
+    const read = parseBackup(fileText(v11()))
+    expect(read).toMatchObject({ ok: true, migratedFrom: 11, backup: { timeZoneSettings: [], downPeriods: tables().downPeriods } })
+  })
+
+  it('takes a file’s zone this phone doesn’t know: its shape is checked, the zone is asked about at use (PROGRAM-QUESTIONS 204, 206)', () => {
+    const read = parseBackup(fileText({ ...built(), timeZoneSettings: [{ id: 'time-zone', zone: 'Mars/Olympus_Mons' }] }))
+    expect(read).toMatchObject({ ok: true, backup: { timeZoneSettings: [{ id: 'time-zone', zone: 'Mars/Olympus_Mons' }] } })
+    expect(parseBackup(fileText({ ...built(), timeZoneSettings: [{ id: 'time-zone', zone: 'not a zone' }] }))).toMatchObject({
+      ok: false,
+      refusal: expect.stringContaining('This backup’s time zone settings, row 1'),
+    })
   })
 
   it('a step leaves a list the file already has for the schema to judge', () => {
@@ -497,14 +518,14 @@ describe('older files carried forward', () => {
 
   it('a version with no step can’t be carried', () => {
     expect(() => migrateForward({ schemaVersion: 1 })).toThrow('no step carries a version 1 backup forward')
-    expect(migrateForward({ schemaVersion: 11, a: 1 })).toEqual({ schemaVersion: 11, a: 1 })
+    expect(migrateForward({ schemaVersion: 12, a: 1 })).toEqual({ schemaVersion: 12, a: 1 })
   })
 })
 
 describe('what a file holds', () => {
   it('counts each table, the archived gyms, and the days logged', () => {
     expect(summarize(tables())).toEqual({
-      counts: { workouts: 2, setLogs: 5, morningChecks: 2, runs: 2, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 3, addedSlots: 2, hrSettings: 1, vo2Readings: 2, koosEntries: 2, aclRsiEntries: 1, downPeriods: 2 },
+      counts: { workouts: 2, setLogs: 5, morningChecks: 2, runs: 2, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 3, addedSlots: 2, hrSettings: 1, vo2Readings: 2, koosEntries: 2, aclRsiEntries: 1, downPeriods: 2, timeZoneSettings: 1 },
       archivedGyms: 1,
       first: '2026-11-02',
       last: '2026-11-14',
@@ -620,27 +641,39 @@ describe('the red flag through an import (PROGRAM-QUESTIONS 128)', () => {
   })
 })
 
+const NY = 'America/New_York'
+
 describe('the export reminder', () => {
-  it('reads the export’s day in America/New_York', () => {
+  it('reads the export’s day in America/New_York, Shawn’s zone', () => {
     // 10:30 pm on Monday Nov 9 in New York is already Nov 10 in UTC.
-    expect(exportDay('2026-11-10T03:30:00.000Z')).toBe('2026-11-09')
-    expect(exportDay('2026-11-10T05:00:00.000Z')).toBe('2026-11-10')
-    expect(exportDay('2026-11-09T22:30:00-05:00')).toBe('2026-11-09')
+    expect(exportDay('2026-11-10T03:30:00.000Z', NY)).toBe('2026-11-09')
+    expect(exportDay('2026-11-10T05:00:00.000Z', NY)).toBe('2026-11-10')
+    expect(exportDay('2026-11-09T22:30:00-05:00', NY)).toBe('2026-11-09')
+  })
+
+  it('reads it in the user’s zone (M-U1): the same instant is another day in London or Tokyo', () => {
+    expect(exportDay('2026-11-10T03:00:00Z', NY)).toBe('2026-11-09')
+    expect(exportDay('2026-11-10T03:00:00Z', 'Europe/London')).toBe('2026-11-10')
+    expect(exportDay('2026-11-10T03:00:00Z', 'Asia/Tokyo')).toBe('2026-11-10')
+    expect(daysSinceExport('2026-11-10T03:00:00Z', '2026-11-18', NY)).toBe(9)
+    expect(daysSinceExport('2026-11-10T03:00:00Z', '2026-11-18', 'Asia/Tokyo')).toBe(8)
+    expect(exportNudge('2026-11-10T03:00:00Z', '2026-11-17', null, NY)).toEqual({ kind: 'since-export', days: 8 })
+    expect(exportNudge('2026-11-10T03:00:00Z', '2026-11-17', null, 'Asia/Tokyo')).toBeNull()
   })
 
   it('counts whole days since the last export, 0 the same day, null when never', () => {
-    expect(daysSinceExport(undefined, '2026-11-20')).toBeNull()
-    expect(daysSinceExport('2026-11-10T03:30:00.000Z', '2026-11-09')).toBe(0)
-    expect(daysSinceExport('2026-11-10T03:30:00.000Z', '2026-11-18')).toBe(9)
+    expect(daysSinceExport(undefined, '2026-11-20', NY)).toBeNull()
+    expect(daysSinceExport('2026-11-10T03:30:00.000Z', '2026-11-09', NY)).toBe(0)
+    expect(daysSinceExport('2026-11-10T03:30:00.000Z', '2026-11-18', NY)).toBe(9)
     // An export stamped after today (a phone clock set ahead, then back) reads as today's.
-    expect(daysSinceExport('2026-11-25T12:00:00.000Z', '2026-11-20')).toBe(0)
+    expect(daysSinceExport('2026-11-25T12:00:00.000Z', '2026-11-20', NY)).toBe(0)
   })
 
   it('says so once the last export is more than 7 days old', () => {
     const at = '2026-11-10T15:00:00.000Z'
-    expect(exportNudge(at, '2026-11-17', '2026-11-02')).toBeNull()
-    expect(exportNudge(at, '2026-11-18', '2026-11-02')).toEqual({ kind: 'since-export', days: 8 })
-    expect(exportNudge(at, '2026-11-19', null)).toEqual({ kind: 'since-export', days: 9 })
+    expect(exportNudge(at, '2026-11-17', '2026-11-02', NY)).toBeNull()
+    expect(exportNudge(at, '2026-11-18', '2026-11-02', NY)).toEqual({ kind: 'since-export', days: 8 })
+    expect(exportNudge(at, '2026-11-19', null, NY)).toEqual({ kind: 'since-export', days: 9 })
   })
 
   it('an import records the file’s stamp, or the import’s own moment when the file says it was written later (a clock set ahead, or a hand edit)', () => {
@@ -650,17 +683,17 @@ describe('the export reminder', () => {
     expect(importStamp('2026-12-20T15:00:00.001Z', now)).toBe(now)
     expect(importStamp('2026-12-20T09:59:00-05:00', now)).toBe('2026-12-20T09:59:00-05:00')
     // So a file stamped decades ahead can't keep the reminder quiet: it shows once the import is a week old.
-    expect(exportNudge(importStamp('2099-01-01T00:00:00Z', now), '2026-12-28', '2026-11-02')).toEqual({ kind: 'since-export', days: 8 })
+    expect(exportNudge(importStamp('2099-01-01T00:00:00Z', now), '2026-12-28', '2026-11-02', NY)).toEqual({ kind: 'since-export', days: 8 })
   })
 
   it('an old stamp counts its days right, whatever its year', () => {
-    expect(daysSinceExport('0001-01-01T12:00:00Z', '2026-11-02')).toBe(739_921)
+    expect(daysSinceExport('0001-01-01T12:00:00Z', '2026-11-02', NY)).toBe(739_921)
   })
 
   it('never exported: counts from the first thing logged, and says nothing with nothing logged', () => {
-    expect(exportNudge(undefined, '2026-11-20', null)).toBeNull()
-    expect(exportNudge(undefined, '2026-11-09', '2026-11-02')).toBeNull()
-    expect(exportNudge(undefined, '2026-11-10', '2026-11-02')).toEqual({ kind: 'never-exported', days: 8 })
+    expect(exportNudge(undefined, '2026-11-20', null, NY)).toBeNull()
+    expect(exportNudge(undefined, '2026-11-09', '2026-11-02', NY)).toBeNull()
+    expect(exportNudge(undefined, '2026-11-10', '2026-11-02', NY)).toEqual({ kind: 'never-exported', days: 8 })
   })
 })
 
@@ -668,5 +701,42 @@ describe('the file type', () => {
   it('a built file satisfies the Backup type and backupFrom reads the object form too', () => {
     const backup: Backup = built()
     expect(backupFrom(JSON.parse(backupText(backup)))).toEqual({ ok: true, backup, migratedFrom: null })
+  })
+})
+
+describe('the time zone through an import (M-U1, PROGRAM-QUESTIONS 206)', () => {
+  const row = (zone: string): TimeZoneSetting => ({ id: 'time-zone', zone })
+  const LA = row('America/Los_Angeles')
+  const NYROW = row('America/New_York')
+
+  it('a file’s row wins', () => {
+    expect(timeZoneOnImport([LA], [NYROW])).toEqual([NYROW])
+    expect(timeZoneOnImport([], [LA])).toEqual([LA])
+  })
+  it('a file with no row (an older version) keeps the phone’s', () => {
+    expect(timeZoneOnImport([LA], [])).toEqual([LA])
+    expect(timeZoneOnImport([], [])).toEqual([])
+  })
+  it('a file’s zone this phone doesn’t know keeps the phone’s', () => {
+    expect(timeZoneOnImport([LA], [row('Mars/Olympus_Mons')])).toEqual([LA])
+    expect(timeZoneOnImport([], [row('Mars/Olympus_Mons')])).toEqual([])
+  })
+
+  it('says what changes, in zones: the phone’s as it counts now, then the file’s as it will count', () => {
+    expect(timeZoneImportChange([LA], [NYROW])).toEqual({ kind: 'change', phone: 'America/Los_Angeles', file: 'America/New_York' })
+    expect(timeZoneImportChange([], [LA])).toEqual({ kind: 'change', phone: 'America/New_York', file: 'America/Los_Angeles' })
+    expect(timeZoneImportChange([LA], [LA])).toEqual({ kind: 'same', zone: 'America/Los_Angeles' })
+    // Two spellings of one zone are no change.
+    expect(timeZoneImportChange([row('america/los_angeles')], [LA])).toEqual({ kind: 'same', zone: 'America/Los_Angeles' })
+    expect(timeZoneImportChange([LA], [])).toEqual({ kind: 'no-zone-in-file', zone: 'America/Los_Angeles' })
+    expect(timeZoneImportChange([], [])).toEqual({ kind: 'no-zone-in-file', zone: 'America/New_York' })
+    expect(timeZoneImportChange([LA], [row('Mars/Olympus_Mons')])).toEqual({ kind: 'unknown-in-file', zone: 'America/Los_Angeles', file: 'Mars/Olympus_Mons' })
+    // A phone row this phone can't read counts in New York, as it does on screen.
+    expect(timeZoneImportChange([row('Mars/Olympus_Mons')], [LA])).toEqual({ kind: 'change', phone: 'America/New_York', file: 'America/Los_Angeles' })
+  })
+  it('the zone is never among what an import erases: a file with no row keeps it', () => {
+    const phone = { ...tables(), timeZoneSettings: [LA] }
+    const file = { ...tables(), timeZoneSettings: [] }
+    expect(lostOnImport(phone, { ...file, timeZoneSettings: timeZoneOnImport(phone.timeZoneSettings, file.timeZoneSettings) })).toEqual([])
   })
 })

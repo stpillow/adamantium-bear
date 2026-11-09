@@ -121,9 +121,9 @@ describe('a version 9 database opened at version 10 (and on: 11 since Batch E)',
     await writeVersionNine()
 
     await db.open()
-    expect(db.verno).toBe(11)
+    expect(db.verno).toBe(12)
     // Version 11 (Batch E) adds the down periods table, empty.
-    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v9Rows), 'downPeriods'].sort())
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v9Rows), 'downPeriods', 'timeZoneSettings'].sort())
     expect(await db.downPeriods.count()).toBe(0)
     const before = await rawRows()
     for (const [name, rows] of Object.entries(v9Rows)) expect(before[name], name).toEqual(sorted(rows))

@@ -33,3 +33,10 @@ describe('activeTab', () => {
     for (const [route, tab] of cases) expect(activeTab(route)).toBe(tab)
   })
 })
+
+describe('first run (M-U1)', () => {
+  it('sits under Today, though the tab bar is hidden while it shows', () => {
+    expect(activeTab({ name: 'welcome' })).toBe('today')
+    expect(activeTab({ name: 'welcome', step: 'side' })).toBe('today')
+  })
+})

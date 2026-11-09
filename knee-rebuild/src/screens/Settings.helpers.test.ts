@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { BackupSummary } from '../rules/backup.ts'
+import { timeZoneChange } from '../rules/calendar.ts'
 import type { SessionMove, Settings } from '../schema/index.ts'
 import {
+  RESET_CONFIRM,
+  cityOf,
+  timeZoneChangeWords,
+  timeZoneImportWords,
+  timeZoneSectionWords,
+  zoneOptions,
+  zoneWords,
   DUMBBELLS_LINE,
   HR_MAX_MAX,
   HR_MAX_MIN,
@@ -306,12 +314,12 @@ describe('errorWords', () => {
 
 describe('resetWords', () => {
   it('says what Reset all data came to in one sentence, for the Reset section where Yes was tapped, and whether it is a problem', () => {
-    expect(resetWords({ kind: 'erased' })).toEqual({ text: 'Everything on this phone was erased. Settings are back to their defaults.', problem: false })
+    // M-U1: nothing is seeded in its place; the setup questions come next.
+    expect(resetWords({ kind: 'erased' })).toEqual({ text: 'Everything on this phone was erased. The setup questions come next.', problem: false })
     expect(resetWords({ kind: 'not-erased', error: new Error('QuotaExceededError') })).toEqual({ text: 'Nothing was erased (QuotaExceededError); tap again to retry.', problem: true })
-    expect(resetWords({ kind: 'not-seeded', error: new Error('  ') })).toEqual({
-      text: 'Everything was erased, but the default settings did not save (no reason was given); reload the app to seed them again.',
-      problem: true,
-    })
+    expect(RESET_CONFIRM).toBe(
+      'This erases every session, set, morning check, run, gate test, gym, Program edit and setting on this phone, the time zone included. There is no undo; export first to keep a copy. Then the app asks the setup questions again.',
+    )
   })
 })
 
@@ -389,9 +397,12 @@ describe('settingsOnImportWords', () => {
   })
 })
 
+const NY = 'America/New_York'
+const LA = 'America/Los_Angeles'
+
 describe('backup words (M6)', () => {
   const summary = (over: Partial<BackupSummary> = {}): BackupSummary => ({
-    counts: { workouts: 24, setLogs: 312, morningChecks: 30, runs: 41, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0 },
+    counts: { workouts: 24, setLogs: 312, morningChecks: 30, runs: 41, gateTests: 2, sessionMoves: 1, locations: 3, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0, timeZoneSettings: 0 },
     archivedGyms: 0,
     first: '2026-11-02',
     last: '2026-12-20',
@@ -399,19 +410,25 @@ describe('backup words (M6)', () => {
   })
 
   it('says when the last export was, in New York days', () => {
-    expect(lastExportWords(undefined, '2026-11-20')).toBe('No export from this phone yet.')
-    expect(lastExportWords('2026-11-20T15:00:00.000Z', '2026-11-20')).toBe('Last export: today.')
+    expect(lastExportWords(undefined, '2026-11-20', NY)).toBe('No export from this phone yet.')
+    expect(lastExportWords('2026-11-20T15:00:00.000Z', '2026-11-20', NY)).toBe('Last export: today.')
     // 10:30 pm on Nov 19 in New York: yesterday on the 20th, though it is the 20th in UTC.
-    expect(lastExportWords('2026-11-20T03:30:00.000Z', '2026-11-20')).toBe('Last export: yesterday.')
-    expect(lastExportWords('2026-11-11T15:00:00.000Z', '2026-11-20')).toBe('Last export: 9 days ago.')
-    expect(exportedOnWords('2026-12-22T02:00:00.000Z', '2026-12-28')).toBe('Monday Dec 21')
+    expect(lastExportWords('2026-11-20T03:30:00.000Z', '2026-11-20', NY)).toBe('Last export: yesterday.')
+    expect(lastExportWords('2026-11-11T15:00:00.000Z', '2026-11-20', NY)).toBe('Last export: 9 days ago.')
+    expect(exportedOnWords('2026-12-22T02:00:00.000Z', '2026-12-28', NY)).toBe('Monday Dec 21')
+  })
+
+  it('counts those days in the user’s zone (M-U1): 1:30 am in New York is still the evening before in Los Angeles', () => {
+    expect(lastExportWords('2026-11-19T06:30:00Z', '2026-11-19', NY)).toBe('Last export: today.')
+    expect(lastExportWords('2026-11-19T06:30:00Z', '2026-11-19', 'America/Los_Angeles')).toBe('Last export: yesterday.')
+    expect(exportedOnWords('2026-11-19T06:30:00Z', '2026-11-19', 'America/Los_Angeles')).toBe('Wednesday Nov 18')
   })
 
   it('names the year a file was written in when it isn’t this year, so a file stamped 2099, or last year’s, says so', () => {
-    expect(exportedOnWords('2026-12-22T02:00:00.000Z', '2027-01-04')).toBe('Monday Dec 21, 2026')
-    expect(exportedOnWords('2099-03-02T15:00:00.000Z', '2026-11-20')).toBe('Monday Mar 2, 2099')
+    expect(exportedOnWords('2026-12-22T02:00:00.000Z', '2027-01-04', NY)).toBe('Monday Dec 21, 2026')
+    expect(exportedOnWords('2099-03-02T15:00:00.000Z', '2026-11-20', NY)).toBe('Monday Mar 2, 2099')
     // New Year's Eve in New York is still the old year, though it is already Jan 1 in UTC.
-    expect(exportedOnWords('2027-01-01T03:00:00.000Z', '2026-12-31')).toBe('Thursday Dec 31')
+    expect(exportedOnWords('2027-01-01T03:00:00.000Z', '2026-12-31', NY)).toBe('Thursday Dec 31')
   })
 
   it('says what a file holds as the brief has it, then the rest', () => {
@@ -419,15 +436,15 @@ describe('backup words (M6)', () => {
       headline: '312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20',
       also: 'Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.',
     })
-    const one = summary({ counts: { workouts: 1, setLogs: 1, morningChecks: 0, runs: 1, gateTests: 0, sessionMoves: 0, locations: 2, programOverrides: 3, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0 }, archivedGyms: 1, first: '2026-11-03', last: '2026-11-03' })
+    const one = summary({ counts: { workouts: 1, setLogs: 1, morningChecks: 0, runs: 1, gateTests: 0, sessionMoves: 0, locations: 2, programOverrides: 3, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0, timeZoneSettings: 0 }, archivedGyms: 1, first: '2026-11-03', last: '2026-11-03' })
     expect(holdsWords(one)).toEqual({ headline: '1 set, 1 run, 1 gym, on Nov 3', also: 'Also 1 session, 3 Program edits and 1 archived gym.' })
-    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0 }, first: null, last: null })
+    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0, timeZoneSettings: 0 }, first: null, last: null })
     expect(holdsWords(empty)).toEqual({ headline: '0 sets, 0 runs, 1 gym; nothing logged yet', also: null })
   })
 
   it('says what a file holds as one sentence, and what an import did, by the file’s name', () => {
     expect(holdsLine(summary())).toBe('312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20. Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.')
-    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0 }, first: null, last: null })
+    const empty = summary({ counts: { workouts: 0, setLogs: 0, morningChecks: 0, runs: 0, gateTests: 0, sessionMoves: 0, locations: 1, programOverrides: 0, addedSlots: 0, hrSettings: 0, vo2Readings: 0, koosEntries: 0, aclRsiEntries: 0, downPeriods: 0, timeZoneSettings: 0 }, first: null, last: null })
     expect(holdsLine(empty)).toBe('0 sets, 0 runs, 1 gym; nothing logged yet.')
     expect(importedWords('knee-rebuild-2026-12-20.json', summary())).toBe(
       'Imported knee-rebuild-2026-12-20.json. This phone now holds what the file holds: 312 sets, 41 runs, 3 gyms, from Nov 2 to Dec 20. Also 24 sessions, 30 morning checks, 2 gate tests and 1 session move.',
@@ -487,5 +504,116 @@ describe('a down period through an import, in words (Batch E, PROGRAM-QUESTIONS 
     expect(keptDownPeriodWords([on], [{ ...on, plannedEnd: '2026-11-17' }], '2026-11-16')).not.toBeNull()
     expect(keptDownPeriodWords([on], [], '2026-11-21')).toBeNull()
     expect(keptDownPeriodWords([], [on], '2026-11-16')).toBeNull()
+  })
+})
+
+describe('the time zone in words (M-U1, PROGRAM-QUESTIONS 203 to 206)', () => {
+  it('names a zone by its city and its IANA name', () => {
+    expect(cityOf(NY)).toBe('New York')
+    expect(cityOf('America/Argentina/Buenos_Aires')).toBe('Buenos Aires')
+    expect(cityOf('UTC')).toBe('UTC')
+    expect(zoneWords(NY)).toBe('New York time (America/New_York)')
+    expect(zoneWords(LA)).toBe('Los Angeles time (America/Los_Angeles)')
+    expect(zoneWords('UTC')).toBe('UTC')
+    expect(zoneWords('Etc/GMT+5')).toBe('GMT+5 time (Etc/GMT+5)')
+  })
+
+  it('offers every zone the phone lists, the stored and the phone’s own included, grouped by region and sorted', () => {
+    const groups = zoneOptions(['Europe/London', 'America/New_York', 'America/Chicago', 'Asia/Tokyo'], 'UTC', 'America/Los_Angeles')
+    expect(groups).toEqual([
+      { region: 'America', zones: ['America/Chicago', 'America/Los_Angeles', 'America/New_York'] },
+      { region: 'Asia', zones: ['Asia/Tokyo'] },
+      { region: 'Europe', zones: ['Europe/London'] },
+      { region: 'Other', zones: ['UTC'] },
+    ])
+    // A browser that lists nothing still offers the stored zone and the phone's own, each once.
+    expect(zoneOptions([], NY, NY)).toEqual([{ region: 'America', zones: [NY] }])
+  })
+
+  it('says what dates are counted in, what the phone is set to when that differs, and an unreadable stored zone', () => {
+    expect(timeZoneSectionWords({ zone: NY, stored: 'none' }, NY, '2026-11-03')).toEqual({
+      line: 'Dates are counted in New York time (America/New_York). Today there is Tuesday Nov 3.',
+      device: null,
+      unreadable: null,
+      keep: null,
+    })
+    expect(timeZoneSectionWords({ zone: NY, stored: 'ok' }, LA, '2026-11-03')).toEqual({
+      line: 'Dates are counted in New York time (America/New_York). Today there is Tuesday Nov 3.',
+      device: { note: 'This phone’s clock is set to Los Angeles time (America/Los_Angeles).', button: 'Use Los Angeles time' },
+      unreadable: null,
+      keep: null,
+    })
+    expect(timeZoneSectionWords({ zone: NY, stored: 'unreadable' }, NY, '2026-11-03').unreadable).toBe(
+      'The stored time zone isn’t one this phone knows, so dates are counted in New York time until you pick one.',
+    )
+  })
+
+  it('an unreadable stored zone can be cleared by keeping New York, even when the phone is in New York too', () => {
+    // The phone's own zone is New York, so there's no "Use" button for it, and the picker already shows
+    // New York, so choosing it again changes nothing: this is the one way to write over the bad row.
+    const words = timeZoneSectionWords({ zone: NY, stored: 'unreadable' }, NY, '2026-11-03')
+    expect(words.device).toBeNull()
+    expect(words.keep).toEqual({ button: 'Use New York time', done: 'Saved: dates stay in New York time.' })
+    // Elsewhere too, beside the phone's own.
+    expect(timeZoneSectionWords({ zone: NY, stored: 'unreadable' }, LA, '2026-11-03').keep).toEqual({ button: 'Use New York time', done: 'Saved: dates stay in New York time.' })
+  })
+
+  it('a change in the middle of the day moves nothing but where midnight falls', () => {
+    expect(timeZoneChangeWords({ todayFrom: '2026-11-03', todayTo: '2026-11-03', shift: 0 }, NY, LA)).toEqual([
+      'Dates will be counted in Los Angeles time (America/Los_Angeles) instead of New York time (America/New_York).',
+      'Today stays Tuesday Nov 3. Near midnight, the date will turn over at Los Angeles’s midnight instead of New York’s.',
+      'Nothing logged moves: sessions, runs, morning checks and down periods keep the dates they were saved on, and weeks start on the same Mondays.',
+    ])
+  })
+
+  it('a change west near midnight moves today back, and today’s logs then read as tomorrow’s', () => {
+    expect(timeZoneChangeWords({ todayFrom: '2026-11-09', todayTo: '2026-11-08', shift: -1 }, NY, LA)).toEqual([
+      'Dates will be counted in Los Angeles time (America/Los_Angeles) instead of New York time (America/New_York).',
+      'Right now that moves today from Monday Nov 9 to Sunday Nov 8.',
+      'Anything logged today stays on Monday Nov 9, which then reads as tomorrow.',
+      'Nothing logged moves: sessions, runs, morning checks and down periods keep the dates they were saved on, and weeks start on the same Mondays.',
+    ])
+  })
+
+  it('a change east near midnight moves today forward, and today becomes a past day', () => {
+    expect(timeZoneChangeWords({ todayFrom: '2026-11-08', todayTo: '2026-11-09', shift: 1 }, NY, 'Asia/Tokyo')).toEqual([
+      'Dates will be counted in Tokyo time (Asia/Tokyo) instead of New York time (America/New_York).',
+      'Right now that moves today from Sunday Nov 8 to Monday Nov 9.',
+      'Sunday Nov 8 then reads as yesterday: its session, if not logged yet, is logged late from Week, and this morning’s check counts as Sunday Nov 8’s; Monday Nov 9’s check shows as not logged yet.',
+      'Nothing logged moves: sessions, runs, morning checks and down periods keep the dates they were saved on, and weeks start on the same Mondays.',
+    ])
+  })
+
+  it('a change across more than a day of offsets says how many days today moves, not tomorrow or yesterday', () => {
+    // 00:30 Wednesday Nov 4 in Kiritimati (UTC+14) is 23:30 Monday Nov 2 in Pago Pago (UTC-11).
+    const now = new Date('2026-11-03T10:30:00Z')
+    const west = timeZoneChange(now, 'Pacific/Kiritimati', 'Pacific/Pago_Pago')
+    expect(west).toEqual({ todayFrom: '2026-11-04', todayTo: '2026-11-02', shift: -2 })
+    const westLines = timeZoneChangeWords(west, 'Pacific/Kiritimati', 'Pacific/Pago_Pago')
+    expect(westLines[1]).toBe('Right now that moves today from Wednesday Nov 4 to Monday Nov 2.')
+    expect(westLines[2]).toBe('Anything logged today stays on Wednesday Nov 4, which then reads as 2 days ahead.')
+    const east = timeZoneChange(now, 'Pacific/Pago_Pago', 'Pacific/Kiritimati')
+    expect(east).toEqual({ todayFrom: '2026-11-02', todayTo: '2026-11-04', shift: 2 })
+    const eastLines = timeZoneChangeWords(east, 'Pacific/Pago_Pago', 'Pacific/Kiritimati')
+    expect(eastLines[1]).toBe('Right now that moves today from Monday Nov 2 to Wednesday Nov 4.')
+    expect(eastLines[2]).toBe(
+      'Monday Nov 2 then reads as 2 days ago: its session, if not logged yet, is logged late from Week, and this morning’s check counts as Monday Nov 2’s; Wednesday Nov 4’s check shows as not logged yet.',
+    )
+    for (const lines of [westLines, eastLines]) expect(lines.join(' ')).not.toMatch(/tomorrow|yesterday/)
+  })
+
+  it('says what an import does to the zone, on Settings and on first run’s first screen', () => {
+    expect(timeZoneImportWords({ kind: 'change', phone: LA, file: NY }, false)).toBe('It would change the time zone from Los Angeles time to New York time.')
+    expect(timeZoneImportWords({ kind: 'same', zone: NY }, false)).toBeNull()
+    expect(timeZoneImportWords({ kind: 'no-zone-in-file', zone: LA }, false)).toBe('The file carries no time zone (an older version wrote it), so dates stay in Los Angeles time.')
+    expect(timeZoneImportWords({ kind: 'unknown-in-file', zone: LA, file: 'Mars/Olympus_Mons' }, false)).toBe('The file counts dates in Mars/Olympus_Mons, which this phone doesn’t know, so dates stay in Los Angeles time.')
+    // First run: nothing stored, so New York, as the file's own dates were.
+    expect(timeZoneImportWords({ kind: 'no-zone-in-file', zone: NY }, true)).toBe('Dates will be counted in New York time, as the file’s were; Settings can change that.')
+    expect(timeZoneImportWords({ kind: 'change', phone: NY, file: LA }, true)).toBe('Dates will be counted in Los Angeles time, as the file’s were; Settings can change that.')
+    expect(timeZoneImportWords({ kind: 'same', zone: NY }, true)).toBe('Dates will be counted in New York time, as the file’s were; Settings can change that.')
+    // A zone this phone doesn't know: the file's dates weren't New York's, and the zone is dropped, so it says so.
+    expect(timeZoneImportWords({ kind: 'unknown-in-file', zone: NY, file: 'Europe/Kyiv' }, true)).toBe(
+      'The file counts dates in Europe/Kyiv, which this phone doesn’t know, so dates will be counted in New York time; Settings can change that.',
+    )
   })
 })

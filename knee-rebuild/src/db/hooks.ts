@@ -1,7 +1,8 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAclRsiEntries, getAddedSlots, getDownPeriods, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
+import { getAclRsiEntries, getAddedSlots, getDownPeriods, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getTimeZoneSetting, getVo2Readings, loadHistory, onboardingFacts, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
+import { onboardingState, type OnboardingState } from '../rules/onboarding.ts'
 import type { AclRsiEntry, AddedSlot, DownPeriod, HrSettings, KoosEntry, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
@@ -77,4 +78,14 @@ export function useAddedSlots(): AddedSlot[] | undefined {
 /** Every declared down period, in start order (the phase-week bands it holds, `bandWeek`). Undefined while loading. */
 export function useDownPeriods(): DownPeriod[] | undefined {
   return useLiveQuery(() => getDownPeriods(), [])
+}
+
+/** The zone dates are counted in (M-U1) and how it was found (`getTimeZoneSetting`). Undefined while loading, so no frame counts in the wrong zone. */
+export function useTimeZoneSetting(): Awaited<ReturnType<typeof getTimeZoneSetting>> | undefined {
+  return useLiveQuery(() => getTimeZoneSetting(), [])
+}
+
+/** Whether this phone is set up (src/rules/onboarding.ts), re-read whenever any table changes. Undefined while loading, so first run never flashes. */
+export function useOnboardingState(): OnboardingState | undefined {
+  return useLiveQuery(async () => onboardingState(await onboardingFacts()), [])
 }

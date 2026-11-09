@@ -9,12 +9,12 @@ export function isDeloadWeek(week: number): boolean {
 
 /** Weeks start Monday (PROMPT section 2). */
 export const DAYS: readonly Day[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-export const NEW_YORK = 'America/New_York'
 const MS_PER_DAY = 86_400_000
 
 /**
- * Calendar arithmetic on YYYY-MM-DD strings, done on whole UTC days so a DST change in
- * America/New_York (Nov 1, 2026, the day before week 1) can never shift a week boundary.
+ * Calendar arithmetic on YYYY-MM-DD strings, done on whole UTC days, so a daylight-saving change in
+ * any time zone (New York's fell on Nov 1, 2026, the day before week 1) can never shift a week
+ * boundary: only `todayIn` touches a zone, and it returns a date.
  */
 function dayNumber(date: IsoDate): number {
   const [y, m, d] = date.split('-').map(Number)
@@ -58,8 +58,13 @@ export function dateOf(startDate: IsoDate, week: number, day: Day): IsoDate {
   return addDays(startDate, (week - 1) * 7 + DAYS.indexOf(day))
 }
 
-/** Today's calendar date in a time zone, from a clock instant. The only place the engine touches a time zone. */
-export function todayIn(now: Date, timeZone: string = NEW_YORK): IsoDate {
+/**
+ * Today's calendar date in a time zone, from a clock instant. The only place the engine touches a
+ * time zone, and it takes the zone every time (the user's setting since M-U1, America/New_York by
+ * default, PROGRAM-QUESTIONS 203): there is no default here, so no caller can fall back to one
+ * silently. Throws on a zone the phone doesn't know; the setting is checked before it gets here.
+ */
+export function todayIn(now: Date, timeZone: string): IsoDate {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
   const part = (type: string) => parts.find((p) => p.type === type)?.value
   const y = part('year')
@@ -68,6 +73,31 @@ export function todayIn(now: Date, timeZone: string = NEW_YORK): IsoDate {
   if (!y || !m || !d) throw new Error(`could not format a date for ${timeZone}`)
   // Intl writes year 1 as "1"; a date here is always YYYY-MM-DD.
   return `${y.padStart(4, '0')}-${m}-${d}`
+}
+
+/** The Monday a program would start on, from today: today when today is a Monday, else the next one (first run's default, PROGRAM-QUESTIONS 208). */
+export function comingMonday(today: IsoDate): IsoDate {
+  return addDays(today, (7 - DAYS.indexOf(dayOf(today))) % 7)
+}
+
+export interface TimeZoneChange {
+  /** Today in the zone the dates are counted in now. */
+  todayFrom: IsoDate
+  /** Today in the zone they would be counted in. */
+  todayTo: IsoDate
+  /** Days from the one to the other: 0 most of the day; ±1 near midnight; ±2 when the offsets differ by more than 24 hours. */
+  shift: number
+}
+
+/**
+ * What changing the time zone does at one instant (PROGRAM-QUESTIONS 205): today's date in each
+ * zone and the days between them. Nothing stored moves: logs keep the dates they were saved on, and
+ * weeks start on the same Mondays; only which date is today can change, near midnight.
+ */
+export function timeZoneChange(now: Date, from: string, to: string): TimeZoneChange {
+  const todayFrom = todayIn(now, from)
+  const todayTo = todayIn(now, to)
+  return { todayFrom, todayTo, shift: daysBetween(todayFrom, todayTo) }
 }
 
 /** The seven days of a program week with the template's sessions, after any moves. A move swaps two days. */

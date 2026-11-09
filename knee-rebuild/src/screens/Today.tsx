@@ -1,7 +1,9 @@
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { navigate } from '../app/router.ts'
 import { PROGRAM, availableAt, planSession, sessionExtensions, warmUpFor, windowFit } from '../app/session.ts'
+import { useTimeZone } from '../app/timeZone.ts'
 import { useToday } from '../app/today.ts'
+import { takeNotice } from './firstRun.ts'
 import { Button } from '../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../components/ReadingWord.tsx'
 import { Stepper } from '../components/Stepper.tsx'
@@ -66,6 +68,7 @@ type Lift = Extract<TodayBody, { kind: 'lift' }>
  */
 export function Today() {
   const today = useToday()
+  const timeZone = useTimeZone()
   const settings = useSettings()
   const history = useHistory()
   const activeLocation = useActiveLocation()
@@ -82,10 +85,10 @@ export function Today() {
   }
   if (settings === null || activeLocation === null) {
     return (
-      <Screen title="Today" lead="No settings yet.">
-        <p className="text-body text-on-dark-dim">The injured side and the start date are set in Settings.</p>
-        <Button wide onClick={() => navigate({ name: 'settings' })}>
-          Settings
+      <Screen title="Today" lead="This phone isn’t set up yet.">
+        <p className="text-body text-on-dark-dim">The injured side, the start date and the home gym are set up first.</p>
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
         </Button>
       </Screen>
     )
@@ -103,6 +106,7 @@ export function Today() {
 
   return (
     <Screen title="Today" lead={view.dateWords}>
+      <ArrivedNotice />
       <GymBlock active={activeLocation} locations={locations} />
       <PhaseLine view={view} />
       {view.downPeriod ? <DownPeriodBlock view={view.downPeriod} today={today} openToday={view.body.kind === 'lift' && view.body.workout?.status === 'in-progress' ? view.body.label : null} /> : null}
@@ -120,9 +124,23 @@ export function Today() {
       <OpenWorkoutsBlock open={view.open} active={activeLocation} locations={locations} />
       <YesterdayBlock lines={view.yesterday} />
       <KoosLine line={koosLine(koosEntries, today)} />
-      <ExportLine line={exportLine(settings.lastExportedAt, today, history)} />
+      <ExportLine line={exportLine(settings.lastExportedAt, today, history, timeZone)} />
     </Screen>
   )
+}
+
+/** What a first-run import did (M-U1), said once on the Today it opened onto; nothing otherwise. */
+function ArrivedNotice() {
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    const text = takeNotice('today')
+    if (text !== null) setNotice(text)
+  }, [])
+  return notice ? (
+    <p role="status" className="text-body text-on-dark wrap-anywhere">
+      {notice}
+    </p>
+  ) : null
 }
 
 /**
@@ -300,6 +318,7 @@ function PhaseLine({ view }: { view: TodayView }) {
  * starts a period yesterday.
  */
 function DownPeriodBlock({ view, today, openToday }: { view: DownPeriodView; today: IsoDate; openToday: string | null }) {
+  const timeZone = useTimeZone()
   const noteId = useId()
   const [open, setOpen] = useState<'declare' | 'extend' | null>(null)
   const [days, setDays] = useState(view.kind === 'offer' ? view.defaultDays : 7)
@@ -310,7 +329,7 @@ function DownPeriodBlock({ view, today, openToday }: { view: DownPeriodView; tod
   const [done, setDone] = useState<string | null>(null)
 
   async function act(write: (now: IsoDate) => Promise<unknown>, after: string | null): Promise<void> {
-    const now = todayIn(new Date())
+    const now = todayIn(new Date(), timeZone)
     if (now !== today) {
       setProblem(pastMidnightWords(now))
       return

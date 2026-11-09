@@ -16,8 +16,11 @@ import {
   SessionMove,
   SetLog,
   Settings,
+  TimeZoneSetting,
   Vo2Reading,
   Workout,
+  DEFAULT_TIME_ZONE,
+  isKnownTimeZone,
   type IsoDate,
   type Side,
 } from '../schema/index.ts'
@@ -35,7 +38,7 @@ export const BACKUP_APP = 'knee-rebuild'
  * The shape of the file's tables: the Dexie version they were read from (src/db/db.ts). A test in
  * src/db/backup.test.ts holds the two together, so a new Dexie version has to bring a step here.
  */
-export const BACKUP_SCHEMA_VERSION = 11
+export const BACKUP_SCHEMA_VERSION = 12
 
 /**
  * The oldest shape a file can be carried forward from. Version 1 was the empty M0 database. No file
@@ -48,7 +51,7 @@ export const OLDEST_SCHEMA_VERSION = 2
 export const BACKUP_MAX_BYTES = 10 * 1024 * 1024
 
 /** The tables a file carries besides settings, in the order the file lists them. */
-export const BACKUP_TABLES = ['workouts', 'setLogs', 'morningChecks', 'runs', 'gateTests', 'sessionMoves', 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods'] as const
+export const BACKUP_TABLES = ['workouts', 'setLogs', 'morningChecks', 'runs', 'gateTests', 'sessionMoves', 'locations', 'programOverrides', 'addedSlots', 'hrSettings', 'vo2Readings', 'koosEntries', 'aclRsiEntries', 'downPeriods', 'timeZoneSettings'] as const
 export type BackupTable = (typeof BACKUP_TABLES)[number]
 
 /** Settings as a file carries them: every field but `lastExportedAt`, which is the phone's own (an import stamps the file's `exportedAt`). */
@@ -70,6 +73,8 @@ export interface BackupTables {
   koosEntries: KoosEntry[]
   aclRsiEntries: AclRsiEntry[]
   downPeriods: DownPeriod[]
+  /** The one time zone row (M-U1), or none: none means America/New_York on the phone, and "keep this phone's" in a file (`timeZoneOnImport`). */
+  timeZoneSettings: TimeZoneSetting[]
 }
 
 /** The file, in the order its keys are written. */
@@ -104,6 +109,7 @@ export const TABLE_WORDS: Record<BackupTable, { many: string; one: string }> = {
   koosEntries: { many: 'KOOS entries', one: 'KOOS entry' },
   aclRsiEntries: { many: 'ACL-RSI entries', one: 'ACL-RSI entry' },
   downPeriods: { many: 'down periods', one: 'down period' },
+  timeZoneSettings: { many: 'time zone settings', one: 'time zone setting' },
 }
 
 interface Issue {
@@ -134,6 +140,7 @@ const TABLES: { [K in BackupTable]: { schema: RowSchema<BackupTables[K][number]>
   koosEntries: { schema: KoosEntry, key: (r) => r.date },
   aclRsiEntries: { schema: AclRsiEntry, key: (r) => r.date },
   downPeriods: { schema: DownPeriod, key: (r) => r.id },
+  timeZoneSettings: { schema: TimeZoneSetting, key: (r) => r.id },
 }
 
 /** A row's stored key (its id, or a Program edit's slot id). */
@@ -232,6 +239,7 @@ export function buildBackup(stored: StoredContents, exportedAt: IsoDateTime): Ex
     koosEntries: table('koosEntries'),
     aclRsiEntries: table('aclRsiEntries'),
     downPeriods: table('downPeriods'),
+    timeZoneSettings: table('timeZoneSettings'),
   }
   return { backup, unreadable }
 }
@@ -279,7 +287,8 @@ export function sizeProblem(bytes: number): string | null {
  * stand (Batch D adds only optional fields to a morning check: the fixed tags and the day a check
  * for a past morning was saved; none is ever invented); version 10's tables are version 11's
  * without the down periods list (Batch E; no period is ever invented, so an older file pauses
- * nothing). A list the file already has is left for the schema to judge, never replaced.
+ * nothing); version 11's tables are version 12's without the time zone list (M-U1; no zone is ever
+ * invented, so an older file keeps the phone's zone, `timeZoneOnImport`). A list the file already has is left for the schema to judge, never replaced.
  */
 export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObject>> = {
   2: (file) => ({ ...withList(file, 'locations'), schemaVersion: 3 }),
@@ -291,6 +300,7 @@ export const MIGRATIONS: Readonly<Record<number, (file: FileObject) => FileObjec
   8: (file) => ({ ...withList(withList(file, 'koosEntries'), 'aclRsiEntries'), schemaVersion: 9 }),
   9: (file) => ({ ...file, schemaVersion: 10 }),
   10: (file) => ({ ...withList(file, 'downPeriods'), schemaVersion: 11 }),
+  11: (file) => ({ ...withList(file, 'timeZoneSettings'), schemaVersion: 12 }),
 }
 
 function withList(file: FileObject, key: BackupTable): FileObject {
@@ -384,6 +394,7 @@ export function backupFrom(raw: unknown): BackupRead {
     koosEntries: tables.koosEntries ?? [],
     aclRsiEntries: tables.aclRsiEntries ?? [],
     downPeriods: tables.downPeriods ?? [],
+    timeZoneSettings: tables.timeZoneSettings ?? [],
   }
   return { ok: true, backup, migratedFrom: version === BACKUP_SCHEMA_VERSION ? null : version }
 }
@@ -488,6 +499,43 @@ export function downPeriodsOnImport(phone: readonly DownPeriod[], file: readonly
   return byKey('downPeriods', [...kept, ...fromFile])
 }
 
+/** The zone a list of time zone rows counts dates in: its row's, when this phone knows it, else America/New_York (PROGRAM-QUESTIONS 203, 204). */
+export function zoneOf(rows: readonly Pick<TimeZoneSetting, 'zone'>[]): string {
+  const zone = rows[0]?.zone
+  return zone !== undefined && isKnownTimeZone(zone) ? zone : DEFAULT_TIME_ZONE
+}
+
+/**
+ * The time zone rows an import leaves (M-U1, PROGRAM-QUESTIONS 206): the file's row when it has one
+ * this phone knows; otherwise the phone's own, as stored (a file from before M-U1 carries none, and
+ * a zone newer than this phone's time zone data can't count a date here). With neither, none: New York.
+ */
+export function timeZoneOnImport(phone: readonly TimeZoneSetting[], file: readonly TimeZoneSetting[]): TimeZoneSetting[] {
+  const fromFile = file[0]
+  if (fromFile !== undefined && isKnownTimeZone(fromFile.zone)) return [fromFile]
+  return phone.slice(0, 1)
+}
+
+/** What an import does to the time zone, for the confirm to say: zones as the phone counts them now and after. */
+export type TimeZoneImport =
+  | { kind: 'same'; zone: string }
+  | { kind: 'change'; phone: string; file: string }
+  /** The file carries no zone (written before M-U1): the phone keeps `zone`. */
+  | { kind: 'no-zone-in-file'; zone: string }
+  /** The file's zone isn't one this phone knows: the phone keeps `zone`. */
+  | { kind: 'unknown-in-file'; zone: string; file: string }
+
+/** What `timeZoneOnImport` comes to, said as zones; two spellings of one zone ("america/new_york") are no change. */
+export function timeZoneImportChange(phone: readonly TimeZoneSetting[], file: readonly TimeZoneSetting[]): TimeZoneImport {
+  const before = zoneOf(phone)
+  const after = zoneOf(timeZoneOnImport(phone, file))
+  const fromFile = file[0]
+  if (fromFile === undefined) return { kind: 'no-zone-in-file', zone: after }
+  if (!isKnownTimeZone(fromFile.zone)) return { kind: 'unknown-in-file', zone: after, file: fromFile.zone }
+  if (before.toLowerCase() === after.toLowerCase()) return { kind: 'same', zone: after }
+  return { kind: 'change', phone: before, file: after }
+}
+
 /** A setting the file would change, the phone's value then the file's. */
 export type SettingChange =
   | { field: 'injuredSide'; phone: Side; file: Side }
@@ -525,9 +573,9 @@ export function settingsOnImport(phone: Settings | undefined, file: FileSettings
 /** Today says so once the last export is more than this many days old (iOS can evict a home-screen app's storage). */
 export const EXPORT_NUDGE_DAYS = 7
 
-/** The day, in America/New_York, an instant fell on: the day an export was written. */
-export function exportDay(at: IsoDateTime): IsoDate {
-  return todayIn(new Date(at))
+/** The day, in the user's time zone (America/New_York by default, M-U1), an instant fell on: the day an export was written. */
+export function exportDay(at: IsoDateTime, timeZone: string): IsoDate {
+  return todayIn(new Date(at), timeZone)
 }
 
 /**
@@ -539,10 +587,10 @@ export function importStamp(exportedAt: IsoDateTime, now: IsoDateTime): IsoDateT
   return Date.parse(exportedAt) > Date.parse(now) ? now : exportedAt
 }
 
-/** Whole days from the last export's day to today (0 the same day); null when this phone has never exported. */
-export function daysSinceExport(lastExportedAt: IsoDateTime | undefined, today: IsoDate): number | null {
+/** Whole days from the last export's day, in the user's time zone, to today (0 the same day); null when this phone has never exported. */
+export function daysSinceExport(lastExportedAt: IsoDateTime | undefined, today: IsoDate, timeZone: string): number | null {
   if (lastExportedAt === undefined) return null
-  return Math.max(0, daysBetween(exportDay(lastExportedAt), today))
+  return Math.max(0, daysBetween(exportDay(lastExportedAt, timeZone), today))
 }
 
 export type ExportNudge = { kind: 'since-export'; days: number } | { kind: 'never-exported'; days: number }
@@ -552,8 +600,8 @@ export type ExportNudge = { kind: 'since-export'; days: number } | { kind: 'neve
  * EXPORT_NUDGE_DAYS old, or, never exported, once the first thing logged is. Nothing logged and
  * never exported: nothing on the phone to lose, so nothing to say.
  */
-export function exportNudge(lastExportedAt: IsoDateTime | undefined, today: IsoDate, firstLogged: IsoDate | null): ExportNudge | null {
-  const since = daysSinceExport(lastExportedAt, today)
+export function exportNudge(lastExportedAt: IsoDateTime | undefined, today: IsoDate, firstLogged: IsoDate | null, timeZone: string): ExportNudge | null {
+  const since = daysSinceExport(lastExportedAt, today, timeZone)
   if (since !== null) return since > EXPORT_NUDGE_DAYS ? { kind: 'since-export', days: since } : null
   if (firstLogged === null) return null
   const days = daysBetween(firstLogged, today)

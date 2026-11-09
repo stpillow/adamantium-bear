@@ -33,7 +33,7 @@ describe('retroDates', () => {
 })
 
 describe('the late-entry stamp', () => {
-  it('is noon in New York on the day, and tells a late session from one started live', () => {
+  it('is a fixed 17:00 UTC marker on the day, compared as a string, never read as a time or a date (PROGRAM-QUESTIONS 212), and tells a late session from one started live', () => {
     expect(lateStartedAt('2026-11-04')).toBe('2026-11-04T17:00:00.000Z')
     expect(isLateEntry({ date: '2026-11-04', startedAt: '2026-11-04T17:00:00.000Z' })).toBe(true)
     expect(isLateEntry({ date: '2026-11-04', startedAt: '2026-11-04T12:31:09.120Z' })).toBe(false)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseHash, routeHash, type Route } from './router.ts'
+import { FIRST_RUN_STEPS, backPops, parseHash, routeHash, stateFrom, type Route } from './router.ts'
 
 describe('parseHash', () => {
   it('reads routes and session ids', () => {
@@ -74,5 +74,35 @@ describe('a past morning’s check route (Batch D)', () => {
     expect(parseHash('#/morning/yesterday')).toEqual({ name: 'morning' })
     expect(parseHash('#/morning/2026-02-30')).toEqual({ name: 'morning' })
     expect(parseHash('#/morning/2026-11-8')).toEqual({ name: 'morning' })
+  })
+})
+
+describe('first run (M-U1)', () => {
+  it('reads #/welcome as the first screen and each step by name; an unknown step is the first screen', () => {
+    expect(parseHash('#/welcome')).toEqual({ name: 'welcome' })
+    expect(FIRST_RUN_STEPS).toEqual(['side', 'start', 'gym', 'equipment', 'time', 'ready'])
+    for (const step of FIRST_RUN_STEPS) {
+      expect(parseHash(`#/welcome/${step}`)).toEqual({ name: 'welcome', step })
+      expect(parseHash(routeHash({ name: 'welcome', step }))).toEqual({ name: 'welcome', step })
+    }
+    expect(parseHash('#/welcome/nope')).toEqual({ name: 'welcome' })
+    expect(routeHash({ name: 'welcome' })).toBe('#/welcome')
+    expect(routeHash({ name: 'welcome', step: 'time' })).toBe('#/welcome/time')
+  })
+})
+
+describe('a step’s own Back (M-U1)', () => {
+  it('steps back through history when the entry under this one is the step it goes to, so the next back gesture leaves the step', () => {
+    // Next from Time pushed Ready with Time's hash under it: Back pops, and history doesn't keep two Times.
+    expect(backPops(stateFrom({ name: 'welcome', step: 'time' }), { name: 'welcome', step: 'time' })).toBe(true)
+    // Set up this phone pushed the first step with the first screen under it.
+    expect(backPops(stateFrom({ name: 'welcome' }), { name: 'welcome' })).toBe(true)
+  })
+  it('replaces in place for a step reached any other way: a link, a redirect, or Change from Ready', () => {
+    expect(backPops(null, { name: 'welcome', step: 'time' })).toBe(false)
+    expect(backPops(undefined, { name: 'welcome' })).toBe(false)
+    expect(backPops({ other: 1 }, { name: 'welcome' })).toBe(false)
+    // Change on Ready opened Home gym: what's under it is Ready, not What it has's step before it.
+    expect(backPops(stateFrom({ name: 'welcome', step: 'ready' }), { name: 'welcome', step: 'start' })).toBe(false)
   })
 })

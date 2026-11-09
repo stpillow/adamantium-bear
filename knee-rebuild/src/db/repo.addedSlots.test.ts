@@ -67,7 +67,7 @@ describe('saving an added exercise', () => {
     await saveAddedSlot(add({ id: 'added-k2' }), program)
     await removeAddedSlot('added-k1')
     expect((await getAddedSlots()).map((a) => a.id)).toEqual(['added-k2'])
-    await resetAll(defaultSettings(program), program, '2026-11-02')
+    await resetAll()
     expect(await getAddedSlots()).toEqual([])
   })
 })

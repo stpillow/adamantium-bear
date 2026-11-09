@@ -4,12 +4,14 @@ import {
   nextLiftDate,
   sessionDateInWeek,
   addDays,
+  comingMonday,
   dateOf,
   dayOf,
   daysBetween,
   isDeloadWeek,
   isMonday,
   scheduledSession,
+  timeZoneChange,
   todayIn,
   weekOf,
   weekSchedule,
@@ -59,18 +61,87 @@ describe('days', () => {
   })
 })
 
-describe('todayIn (America/New_York)', () => {
+const NY = 'America/New_York'
+const LA = 'America/Los_Angeles'
+const LONDON = 'Europe/London'
+const TOKYO = 'Asia/Tokyo'
+const at = (iso: string) => new Date(iso)
+
+describe('todayIn (America/New_York, Shawn’s phone: the dates it computed before M-U1)', () => {
   it('flips the date at New York midnight, not UTC midnight', () => {
-    expect(todayIn(new Date('2026-11-02T04:59:00Z'))).toBe('2026-11-01')
-    expect(todayIn(new Date('2026-11-02T05:00:00Z'))).toBe('2026-11-02')
+    expect(todayIn(at('2026-11-02T04:59:00Z'), NY)).toBe('2026-11-01')
+    expect(todayIn(at('2026-11-02T05:00:00Z'), NY)).toBe('2026-11-02')
   })
   it('handles the hour DST ends', () => {
-    expect(todayIn(new Date('2026-11-01T05:30:00Z'))).toBe('2026-11-01')
-    expect(todayIn(new Date('2026-11-01T06:30:00Z'))).toBe('2026-11-01')
+    expect(todayIn(at('2026-11-01T05:30:00Z'), NY)).toBe('2026-11-01')
+    expect(todayIn(at('2026-11-01T06:30:00Z'), NY)).toBe('2026-11-01')
   })
   it('writes a year before 1000 in four digits, so it reads back as that year (an imported file’s odd stamp)', () => {
-    expect(todayIn(new Date('0001-06-01T12:00:00Z'))).toBe('0001-06-01')
-    expect(todayIn(new Date('0999-06-01T12:00:00Z'))).toBe('0999-06-01')
+    expect(todayIn(at('0001-06-01T12:00:00Z'), NY)).toBe('0001-06-01')
+    expect(todayIn(at('0999-06-01T12:00:00Z'), NY)).toBe('0999-06-01')
+  })
+  it('throws on a zone the phone doesn’t know (the schema checks before this is reached)', () => {
+    expect(() => todayIn(at('2026-11-02T12:00:00Z'), 'Not/AZone')).toThrow(RangeError)
+  })
+})
+
+describe('todayIn in other time zones (M-U1: the zone is a per-user setting, PROGRAM-QUESTIONS 203)', () => {
+  it.each([
+    [LA, '2026-11-01T06:59:59Z', '2026-10-31'],
+    [LA, '2026-11-01T07:00:00Z', '2026-11-01'],
+    [LA, '2026-11-02T07:59:59Z', '2026-11-01'],
+    [LA, '2026-11-02T08:00:00Z', '2026-11-02'],
+    [LA, '2026-03-08T07:59:59Z', '2026-03-07'],
+    [LA, '2026-03-08T08:00:00Z', '2026-03-08'],
+    [LONDON, '2026-07-01T23:00:00Z', '2026-07-02'],
+    [LONDON, '2026-10-24T23:00:00Z', '2026-10-25'],
+    [LONDON, '2026-10-25T23:30:00Z', '2026-10-25'],
+    [LONDON, '2026-11-02T23:59:59Z', '2026-11-02'],
+    [LONDON, '2026-11-03T00:00:00Z', '2026-11-03'],
+    [TOKYO, '2026-11-02T14:59:59Z', '2026-11-02'],
+    [TOKYO, '2026-11-02T15:00:00Z', '2026-11-03'],
+    ['Australia/Sydney', '2026-11-01T12:59:59Z', '2026-11-01'],
+    ['Australia/Sydney', '2026-11-01T13:00:00Z', '2026-11-02'],
+    ['Pacific/Kiritimati', '2026-11-01T10:00:00Z', '2026-11-02'],
+    ['UTC', '2026-11-02T23:59:59Z', '2026-11-02'],
+  ])('%s at %s is %s', (zone, instant, date) => {
+    expect(todayIn(at(instant), zone)).toBe(date)
+  })
+
+  it('turns the program week at the zone’s own Monday midnight', () => {
+    expect(weekOf(todayIn(at('2026-11-09T07:59:59Z'), LA), START)).toBe(1)
+    expect(weekOf(todayIn(at('2026-11-09T08:00:00Z'), LA), START)).toBe(2)
+    expect(weekOf(todayIn(at('2026-11-08T14:59:59Z'), TOKYO), START)).toBe(1)
+    expect(weekOf(todayIn(at('2026-11-08T15:00:00Z'), TOKYO), START)).toBe(2)
+    expect(weekOf(todayIn(at('2026-11-08T23:59:59Z'), LONDON), START)).toBe(1)
+    expect(weekOf(todayIn(at('2026-11-09T00:00:00Z'), LONDON), START)).toBe(2)
+    expect(weekOf(todayIn(at('2026-11-09T04:59:59Z'), NY), START)).toBe(1)
+    expect(weekOf(todayIn(at('2026-11-09T05:00:00Z'), NY), START)).toBe(2)
+  })
+})
+
+describe('timeZoneChange: what a new zone does to today, at one instant', () => {
+  it('west of New York can move today back a day', () => {
+    expect(timeZoneChange(at('2026-11-09T06:00:00Z'), NY, LA)).toEqual({ todayFrom: '2026-11-09', todayTo: '2026-11-08', shift: -1 })
+  })
+  it('far east can move it forward', () => {
+    expect(timeZoneChange(at('2026-11-09T04:00:00Z'), NY, 'Pacific/Kiritimati')).toEqual({ todayFrom: '2026-11-08', todayTo: '2026-11-09', shift: 1 })
+  })
+  it('moves nothing in the middle of the day, or to the same zone', () => {
+    expect(timeZoneChange(at('2026-11-03T17:00:00Z'), NY, LA)).toEqual({ todayFrom: '2026-11-03', todayTo: '2026-11-03', shift: 0 })
+    expect(timeZoneChange(at('2026-11-09T04:30:00Z'), NY, NY).shift).toBe(0)
+  })
+  it('can move two days when the offsets differ by more than 24 hours', () => {
+    expect(timeZoneChange(at('2026-11-09T10:30:00Z'), 'Pacific/Pago_Pago', 'Pacific/Kiritimati')).toEqual({ todayFrom: '2026-11-08', todayTo: '2026-11-10', shift: 2 })
+  })
+})
+
+describe('comingMonday', () => {
+  it('is today on a Monday, else the next Monday', () => {
+    expect(comingMonday('2026-11-03')).toBe('2026-11-09')
+    expect(comingMonday('2026-11-09')).toBe('2026-11-09')
+    expect(comingMonday('2026-11-08')).toBe('2026-11-09')
+    expect(comingMonday('2026-12-31')).toBe('2027-01-04')
   })
 })
 

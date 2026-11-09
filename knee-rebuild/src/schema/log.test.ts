@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IsoDate, MORNING_TAGS, MorningTag } from './enums.ts'
+import { DEFAULT_TIME_ZONE, IsoDate, KnownTimeZone, MORNING_TAGS, MorningTag, TimeZone, isKnownTimeZone } from './enums.ts'
 import { REST_MAX, REST_MIN } from '../screens/Settings.helpers.ts'
 import {
   ACL_RSI_MAX,
@@ -22,6 +22,8 @@ import {
   HR_RESTING_MIN,
   HrSettings,
   Location,
+  TIME_ZONE_ID,
+  TimeZoneSetting,
   MorningCheck,
   PLANET_FITNESS_LOCATION_ID,
   REST_TIMER_MAX,
@@ -436,5 +438,35 @@ describe('DownPeriod (Batch E)', () => {
   })
   it('keeps its shape for the backup test’s field list', () => {
     expect(Object.keys(DownPeriod.shape)).toEqual(['id', 'start', 'plannedEnd', 'endedOn', 'declaredAt', 'note'])
+  })
+})
+
+describe('M-U1: the time zone, a one-row table of its own (PROGRAM-QUESTIONS 203, 204)', () => {
+  it('defaults to New York, Shawn’s zone', () => {
+    expect(DEFAULT_TIME_ZONE).toBe('America/New_York')
+  })
+  it('takes zone names by shape, and asks the phone’s zone data only at use', () => {
+    for (const zone of ['America/New_York', 'UTC', 'Asia/Calcutta', 'Europe/London', 'America/Argentina/Buenos_Aires', 'Etc/GMT+5']) {
+      expect(TimeZone.safeParse(zone).success, zone).toBe(true)
+      expect(KnownTimeZone.safeParse(zone).success, zone).toBe(true)
+      expect(isKnownTimeZone(zone), zone).toBe(true)
+    }
+    for (const zone of ['', 'a'.repeat(65), 'America/New York', '/UTC', 'America//X', 'a/b/c/d', 'New_York\n']) {
+      expect(TimeZone.safeParse(zone).success, zone).toBe(false)
+      expect(isKnownTimeZone(zone), zone).toBe(false)
+    }
+    // The right shape, a zone no phone knows: a stored row or a file may hold it; Settings and first run refuse it.
+    expect(TimeZone.safeParse('Not/AZone').success).toBe(true)
+    expect(isKnownTimeZone('Not/AZone')).toBe(false)
+    expect(KnownTimeZone.safeParse('Not/AZone').success).toBe(false)
+  })
+  it('holds one row keyed time-zone, nothing else', () => {
+    expect(TimeZoneSetting.parse({ id: TIME_ZONE_ID, zone: 'America/Los_Angeles' })).toEqual({ id: 'time-zone', zone: 'America/Los_Angeles' })
+    expect(TimeZoneSetting.safeParse({ id: 'tz', zone: 'UTC' }).success).toBe(false)
+    expect(TimeZoneSetting.safeParse({ id: TIME_ZONE_ID, zone: 'UTC', note: 'x' }).success).toBe(false)
+    expect(TimeZoneSetting.safeParse({ id: TIME_ZONE_ID }).success).toBe(false)
+  })
+  it('the settings row gains no key for it: an older build still reads the row (PROGRAM-QUESTIONS 132)', () => {
+    expect(Object.keys(Settings.shape).sort()).toEqual(['activeLocationId', 'currentPhase', 'dumbbellMax', 'injuredSide', 'kit', 'lastExportedAt', 'painPerSet', 'phaseEnteredWeek', 'redFlag', 'restTimerSeconds', 'startDate'])
   })
 })

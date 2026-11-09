@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { onboardAsShawn } from './firstRun.ts'
 
 /*
  * The smoke test (docs/m6-brief.md section 3): the built app, served by `vite preview`, run the way
@@ -72,6 +73,7 @@ test('Session A at week 1, the morning check, and Session A at week 2', async ({
 
   await page.clock.install({ time: new Date(TUESDAY_WEEK_1) })
   await page.goto('/')
+  await onboardAsShawn(page)
 
   // Today, Tuesday of week 1: Session A, one Start button.
   await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible()
