@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MileageWeek, Run, WeeklyTemplate, Workout } from '../schema/index.ts'
 import type { SubjectReading } from './history.ts'
 import { weekMiles } from './mileage.ts'
-import { readingsInWeek, runTypeFor, runsInWeek, sessionDone, suggestRun, targetForWeek, weekDays, weekMilesSummary } from './weekPlan.ts'
+import { readingsInWeek, runTypeFor, runsInWeek, sessionDone, suggestRun, targetForWeek, weekAdherence, weekDays, weekMilesSummary } from './weekPlan.ts'
 
 const START = '2026-11-02'
 const plan: MileageWeek[] = [10, 11, 12, 9, 13, 14, 15, 11, 16, 17, 18, 14].map((targetMiles, i) => ({ week: i + 1, targetMiles, isDown: [4, 8, 12].includes(i + 1) }))
@@ -202,5 +202,71 @@ describe('weekMilesSummary', () => {
   it('counts miles, sessions and swaps against the target', () => {
     const runs = [run('2026-11-02', 3, 'mbr'), run('2026-11-04', 0, 'rower-swap'), run('2026-11-06', 4, 'long')]
     expect(weekMilesSummary(plan, 1, START, runs, [])).toMatchObject({ miles: 7, sessions: 3, swaps: 1, target: { target: 10 } })
+  })
+})
+
+describe('weekAdherence: sessions done of those scheduled, one program week (Batch B, PROGRAM-QUESTIONS 164)', () => {
+  const workout = (date: string, status: Workout['status'] = 'finished'): Workout => ({ id: `w-${date}`, date, templateId: 'p1-a', phase: 1, week: 1, isDeload: false, status })
+  const base = { startDate: START, template: TEMPLATE, moves: [] }
+
+  it('counts lifts and runs against the weekly template: Lifts 2 of 3, Runs 3 of 3', () => {
+    // Week 1, Nov 2 to 8: runs Mon, Wed, Fri; lifts Tue and Thu; Saturday's lift skipped.
+    const runs = [run('2026-11-02', 3, 'mbr'), run('2026-11-04', 3), run('2026-11-06', 4, 'long')]
+    expect(weekAdherence({ ...base, week: 1, runs, workouts: [workout('2026-11-03'), workout('2026-11-05')] })).toEqual({ liftsDone: 2, liftsScheduled: 3, runsDone: 3, runsScheduled: 3 })
+  })
+
+  it('a swap counts as the run it stood in for', () => {
+    const runs = [run('2026-11-02', 0, 'elliptical-swap'), run('2026-11-04', 0, 'rower-swap')]
+    expect(weekAdherence({ ...base, week: 1, runs, workouts: [] })).toMatchObject({ runsDone: 2, runsScheduled: 3 })
+  })
+
+  it('a moved session counts on its moved day', () => {
+    // Thursday's lift and Friday's long run trade days: the long run on Thursday counts, the lift on Friday counts.
+    const moves = [{ id: 'm', week: 1, dayA: 'thu' as const, dayB: 'fri' as const }]
+    const r = weekAdherence({ ...base, moves, week: 1, runs: [run('2026-11-05', 4, 'long')], workouts: [workout('2026-11-06')] })
+    expect(r).toMatchObject({ liftsDone: 1, runsDone: 1 })
+    // Without the move the same days count for nothing: a run on a lift day and a lift on a run day.
+    expect(weekAdherence({ ...base, week: 1, runs: [run('2026-11-05', 4, 'long')], workouts: [workout('2026-11-06')] })).toMatchObject({ liftsDone: 0, runsDone: 0 })
+  })
+
+  it('a move in another week changes nothing here (moves swap days within one week)', () => {
+    const moves = [{ id: 'm', week: 2, dayA: 'thu' as const, dayB: 'fri' as const }]
+    expect(weekAdherence({ ...base, moves, week: 1, runs: [run('2026-11-06', 4, 'long')], workouts: [workout('2026-11-05')] })).toMatchObject({ liftsDone: 1, runsDone: 1 })
+  })
+
+  it('a deload week is an ordinary scheduled week', () => {
+    // Week 4 is Nov 23 to 29.
+    expect(weekAdherence({ ...base, week: 4, runs: [run('2026-11-23', 2, 'mbr')], workouts: [workout('2026-11-24')] })).toEqual({ liftsDone: 1, liftsScheduled: 3, runsDone: 1, runsScheduled: 3 })
+  })
+
+  it('an ended-early lift counts (it happened); one open or only planned does not', () => {
+    const workouts = [workout('2026-11-03', 'abandoned'), workout('2026-11-05', 'in-progress'), workout('2026-11-07', 'planned')]
+    expect(weekAdherence({ ...base, week: 1, runs: [], workouts })).toMatchObject({ liftsDone: 1 })
+  })
+
+  it('a run on a lift day does not make the lift done, and a run on an off day counts toward nothing', () => {
+    // Tue is Session A, Sun is off: three runs done, none on a run day.
+    const runs = [run('2026-11-03', 2), run('2026-11-08', 3), run('2026-11-07', 2)]
+    expect(weekAdherence({ ...base, week: 1, runs, workouts: [] })).toEqual({ liftsDone: 0, liftsScheduled: 3, runsDone: 0, runsScheduled: 3 })
+  })
+
+  it('two things on one day count once', () => {
+    const r = weekAdherence({ ...base, week: 1, runs: [run('2026-11-02', 3, 'mbr'), { ...run('2026-11-02', 0, 'rower-swap'), id: 'r-2' }], workouts: [workout('2026-11-03'), { ...workout('2026-11-03'), id: 'w-2' }] })
+    expect(r).toMatchObject({ liftsDone: 1, runsDone: 1 })
+  })
+
+  it('other weeks’ sessions are not this week’s', () => {
+    expect(weekAdherence({ ...base, week: 2, runs: [run('2026-11-02', 3, 'mbr')], workouts: [workout('2026-11-03')] })).toEqual({ liftsDone: 0, liftsScheduled: 3, runsDone: 0, runsScheduled: 3 })
+  })
+
+  it('null before the program and for a week with nothing scheduled', () => {
+    expect(weekAdherence({ ...base, week: 0, runs: [], workouts: [] })).toBeNull()
+    const allOff = { mon: 'off', tue: 'off', wed: 'off', thu: 'off', fri: 'off', sat: 'off', sun: 'off' } as const
+    expect(weekAdherence({ ...base, template: allOff, week: 1, runs: [], workouts: [] })).toBeNull()
+  })
+
+  it('a week with only lifts scheduled has 0 runs scheduled (the screen leaves that half out)', () => {
+    const liftsOnly = { ...TEMPLATE, mon: 'off', wed: 'off', fri: 'off' } as const
+    expect(weekAdherence({ ...base, template: liftsOnly, week: 1, runs: [], workouts: [workout('2026-11-03')] })).toEqual({ liftsDone: 1, liftsScheduled: 3, runsDone: 0, runsScheduled: 0 })
   })
 })

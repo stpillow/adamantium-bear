@@ -4,12 +4,14 @@ import { Button } from '../../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../../components/ReadingWord.tsx'
 import { updateWorkout } from '../../db/repo.ts'
 import { exerciseById } from '../../program/program.ts'
+import { sessionCompliance } from '../../rules/compliance.ts'
 import { sessionReading } from '../../rules/reading.ts'
 import { isLateEntry } from '../../rules/retro.ts'
 import type { SessionTemplate, SetLog, Side, Workout } from '../../schema/index.ts'
 import { durationWords, loadWords, showsLoad, sideWords, stopReasonLabel } from '../SessionRunner.helpers.ts'
 import { MinutesField, SessionRpeField } from './EndPanels.tsx'
 import { minutesNote, minutesOpening, needsEffortOrMinutes, sessionEffortLine, type SessionTiming } from './EndPanels.helpers.ts'
+import { complianceLine, complianceNote } from './Summary.helpers.ts'
 
 interface ExerciseBlock {
   exerciseId: string
@@ -87,10 +89,31 @@ function AddEffort({ workout, timing, onDone }: { workout: Workout; timing: Sess
   )
 }
 
-/** After Finish or End: what was logged, the session's RPE, minutes and training load, each exercise's session reading in words, and the way back. */
-export function Summary({ workout, template, sets, injuredSide, timing }: { workout: Workout; template: SessionTemplate; sets: readonly SetLog[]; injuredSide: Side; timing: SessionTiming }) {
+/**
+ * After Finish or End: what was logged, the prescribed-sets count in words (Batch B), the session's
+ * RPE, minutes and training load, each exercise's session reading in words, and the way back.
+ * `phaseWeek` is the week of its phase the session fell in, or null when it can't be said.
+ */
+export function Summary({
+  workout,
+  template,
+  sets,
+  injuredSide,
+  timing,
+  phaseWeek,
+}: {
+  workout: Workout
+  template: SessionTemplate
+  sets: readonly SetLog[]
+  injuredSide: Side
+  timing: SessionTiming
+  phaseWeek: number | null
+}) {
   const [adding, setAdding] = useState(false)
   const blocks = exerciseBlocks(template, sets)
+  const compliance = sessionCompliance({ slots: template.slots, workout, sets, phaseWeek })
+  const counted = complianceLine(compliance)
+  const countNote = complianceNote(compliance)
   const duration = durationWords(workout.startedAt, workout.finishedAt)
   const lead =
     workout.status === 'abandoned'
@@ -99,6 +122,12 @@ export function Summary({ workout, template, sets, injuredSide, timing }: { work
   return (
     <section aria-label="Summary" className="flex flex-col gap-6">
       <p className="text-lead text-on-dark">{lead}</p>
+      {counted ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-body text-on-dark">{counted}</p>
+          {countNote ? <p className="text-small text-on-dark-muted">{countNote}</p> : null}
+        </div>
+      ) : null}
       <p className="text-body text-on-dark-dim">{sessionEffortLine(workout, sets)}</p>
       {adding ? (
         <AddEffort workout={workout} timing={timing} onDone={() => setAdding(false)} />

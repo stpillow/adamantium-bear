@@ -39,6 +39,8 @@ import {
   niceStep,
   pickedRow,
   progressView,
+  adherenceLine,
+  adherenceView,
   readoutText,
   refLabelBox,
   scaleLinear,
@@ -797,6 +799,7 @@ describe('progressView', () => {
       setLogs: [set('w1', 'right', 1, 20, 8), set('w1', 'left', 1, 20, 8)],
       morningChecks: [check('2026-11-03'), check('2026-11-04')],
       runs: [run('r1', '2026-11-02', 3)],
+      sessionMoves: [],
     }
     const view = progressView({ today: '2026-11-05', settings, history, program: { ...program, exercises: CATALOG } })
     expect(view.clean).toMatchObject({ count: 4, unit: 'days', context: 'since the first reading, with no hold or back-off yet' })
@@ -805,6 +808,45 @@ describe('progressView', () => {
     expect(view.miles.current).toBe(0)
     expect(view.miles.weeks[0]?.actual).toBe(3)
     expect(view.training.weeks[0]).toMatchObject({ week: 1, load: 30 * 3, sessions: 1, notCounted: 1 })
+    // The seed's week: runs Mon, Wed, Fri; lifts Tue, Thu, Sat. Monday's run and Tuesday's lift are done.
+    expect(view.adherence.lines).toEqual(['Week 1 (so far) · Lifts 1 of 3 · Runs 1 of 3'])
+  })
+})
+
+describe('sessions done of those scheduled, per program week (Batch B)', () => {
+  const TEMPLATE = { mon: 'run:mbr', tue: 'lift:A', wed: 'run:easy', thu: 'lift:B', fri: 'run:long', sat: 'lift:C', sun: 'off' } as const
+  const base = { startDate: START, template: TEMPLATE, moves: [] }
+
+  it('one line per week from this one back to week 1, the current week marked so far', () => {
+    const runs = [run('r1', '2026-11-02', 3), run('r2', '2026-11-04', 3), run('r3', '2026-11-06', 4), run('r4', '2026-11-09', 3)]
+    const workouts = [workout('w1', '2026-11-03'), workout('w2', '2026-11-05'), workout('w3', '2026-11-10', 'abandoned')]
+    expect(adherenceView({ ...base, today: '2026-11-11', runs, workouts })).toEqual({
+      note: 'Sessions done, of those scheduled. A record, not a score: a skipped day on a bad knee is the program working.',
+      lines: ['Week 2 (so far) · Lifts 1 of 3 · Runs 1 of 3', 'Week 1 · Lifts 2 of 3 · Runs 3 of 3'],
+    })
+  })
+
+  it('a swap counts as its run, and a moved session on its moved day', () => {
+    const moves = [{ id: 'm', week: 1, dayA: 'thu' as const, dayB: 'fri' as const }]
+    const runs = [{ ...run('r1', '2026-11-02', 0, 1, 'rower-swap'), minutes: 35 }, run('r2', '2026-11-05', 4, 1, 'long')]
+    expect(adherenceView({ ...base, moves, today: '2026-11-08', runs, workouts: [workout('w1', '2026-11-06')] }).lines).toEqual(['Week 1 (so far) · Lifts 1 of 3 · Runs 2 of 3'])
+  })
+
+  it('leaves out a half with nothing scheduled, and says nothing before the program or with nothing scheduled', () => {
+    expect(adherenceLine(3, { liftsDone: 2, liftsScheduled: 3, runsDone: 0, runsScheduled: 0 }, false)).toBe('Week 3 · Lifts 2 of 3')
+    expect(adherenceView({ ...base, today: '2026-10-30', runs: [], workouts: [] })).toEqual({ note: null, lines: [] })
+    const allOff = { mon: 'off', tue: 'off', wed: 'off', thu: 'off', fri: 'off', sat: 'off', sun: 'off' } as const
+    expect(adherenceView({ ...base, template: allOff, today: '2026-11-11', runs: [], workouts: [] })).toEqual({ note: null, lines: [] })
+  })
+
+  it('past week 12 it runs on to this week, as the Week screen does', () => {
+    expect(adherenceView({ ...base, today: '2027-02-10', runs: [], workouts: [] }).lines).toHaveLength(15)
+    expect(adherenceView({ ...base, today: '2027-02-10', runs: [], workouts: [] }).lines[0]).toBe('Week 15 (so far) · Lifts 0 of 3 · Runs 0 of 3')
+  })
+
+  it('never words a streak', () => {
+    const view = adherenceView({ ...base, today: '2026-11-11', runs: [], workouts: [] })
+    for (const text of [view.note ?? '', ...view.lines]) expect(text).not.toMatch(/streak|chain|in a row|don.t break/i)
   })
 })
 
@@ -858,28 +900,33 @@ describe('training load in words', () => {
     expect(ratioWords(1, 'steady')).toBe('1×')
   })
 
-  it('high is an up arrow and a word, says the 7 days through yesterday, and that nothing changes', () => {
+  it('high is an up arrow and a word, says both numbers are smoothed week-rates through yesterday, and that nothing changes', () => {
     expect(trainingLoadWarning(comparison({ band: 'high', acute: 2140, chronicWeek: 1330, ratio: 2140 / 1330 }))).toEqual({
       mark: '↑ High',
-      text: 'The 7 days through yesterday carried 1.6× your average week of the 4 weeks before (2,140 against 1,330). A warning only: no session or run changes because of it.',
+      text: 'Your recent week-rate of training load is 1.6× your longer rate (2,140 against 1,330, both smoothed through yesterday). A warning only: no session or run changes because of it.',
     })
   })
 
   it('low is a down arrow, a drop, and a note only', () => {
     expect(trainingLoadWarning(comparison({ band: 'low', acute: 780, chronicWeek: 1300, ratio: 0.6 }))).toEqual({
       mark: '↓ Low',
-      text: 'The 7 days through yesterday carried 0.6× your average week of the 4 weeks before (780 against 1,300): a drop. A note only: nothing changes because of it.',
+      text: 'Your recent week-rate of training load is 0.6× your longer rate (780 against 1,300, both smoothed through yesterday): a drop. A note only: nothing changes because of it.',
     })
   })
 
   it('steady is a dash and a word', () => {
-    expect(trainingLoadWarning(comparison())).toEqual({ mark: '– Steady', text: 'The 7 days through yesterday carried 1.1× your average week of the 4 weeks before (1,430 against 1,300).' })
+    expect(trainingLoadWarning(comparison())).toEqual({ mark: '– Steady', text: 'Your recent week-rate of training load is 1.1× your longer rate (1,430 against 1,300, both smoothed through yesterday).' })
+  })
+
+  it('just over the line prints as just over, never as the line itself (ratioWords inside the sentence)', () => {
+    expect(trainingLoadWarning(comparison({ band: 'high', acute: 1298.5, chronicWeek: 865.1, ratio: 1.501 })).text).toContain('is just over 1.5× your longer rate')
+    expect(trainingLoadWarning(comparison({ band: 'low', acute: 505.7, chronicWeek: 635.2, ratio: 0.7962 })).text).toContain('is just under 0.8× your longer rate')
   })
 
   it('too early says when the comparison starts; with nothing logged it says so', () => {
     expect(trainingLoadWarning(comparison({ band: 'too-early', ratio: null, chronicWeek: null, startsOn: '2026-12-07' }))).toEqual({
       mark: null,
-      text: 'No comparison yet: it needs 4 weeks logged before the 7 days through yesterday. It starts Monday Dec 7.',
+      text: 'No comparison yet: the smoothed rates need 35 days of history. It starts Monday Dec 7.',
     })
     expect(trainingLoadWarning(comparison({ band: 'too-early', ratio: null, chronicWeek: null, startsOn: null }))).toEqual({
       mark: null,
@@ -888,7 +935,7 @@ describe('training load in words', () => {
   })
 
   it('none says there is nothing to compare against', () => {
-    expect(trainingLoadWarning(comparison({ band: 'none', ratio: null, chronicWeek: 0 })).text).toBe('No training load is counted in the 4 weeks before the 7 days through yesterday, so there is nothing to compare against yet.')
+    expect(trainingLoadWarning(comparison({ band: 'none', ratio: null, chronicWeek: 0 })).text).toBe('No training load is counted in the 4 weeks before the last 7 days, so there is nothing to compare against yet.')
   })
 
   it('says which way uncounted sessions and deload weeks push the ratio', () => {
@@ -904,10 +951,27 @@ describe('training load in words', () => {
       ],
     })
     expect(skewLines(skewed)).toEqual([
-      '1 session in the 7 days through yesterday isn’t counted, so the ratio reads lower than it is.',
-      'The 7 days through yesterday include deload days, planned lighter, so the ratio reads lower.',
+      '1 session in the last 7 days isn’t counted, so the ratio reads lower than it is.',
+      'The last 7 days include deload days, planned lighter, so the ratio reads lower.',
       '2 sessions in the 4 weeks before aren’t counted, so the ratio reads higher than it is.',
       'The 4 weeks before include a deload week, planned lighter, so the ratio reads higher.',
+    ])
+  })
+
+  it('says the ratio can read either way when the days behind one line pull both ways (PROGRAM-QUESTIONS 162d)', () => {
+    const missing = (id: string, date: string): TrainingLoadEntry => ({ kind: 'run', id, date, runType: 'easy', rpe: 3, rpeSource: 'rated', minutes: null, load: null, hrLoad: null, hasHr: false, missing: ['minutes'] })
+    const mixed = comparison({
+      notCountedAcute: [missing('a', '2026-12-08'), missing('b', '2026-12-14')],
+      skews: [
+        { why: 'not-counted', window: 'acute', reads: 'either' },
+        { why: 'deload', window: 'acute', reads: 'either' },
+        { why: 'deload', window: 'chronic', reads: 'lower' },
+      ],
+    })
+    expect(skewLines(mixed)).toEqual([
+      '2 sessions in the last 7 days aren’t counted, so the ratio can read higher or lower than it is.',
+      'The last 7 days include deload days, planned lighter, so the ratio can read higher or lower.',
+      'The 4 weeks before include a deload week, planned lighter, so the ratio reads lower.',
     ])
   })
 
@@ -949,7 +1013,7 @@ describe('trainingLoadView', () => {
     expect(view.any).toBe(true)
     expect(view.olderRuns).toBe('Runs logged before effort was rated 1 to 10 read their effort word as RPE 3, 5 or 8.')
     expect(view.notCounted).toEqual(['Tuesday Nov 10 · Run: easy · no time logged'])
-    expect(view.warning.text).toBe('No comparison yet: it needs 4 weeks logged before the 7 days through yesterday. It starts Monday Dec 7.')
+    expect(view.warning.text).toBe('No comparison yet: the smoothed rates need 35 days of history. It starts Monday Dec 7.')
     expect(trainingLoadReadout(view, 0)).toEqual({ parts: [{ value: '620', name: 'training load', mark: 'column' }], when: 'Week 1, 3 counted' })
     expect(trainingLoadReadout(view, 1)).toEqual({ parts: [{ value: '0', name: 'training load', mark: 'column' }], when: 'Week 2, 1 not counted, this week' })
     expect(trainingLoadReadout(view, 3)?.when).toBe('Week 4, deload')
@@ -981,7 +1045,7 @@ describe('trainingLoadView', () => {
     expect(view.hrLine).toBe('HR load this week: 72 (1 of 2 runs had heart rate)')
     expect(view.weeks[0]).toMatchObject({ withHr: 1, runs: 2 })
     // The warning still reads the sRPE load alone: the words name RPE × minutes sums, not TRIMP.
-    expect(view.warning.text).toBe('No comparison yet: it needs 4 weeks logged before the 7 days through yesterday. It starts Monday Dec 7.')
+    expect(view.warning.text).toBe('No comparison yet: the smoothed rates need 35 days of history. It starts Monday Dec 7.')
   })
 
   it('a week where HR and sRPE disagree still drives the warning from the sRPE load alone', () => {
@@ -1077,7 +1141,7 @@ describe('the VO2 max section (metrics phase 3)', () => {
   })
 
   it('progressView carries the VO2 view, from readings handed in on their own, never through History', () => {
-    const history = { workouts: [], setLogs: [], morningChecks: [], runs: [] }
+    const history = { workouts: [], setLogs: [], morningChecks: [], runs: [], sessionMoves: [] }
     const view = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG }, vo2Readings: readings })
     expect(view.vo2.latest).toEqual({ value: 45, when: 'from the watch, Nov 14' })
     const bare = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG } })
@@ -1133,7 +1197,7 @@ describe('the KOOS section (Batch A): five subscale trends in words, scores on P
   })
 
   it('progressView carries the KOOS view, from entries handed in on their own, never through History', () => {
-    const history = { workouts: [], setLogs: [], morningChecks: [], runs: [] }
+    const history = { workouts: [], setLogs: [], morningChecks: [], runs: [], sessionMoves: [] }
     const view = progressView({ today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG }, koosEntries: [latest, earlier] })
     expect(view.koos.rows[0]).toEqual({ name: 'Pain', words: '75 — Nov 8, unchanged from 75 on Oct 11' })
     const bare = progressView({ today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG } })

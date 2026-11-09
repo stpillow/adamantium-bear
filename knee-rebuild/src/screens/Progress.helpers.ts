@@ -5,8 +5,9 @@ import { awaitingMorningCheck, consecutiveCleanDays, loadSeries, milesSeries, sy
 import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrainingLoads, type AcuteChronic, type Band, type HrPair, type TrainingLoadEntry, type TrainingLoadWeek } from '../rules/trainingLoad.ts'
 import { KOOS_SUBSCALES, KOOS_SUBSCALE_WORDS, koosDue, koosSeries, koosSubscaleScore } from '../rules/koos.ts'
 import { latestReading, replacesToday, vo2Problem, vo2Series } from '../rules/vo2.ts'
+import { weekAdherence, type WeekAdherence } from '../rules/weekPlan.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading } from '../schema/index.ts'
+import type { Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, Program, Run, SessionMove, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading, WeeklyTemplate, Workout } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -17,8 +18,8 @@ import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
  * the answers for the screen and says them in words.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs'>
-export type ProgramLike = Pick<Program, 'exercises' | 'gates' | 'mileagePlan' | 'templates'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves'>
+export type ProgramLike = Pick<Program, 'exercises' | 'gates' | 'mileagePlan' | 'templates' | 'weeklyTemplate'>
 
 // ---------------------------------------------------------------------------------------------
 // Numbers and dates in words
@@ -999,36 +1000,46 @@ export function ratioWords(ratio: number, band: Band): string {
   return `${printed}×`
 }
 
-const ACUTE_WORDS = 'the 7 days through yesterday'
+/** The spans the skew words name (src/rules' acuteChronic): the 7 days through yesterday, and the 28 days before them. */
+const ACUTE_WORDS = 'the last 7 days'
 const CHRONIC_WORDS = 'the 4 weeks before'
 
-/** The warning: a mark (an arrow and a word, never a color) and its sentence. */
+/**
+ * The warning (Batch B, PROGRAM-QUESTIONS 162): a mark (an arrow and a word, never a color) and its
+ * sentence. Both printed numbers are week-rates, a week at the smoothed recent rate against a week
+ * at the smoothed longer rate, and the sentence says so, so the numbers never contradict the words.
+ */
 export function trainingLoadWarning(ac: AcuteChronic): { mark: string | null; text: string } {
   if (ac.band === 'too-early') {
     return ac.startsOn === null
       ? { mark: null, text: 'Nothing logged yet. The comparison starts 35 days after the first session or run.' }
-      : { mark: null, text: `No comparison yet: it needs 4 weeks logged before ${ACUTE_WORDS}. It starts ${shortDateWords(ac.startsOn)}.` }
+      : { mark: null, text: `No comparison yet: the smoothed rates need 35 days of history. It starts ${shortDateWords(ac.startsOn)}.` }
   }
   if (ac.band === 'none' || ac.ratio === null || ac.chronicWeek === null) {
     return { mark: null, text: `No training load is counted in ${CHRONIC_WORDS} ${ACUTE_WORDS}, so there is nothing to compare against yet.` }
   }
-  const compared = `The 7 days through yesterday carried ${ratioWords(ac.ratio, ac.band)} your average week of ${CHRONIC_WORDS} (${trainingLoadNumber(ac.acute)} against ${trainingLoadNumber(ac.chronicWeek)})`
+  const compared = `Your recent week-rate of training load is ${ratioWords(ac.ratio, ac.band)} your longer rate (${trainingLoadNumber(ac.acute)} against ${trainingLoadNumber(ac.chronicWeek)}, both smoothed through yesterday)`
   if (ac.band === 'high') return { mark: '↑ High', text: `${compared}. A warning only: no session or run changes because of it.` }
   if (ac.band === 'low') return { mark: '↓ Low', text: `${compared}: a drop. A note only: nothing changes because of it.` }
   return { mark: '– Steady', text: `${compared}.` }
 }
 
-/** What pushes the ratio, and which way, one sentence each (src/rules' `skews`, in its order). */
+/**
+ * What pushes the ratio, and which way, one sentence each (src/rules' `skews`, in its order). The
+ * direction is the rules' (from the EWMA weights against the ratio, PROGRAM-QUESTIONS 162d); when
+ * the days behind a line pull both ways it says the ratio can read higher or lower.
+ */
 export function skewLines(ac: AcuteChronic): string[] {
   return ac.skews.map((skew) => {
     const where = skew.window === 'acute' ? ACUTE_WORDS : CHRONIC_WORDS
+    const reads = skew.reads === 'either' ? 'can read higher or lower' : `reads ${skew.reads}`
     if (skew.why === 'deload') {
       return skew.window === 'acute'
-        ? `The 7 days through yesterday include deload days, planned lighter, so the ratio reads ${skew.reads}.`
-        : `The 4 weeks before include a deload week, planned lighter, so the ratio reads ${skew.reads}.`
+        ? `The last 7 days include deload days, planned lighter, so the ratio ${reads}.`
+        : `The 4 weeks before include a deload week, planned lighter, so the ratio ${reads}.`
     }
     const n = (skew.window === 'acute' ? ac.notCountedAcute : ac.notCountedChronic).length
-    return `${n} ${n === 1 ? 'session' : 'sessions'} in ${where} ${n === 1 ? 'isn’t' : 'aren’t'} counted, so the ratio reads ${skew.reads} than it is.`
+    return `${n} ${n === 1 ? 'session' : 'sessions'} in ${where} ${n === 1 ? 'isn’t' : 'aren’t'} counted, so the ratio ${reads} than it is.`
   })
 }
 
@@ -1259,8 +1270,53 @@ export interface ExerciseView {
   leftOut: string[]
 }
 
+// ---------------------------------------------------------------------------------------------
+// Sessions done of those scheduled, per program week (Batch B)
+// ---------------------------------------------------------------------------------------------
+
+export interface AdherenceView {
+  /** The small text over the list; null with nothing to list. */
+  note: string | null
+  /** One line per program week with anything scheduled, newest first. */
+  lines: string[]
+}
+
+const ADHERENCE_NOTE = 'Sessions done, of those scheduled. A record, not a score: a skipped day on a bad knee is the program working.'
+
+/** "Week 6 (so far) · Lifts 1 of 3 · Runs 2 of 3"; a half with nothing scheduled is left out. */
+export function adherenceLine(week: number, counts: WeekAdherence, current: boolean): string {
+  return [
+    `Week ${week}${current ? ' (so far)' : ''}`,
+    ...(counts.liftsScheduled > 0 ? [`Lifts ${counts.liftsDone} of ${counts.liftsScheduled}`] : []),
+    ...(counts.runsScheduled > 0 ? [`Runs ${counts.runsDone} of ${counts.runsScheduled}`] : []),
+  ].join(' · ')
+}
+
+/**
+ * Every program week from 1 to this one, newest first, each with its counts (src/rules'
+ * `weekAdherence`): the weeks the Week screen pages through up to today, so past week 12 it runs on
+ * while the program does. Future weeks aren't listed; nothing before the program is.
+ */
+export function adherenceView(input: {
+  startDate: IsoDate
+  today: IsoDate
+  template: WeeklyTemplate
+  moves: readonly SessionMove[]
+  runs: readonly Run[]
+  workouts: readonly Workout[]
+}): AdherenceView {
+  const current = weekOf(input.today, input.startDate)
+  const lines: string[] = []
+  for (let week = current; week >= 1; week--) {
+    const counts = weekAdherence({ startDate: input.startDate, week, template: input.template, moves: input.moves, runs: input.runs, workouts: input.workouts })
+    if (counts !== null) lines.push(adherenceLine(week, counts, week === current))
+  }
+  return { note: lines.length > 0 ? ADHERENCE_NOTE : null, lines }
+}
+
 export interface ProgressView {
   clean: CleanDaysView
+  adherence: AdherenceView
   exercises: ExerciseRow[]
   refs: SymmetryRef[]
   miles: MilesView
@@ -1277,6 +1333,7 @@ export function progressView(input: { today: IsoDate; settings: Settings; histor
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
   return {
     clean: cleanDaysView({ readings, today, records, runs: history.runs, checks: history.morningChecks, templates: program.templates }),
+    adherence: adherenceView({ startDate: settings.startDate, today, template: program.weeklyTemplate, moves: history.sessionMoves, runs: history.runs, workouts: history.workouts }),
     exercises: loggedExercises(records, program.exercises),
     refs: symmetryRefs(program.gates),
     miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),

@@ -170,6 +170,57 @@ export function weekDays(input: {
   })
 }
 
+/** One program week's sessions done, of those scheduled (Batch B). No streak: a count per week, nothing carried over. */
+export interface WeekAdherence {
+  liftsDone: number
+  liftsScheduled: number
+  runsDone: number
+  runsScheduled: number
+}
+
+/**
+ * Sessions done of those scheduled in one program week (Batch B, PROGRAM-QUESTIONS 164): the weekly
+ * template after moves (`weekSchedule`, so a moved session counts on its moved day), each lift or run
+ * day done by `sessionDone`, as the Week screen reads it. A swap counts as the run it stood in for,
+ * an ended-early lift counts (it happened), a run on a lift day doesn't make the lift done, and a
+ * run on an off day counts toward nothing. A deload week is an ordinary scheduled week. Null before
+ * the program or for a week with nothing scheduled. Only the date of a run is read. It is a record,
+ * not a score: there is no streak and nothing carried from week to week, because a day skipped on a
+ * bad knee is the program working.
+ */
+export function weekAdherence(input: {
+  startDate: IsoDate
+  week: number
+  template: WeeklyTemplate
+  moves: readonly SessionMove[]
+  runs: readonly Pick<Run, 'date'>[]
+  workouts: readonly Pick<Workout, 'date' | 'status'>[]
+}): WeekAdherence | null {
+  if (input.week < 1) return null
+  const schedule = weekSchedule(input.template, input.week, input.moves)
+  const counts: WeekAdherence = { liftsDone: 0, liftsScheduled: 0, runsDone: 0, runsScheduled: 0 }
+  for (const day of DAYS) {
+    const session = schedule[day]
+    const isLift = session.startsWith('lift:')
+    const isRun = runTypeFor(session) !== null
+    if (!isLift && !isRun) continue
+    const date = dateOf(input.startDate, input.week, day)
+    const done = sessionDone(
+      session,
+      input.runs.filter((r) => r.date === date),
+      input.workouts.filter((w) => w.date === date),
+    )
+    if (isLift) {
+      counts.liftsScheduled += 1
+      if (done) counts.liftsDone += 1
+    } else {
+      counts.runsScheduled += 1
+      if (done) counts.runsDone += 1
+    }
+  }
+  return counts.liftsScheduled + counts.runsScheduled === 0 ? null : counts
+}
+
 export interface WeekMiles {
   target: WeekTarget
   miles: number
