@@ -6,6 +6,10 @@ import {
   ACL_RSI_MIN,
   AclRsiEntry,
   DEFAULT_KIT,
+  DOWN_PERIOD_MAX_DAYS,
+  DOWN_PERIOD_MIN_DAYS,
+  DOWN_PERIOD_NOTE_MAX,
+  DownPeriod,
   DURATION_MAX,
   DURATION_MIN,
   KOOS_MAX,
@@ -389,5 +393,48 @@ describe('Batch D: a morning check may carry fixed tags and, for a past morning,
   })
   it('keeps its shape for the backup test’s field list', () => {
     expect(Object.keys(MorningCheck.shape)).toEqual(['id', 'date', 'appliesTo', 'stiffnessUnder30Min', 'worseThanYesterday', 'visibleSwelling', 'warmth', 'painChangePoints', 'redFlags', 'notes', 'tags', 'loggedOn'])
+  })
+})
+
+describe('DownPeriod (Batch E)', () => {
+  const row = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T08:00:00-05:00' }
+  it('takes a period of 3 to 14 days, counted from its start', () => {
+    expect(DownPeriod.safeParse(row).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-16' }).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-27' }).success).toBe(true)
+    expect(DOWN_PERIOD_MIN_DAYS).toBe(3)
+    expect(DOWN_PERIOD_MAX_DAYS).toBe(14)
+  })
+  it('refuses a period under 3 days, over 14, or ending before it starts', () => {
+    const short = DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-15' })
+    expect(short.success).toBe(false)
+    expect(short.error?.issues[0]?.message).toBe('a down period runs 3 to 14 days from its start')
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-28' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-13' }).success).toBe(false)
+  })
+  it('takes an early end from its start to the day before its planned end', () => {
+    expect(DownPeriod.safeParse({ ...row, endedOn: '2026-11-14' }).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, endedOn: '2026-11-19' }).success).toBe(true)
+    const late = DownPeriod.safeParse({ ...row, endedOn: '2026-11-20' })
+    expect(late.success).toBe(false)
+    expect(late.error?.issues[0]?.message).toBe('a down period ends early on a day from its start to the day before its planned end')
+    expect(DownPeriod.safeParse({ ...row, endedOn: '2026-11-13' }).success).toBe(false)
+  })
+  it('takes a short note of plain text, trimmed', () => {
+    expect(DownPeriod.parse({ ...row, note: '  Flu  ' }).note).toBe('Flu')
+    expect(DownPeriod.safeParse({ ...row, note: 'x'.repeat(DOWN_PERIOD_NOTE_MAX) }).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, note: 'x'.repeat(DOWN_PERIOD_NOTE_MAX + 1) }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, note: '   ' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, note: 'two\nlines' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, note: '​' }).success).toBe(false)
+  })
+  it('refuses a key it doesn’t keep, and a bad date or stamp', () => {
+    expect(DownPeriod.safeParse({ ...row, reason: 'flu' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, start: '2026-02-30' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, declaredAt: '2026-11-14' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, id: '' }).success).toBe(false)
+  })
+  it('keeps its shape for the backup test’s field list', () => {
+    expect(Object.keys(DownPeriod.shape)).toEqual(['id', 'start', 'plannedEnd', 'endedOn', 'declaredAt', 'note'])
   })
 })

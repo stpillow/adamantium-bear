@@ -6,12 +6,12 @@ import { Button } from '../components/Button.tsx'
 import { Screen } from '../components/Screen.tsx'
 import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
-import { useActiveLocation, useLocations, useProgramOverrides, useSettings } from '../db/hooks.ts'
+import { useActiveLocation, useDownPeriods, useLocations, useProgramOverrides, useSettings } from '../db/hooks.ts'
 import { addExtra, addLocation, markOff, removeExtra, renameLocation, setActiveLocation, setDumbbellMax, setKit, setPresent } from '../db/repo.ts'
 import { equipmentChecklist, usedEquipment, type Available } from '../rules/equipment.ts'
 import { extraTooLong } from '../rules/locations.ts'
 import { itemOutcome, notHereWrite, typedOutcome, type TypedOutcome } from '../rules/whereYouTrain.ts'
-import type { EquipmentId, IsoDate, Location, ProgramOverride, Settings } from '../schema/index.ts'
+import type { DownPeriod, EquipmentId, IsoDate, Location, ProgramOverride, Settings } from '../schema/index.ts'
 import {
   DEFAULT_START,
   KEEP_AS_TYPED,
@@ -68,8 +68,10 @@ export function LocationEditor({ locationId }: { locationId: string | null }) {
   const active = useActiveLocation()
   // The Program screen's edits: "What this changes" reads the lists the sessions run.
   const overrides = useProgramOverrides()
+  // A down period holds the phase-week bands, so "What this changes" reads the slots Today plans (PROGRAM-QUESTIONS 188).
+  const downPeriods = useDownPeriods()
 
-  if (locations === undefined || settings === undefined || active === undefined || overrides === undefined) return <Opening />
+  if (locations === undefined || settings === undefined || active === undefined || overrides === undefined || downPeriods === undefined) return <Opening />
   if (settings === null || active === null) {
     return (
       <Screen title="Location" lead="No gyms yet.">
@@ -89,7 +91,7 @@ export function LocationEditor({ locationId }: { locationId: string | null }) {
       </Screen>
     )
   }
-  return <EditLocation key={location.id} location={location} locations={locations} settings={settings} activeId={active.id} overrides={overrides} />
+  return <EditLocation key={location.id} location={location} locations={locations} settings={settings} activeId={active.id} overrides={overrides} downPeriods={downPeriods} />
 }
 
 function Opening() {
@@ -195,12 +197,14 @@ function EditLocation({
   settings,
   activeId,
   overrides,
+  downPeriods,
 }: {
   location: Location
   locations: Location[]
   settings: Settings
   activeId: string
   overrides: readonly ProgramOverride[]
+  downPeriods: readonly DownPeriod[]
 }) {
   const today = useToday()
   const [savedField, flashSaved] = useFlash()
@@ -234,7 +238,7 @@ function EditLocation({
   const changes = changesView({
     templates: templatesAsRun(settings, overrides),
     phase: settings.currentPhase,
-    phaseWeek: coverageWeek(settings, today),
+    phaseWeek: coverageWeek(settings, today, downPeriods),
     phaseEnteredWeek: settings.phaseEnteredWeek,
     byId: BY_ID,
     available,

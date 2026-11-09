@@ -10,7 +10,8 @@ import { parseMarkdown, plainText, type Block } from '../rules/markdown.ts'
 import { substitutionProblem } from '../rules/overrides.ts'
 import { phaseRunsExercise } from '../rules/session.ts'
 import { isLowerBody } from '../rules/wholeKnee.ts'
-import { ADDED_SETS_MAX, CUE_MAX, DEFAULT_KIT } from './log.ts'
+import { ADDED_SETS_MAX, CUE_MAX, DEFAULT_KIT, DOWN_PERIOD_MAX_DAYS, DOWN_PERIOD_MIN_DAYS } from './log.ts'
+import { DOWN_PERIOD_MAX_DAYS as RULE_MAX, DOWN_PERIOD_MIN_DAYS as RULE_MIN } from '../rules/downPeriod.ts'
 import { Accessory, Equipment, Exercise, Program, Requirement } from './program.ts'
 
 describe('data/program.json', () => {
@@ -664,5 +665,36 @@ describe('the warm-up: its minutes and its warm-up sets (Batch C, PROGRAM-QUESTI
     expect(withRamp({ patterns: ['carry-ish'] })).toBe(false)
     expect(withRamp({ loadTypes: ['kettlebell'] })).toBe(false)
     expect(Program.shape.warmUp.safeParse({ ...ok, lift: { ...ok.lift, bikeMinutes: 0 } }).success).toBe(false)
+  })
+})
+
+describe('the down period (Batch E, Shawn’s Nov 8 decision 6, PROGRAM-QUESTIONS 181 to 189)', () => {
+  it('transcribes program.md’s loading rules, the down period last, word for word', () => {
+    const from = programMd.indexOf('Loading rules:\n\n')
+    const to = programMd.indexOf('\n\n## Weekly template', from)
+    expect(from).toBeGreaterThan(0)
+    const bullets = programMd
+      .slice(from + 'Loading rules:\n\n'.length, to)
+      .split('\n\n')
+      .map((b) => b.replace(/^- /, ''))
+    expect(bullets).toEqual(program.operatingRules.loading)
+    expect(bullets).toHaveLength(6)
+    expect(bullets.at(-1)).toMatch(/^Down periods \(added Nov 9, 2026\)\. .* 3 to 14 days, starting the day you declare it\./)
+  })
+
+  it('seeds 3 to 14 days, and the schema and the rule say the same', () => {
+    expect(program.operatingRules.downPeriod).toEqual({ minDays: 3, maxDays: 14 })
+    expect([DOWN_PERIOD_MIN_DAYS, DOWN_PERIOD_MAX_DAYS]).toEqual([3, 14])
+    expect([RULE_MIN, RULE_MAX]).toEqual([3, 14])
+    expect(program.operatingRules.loading.at(-1)).toContain(`${DOWN_PERIOD_MIN_DAYS} to ${DOWN_PERIOD_MAX_DAYS} days`)
+  })
+
+  it('refuses a shortest past the longest, a zero, or a part it doesn’t keep', () => {
+    const rules = (downPeriod: unknown) => ({ ...raw, operatingRules: { ...raw.operatingRules, downPeriod } })
+    expect(Program.safeParse(rules({ minDays: 3, maxDays: 14 })).success).toBe(true)
+    expect(Program.safeParse(rules({ minDays: 15, maxDays: 14 })).success).toBe(false)
+    expect(Program.safeParse(rules({ minDays: 0, maxDays: 14 })).success).toBe(false)
+    expect(Program.safeParse(rules({ minDays: 3, maxDays: 14, text: 'x' })).success).toBe(false)
+    expect(Program.safeParse({ ...raw, operatingRules: { ...raw.operatingRules, downPeriod: undefined } }).success).toBe(false)
   })
 })

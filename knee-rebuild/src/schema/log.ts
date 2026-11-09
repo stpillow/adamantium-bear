@@ -327,6 +327,63 @@ export const AclRsiEntry = z.strictObject({
 })
 export type AclRsiEntry = z.infer<typeof AclRsiEntry>
 
+/**
+ * A down period's length in days, counted from its start (Batch E, Shawn's Nov 8 decision 6): the
+ * seed's `operatingRules.downPeriod` (data/program.json) says the same, pinned by
+ * src/schema/program.test.ts, and src/rules/downPeriod.ts re-exports both.
+ */
+export const DOWN_PERIOD_MIN_DAYS = 3
+export const DOWN_PERIOD_MAX_DAYS = 14
+/** A down period's optional note runs 1 to this many characters once trimmed. */
+export const DOWN_PERIOD_NOTE_MAX = 120
+
+/** Whole days from one YYYY-MM-DD date to another, read on UTC days as src/rules/calendar.ts reads them. */
+function daysFrom(from: string, to: string): number {
+  const day = (date: string) => {
+    const [y, m, d] = date.split('-').map(Number)
+    return y === undefined || m === undefined || d === undefined ? Number.NaN : Date.UTC(y, m - 1, d) / 86_400_000
+  }
+  return day(to) - day(from)
+}
+
+/**
+ * One declared down period (Batch E; PROGRAM-QUESTIONS 181 to 189): "not feeling 100%" from illness
+ * or life stress, not the knee. Progression pauses from `start` through its last paused day (the
+ * day it was ended early, `endedOn`, or `plannedEnd`); readings stay real. One row per period in the
+ * `downPeriods` table (src/db/db.ts, Dexie version 11), keyed by id. `start` is always the day it
+ * was declared (no backdating, src/rules/downPeriod.ts); the span runs 3 to 14 days from it; an
+ * early end falls from the start to the day before the planned end (ending on the planned end is
+ * just its end). The note is one short line, as Shawn wrote it.
+ */
+export const DownPeriod = z
+  .strictObject({
+    id,
+    start: IsoDate,
+    plannedEnd: IsoDate,
+    endedOn: IsoDate.optional(),
+    declaredAt: IsoDateTime,
+    note: z
+      .string()
+      .trim()
+      .min(1)
+      .max(DOWN_PERIOD_NOTE_MAX)
+      .refine((text) => !/\p{Cc}/u.test(text), 'a note is one line of plain text')
+      .refine(showsText, 'a note shows a letter, digit or symbol')
+      .optional(),
+  })
+  .refine(
+    (p) => {
+      const days = daysFrom(p.start, p.plannedEnd) + 1
+      return days >= DOWN_PERIOD_MIN_DAYS && days <= DOWN_PERIOD_MAX_DAYS
+    },
+    { message: `a down period runs ${DOWN_PERIOD_MIN_DAYS} to ${DOWN_PERIOD_MAX_DAYS} days from its start`, path: ['plannedEnd'] },
+  )
+  .refine((p) => p.endedOn === undefined || (p.endedOn >= p.start && p.endedOn < p.plannedEnd), {
+    message: 'a down period ends early on a day from its start to the day before its planned end',
+    path: ['endedOn'],
+  })
+export type DownPeriod = z.infer<typeof DownPeriod>
+
 /** A gate test entry. Hop tests store three trials per side and keep the best. */
 export const GateTest = z.strictObject({
   id,

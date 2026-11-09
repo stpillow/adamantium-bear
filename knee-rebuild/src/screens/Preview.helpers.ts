@@ -1,6 +1,7 @@
 import type { Ramp, SlotPlan } from '../app/session.ts'
 import { addDays, dateOf, isDeloadWeek, scheduledSession, weekOf } from '../rules/calendar.ts'
-import type { IsoDate, Program, SessionMove, SessionTemplate, Settings, Side, Workout } from '../schema/index.ts'
+import { pauseOn, pausedNote } from '../rules/downPeriod.ts'
+import type { DownPeriod, IsoDate, Program, SessionMove, SessionTemplate, Settings, Side, Workout } from '../schema/index.ts'
 import { prescriptionWords, rampSetsWords, routeLines, sideWords, type ItemLike } from './SessionRunner.helpers.ts'
 import { dateWords, phaseName, sessionLabel, sessionLetter, sessionNote, shortDateWords, todaysLift } from './Today.helpers.ts'
 
@@ -11,7 +12,7 @@ import { dateWords, phaseName, sessionLabel, sessionLetter, sessionNote, shortDa
  */
 
 export type ProgramLike = Pick<Program, 'weeklyTemplate' | 'weeklyTemplateRows' | 'templates' | 'phases'>
-export type HistoryLike = { workouts: readonly Workout[]; sessionMoves: readonly SessionMove[] }
+export type HistoryLike = { workouts: readonly Workout[]; sessionMoves: readonly SessionMove[]; downPeriods?: readonly DownPeriod[] }
 
 /** The weeks the preview steps through: week 1 to 12, or to the week after this one once past 12. */
 export function previewRange(today: IsoDate, startDate: IsoDate): { first: IsoDate; last: IsoDate } {
@@ -26,6 +27,12 @@ export function relationWords(date: IsoDate, today: IsoDate): string {
   if (date === addDays(today, -1)) return 'Yesterday'
   const days = Math.round((Date.parse(`${date}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000)
   return days > 0 ? `In ${days} days` : `${-days} days ago`
+}
+
+/** The day's down period in words, from the rule's own note (`pausedNote`); null outside one. */
+export function previewDownPeriodWords(date: IsoDate, periods: readonly DownPeriod[]): string | null {
+  const pause = pauseOn(date, periods)
+  return pause === null ? null : `A down period covers this day: ${pausedNote(pause).replace(/^Down period: /, '')}`
 }
 
 /** Why the numbers might still change, in words, from where the day sits against today. */
@@ -64,6 +71,8 @@ export interface PreviewView {
   prev: IsoDate | null
   next: IsoDate | null
   body: PreviewBody
+  /** "A down period covers this day: progression paused until Friday Nov 20." (Batch E); null outside one. */
+  downPeriod: string | null
 }
 
 /** What a day holds and which template it would run, from the date, today, the settings, the stored workouts and moves, and the program. */
@@ -77,6 +86,7 @@ export function previewView(input: { date: IsoDate; today: IsoDate; settings: Se
     caveat: caveatWords(date, today),
     prev: date > range.first ? addDays(date, -1) : null,
     next: date < range.last ? addDays(date, 1) : null,
+    downPeriod: previewDownPeriodWords(date, history.downPeriods ?? []),
   }
   const scheduled = scheduledSession(date, settings.startDate, program.weeklyTemplate, history.sessionMoves)
   if (scheduled.session === null) {

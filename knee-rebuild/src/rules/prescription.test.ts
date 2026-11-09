@@ -599,3 +599,59 @@ describe('the whole knee: the next lift after a morning that read back off (PROG
     expect(p).toMatchObject({ exerciseId: 'single-leg-seated-leg-curl', basis: 'back-off', note: `Back on Nordics. ${WHOLE_KNEE_NOTE} Back off: the easier version, Single-leg seated leg curl.` })
   })
 })
+
+describe('a down period: clean twice repeats instead of stepping up (Batch E, PROGRAM-QUESTIONS 181)', () => {
+  const pause = { start: '2026-11-14', until: '2026-11-20', untilWords: 'Friday Nov 20', day: 4, of: 7 }
+  const NOTE = 'Clean twice: same load, same target. Down period: progression paused until Friday Nov 20.'
+
+  it('worked example: leg press clean twice at the top, 8 plates × 12 inside the period, repeats at 8 × 12', () => {
+    expect(one()).toMatchObject({ load: 9, repsTarget: 10, basis: 'progress-load' })
+    const p = one({ pause })
+    expect(p).toMatchObject({ load: 8, repsTarget: 12, sets: 3, basis: 'paused', note: NOTE })
+    expect(p.perSet).toBeUndefined()
+  })
+
+  it('pauses every step up: reps, load, assist, height, held load, range and stage', () => {
+    expect(one({ pause, lastSets: threeSets({ reps: 11 }) })).toMatchObject({ load: 8, repsTarget: 11, basis: 'paused' })
+    expect(one({ pause, exercise: ex({ loadDirection: 'down' }) })).toMatchObject({ load: 8, basis: 'paused' })
+    const stepUp = ex({ id: 'step-up', loadType: 'step-height', loadUnit: 'in', increment: 2, heightIncrementIn: 2, holdsLoad: 'dumbbell-each', unilateral: true })
+    const s = slot({ exerciseId: 'step-up', repsMin: 10, repsMax: 10, progressionRule: 'height-then-load', unilateral: true, injuredOnly: true, heightIn: 6, heightMaxIn: 8, loadBeforeHeightLb: 20 })
+    const stepSets = (load: number, heightIn: number) => threeSets({ side: 'right', load, loadUnit: 'lb', reps: 10, heightIn })
+    expect(one({ pause, slot: s, exercise: stepUp, lastSets: stepSets(20, 6) })).toMatchObject({ heightIn: 6, load: 20, basis: 'paused' })
+    expect(one({ pause, slot: s, exercise: stepUp, lastSets: stepSets(10, 6) })).toMatchObject({ heightIn: 6, load: 10, basis: 'paused' })
+    expect(one({ pause, slot: s, exercise: stepUp, lastSets: stepSets(20, 8) })).toMatchObject({ heightIn: 8, load: 20, basis: 'paused' })
+    const legExt = ex({ id: 'leg-extension', pattern: 'quad' })
+    const phase2 = slot({ exerciseId: 'leg-extension', sets: 2, repsMin: 12, repsMax: 15, progressionRule: 'range-then-load', rangeStopDeg: 30 })
+    expect(one({ pause, slot: phase2, exercise: legExt, lastSets: [setLog(1, { reps: 15, rangeStopDeg: 45, load: 5 }), setLog(2, { reps: 15, rangeStopDeg: 45, load: 5 })] })).toMatchObject({ rangeStopDeg: 45, load: 5, basis: 'paused' })
+    const balance = ex({ id: 'single-leg-balance', pattern: 'balance', loadType: 'time', loadUnit: 's', increment: 5, unilateral: true, stages: ['eyes open', 'eyes closed', 'on a folded mat'] })
+    const bal = slot({ exerciseId: 'single-leg-balance', repsMin: 30, repsMax: 30, repUnit: 'seconds', progressionRule: 'stage', unilateral: true, injuredOnly: true })
+    expect(one({ pause, slot: bal, exercise: balance, lastSets: threeSets({ side: 'right', load: 0, loadUnit: 's', reps: undefined, seconds: 30, stage: 0, rpe: undefined }) })).toMatchObject({ stage: 0, basis: 'paused' })
+  })
+
+  it('changes nothing else: deload, red flag, whole knee, back off, hold, none, clean once and a first session read as outside one', () => {
+    const knee = { morning: '2026-11-17', phaseOneLoads: {} }
+    const cases: Partial<PrescriptionInput>[] = [
+      { week: 4 },
+      { redFlagActive: true },
+      { wholeKnee: knee },
+      { readings: ['back-off'] },
+      { readings: ['hold', 'hold'] },
+      { readings: ['hold'] },
+      { readings: [] },
+      { readings: ['clean'] },
+      { readings: ['clean', 'hold'] },
+      { lastSets: [], readings: [] },
+      { lastSets: [], readings: [], week: 4 },
+    ]
+    for (const c of cases) expect(prescribe(input({ ...c, pause })), JSON.stringify(c)).toEqual(prescribe(input(c)))
+  })
+
+  it('both sides repeat, and the healthy side still takes the injured side’s count', () => {
+    const lunge = ex({ id: 'split-squat', loadType: 'dumbbell-each', loadUnit: 'lb', increment: 5, unilateral: true })
+    const s = slot({ exerciseId: 'split-squat', unilateral: true, repsMin: 8, repsMax: 10 })
+    const sets = [...threeSets({ side: 'right', load: 20, loadUnit: 'lb', reps: 9 }), ...threeSets({ side: 'left', load: 20, loadUnit: 'lb', reps: 10 })]
+    const [injured, healthy] = prescribe(input({ pause, slot: s, exercise: lunge, lastSets: sets }))
+    expect(injured).toMatchObject({ side: 'right', load: 20, repsTarget: 9, basis: 'paused' })
+    expect(healthy).toMatchObject({ side: 'left', load: 20, repsTarget: 9, budgetFromInjured: true, basis: 'paused' })
+  })
+})

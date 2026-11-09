@@ -8,6 +8,7 @@ import { isSwap } from '../rules/mileage.ts'
 import { morningCheckApplies, morningReading } from '../rules/reading.ts'
 import { progressionSuspended, stopMessage } from '../rules/redFlags.ts'
 import { phaseWeekOf } from '../rules/session.ts'
+import { bandHeldNote, bandWeek } from '../rules/downPeriod.ts'
 import { EFFORT_RPE, effortFromRpe, hrLoadOf, hrPair } from '../rules/trainingLoad.ts'
 import { runTypeFor, runsInWeek, suggestRun, weekMilesSummary, type RunSuggestion, type WeekMiles } from '../rules/weekPlan.ts'
 import { Effort, RUN_HR_MAX, RUN_HR_MIN, Run, RunType, type Day, type DaySession, type HrSettings, type IsoDate, type MorningCheck, type Program, type ReadingResult, type Settings } from '../schema/index.ts'
@@ -20,7 +21,7 @@ import { dateWords, noSwapMachineWords, runLabel, sessionLabel, shortDateWords }
  * state) is asked of src/rules; this file composes the answers and names things.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves' | 'downPeriods'>
 export type ProgramLike = Pick<Program, 'weeklyTemplate' | 'weeklyTemplateRows' | 'mileagePlan' | 'redFlags'>
 
 /** The five types, in the order the screen offers them. */
@@ -181,11 +182,15 @@ export function loggerView(input: {
 
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
-  const summary = weekMilesSummary(program.mileagePlan, week, settings.startDate, history.runs, readings)
+  // A down period holds the week's target and the tempo's band (Batch E, PROGRAM-QUESTIONS 183, 188), as on Today, for the date being logged.
+  const periods = history.downPeriods ?? []
+  const summary = weekMilesSummary(program.mileagePlan, week, settings.startDate, history.runs, readings, periods)
   const weekRuns = runsInWeek(history.runs, settings.startDate, week).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
 
   const stop = stopMessage(settings.redFlag, program.redFlags)
   const morning = morningFor(date, history.morningChecks)
+  const calendarPhaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  const band = bandWeek({ date, phaseWeek: calendarPhaseWeek, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods })
   const suggestion = progressionSuspended(settings.redFlag)
     ? null
     : suggestRun({
@@ -194,8 +199,10 @@ export function loggerView(input: {
         target: summary.target.target,
         milesSoFar: summary.miles,
         currentPhase: settings.currentPhase,
-        phaseWeek: phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek),
+        phaseWeek: band,
         morning,
+        calendarPhaseWeek,
+        bandNote: bandHeldNote({ date, calendarPhaseWeek, band, periods }),
       })
 
   return {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MileageWeek, Run, WeeklyTemplate, Workout } from '../schema/index.ts'
+import type { DownPeriod, MileageWeek, Run, WeeklyTemplate, Workout } from '../schema/index.ts'
 import type { SubjectReading } from './history.ts'
 import { weekMiles } from './mileage.ts'
 import { readingsInWeek, runTypeFor, runsInWeek, sessionDone, suggestRun, targetForWeek, weekAdherence, weekDays, weekMilesSummary } from './weekPlan.ts'
@@ -116,6 +116,19 @@ describe('suggestRun', () => {
     expect(faster?.reasons).toContain(waiting)
     // Nothing to hold back in Phase 1: the line would only say what isn't on the plan anyway.
     expect(suggestRun({ ...base, session: 'run:mbr', morning: null })?.reasons).toEqual(['no morning check yet today'])
+  })
+})
+
+describe('suggestRun with the bands held by a down period', () => {
+  const base = { week: 9, target: 12, milesSoFar: 0, currentPhase: 3, morning: 'clean' as const, session: 'run:long' as const }
+  it('says why the tempo is missing when the calendar would have it', () => {
+    const r = suggestRun({ ...base, phaseWeek: 2, calendarPhaseWeek: 3, bandNote: 'Down period: progression paused until Friday Jan 8.' })
+    expect(r?.tempo).toBe(false)
+    expect(r?.reasons).toContain('no tempo this week: Down period: progression paused until Friday Jan 8.')
+  })
+  it('says nothing extra when the calendar would not have the tempo either, or the band is the calendar\'s', () => {
+    expect(suggestRun({ ...base, phaseWeek: 1, calendarPhaseWeek: 2, bandNote: 'x' })?.reasons.some((x) => x.startsWith('no tempo'))).toBe(false)
+    expect(suggestRun({ ...base, phaseWeek: 3, calendarPhaseWeek: 3, bandNote: null })?.tempo).toBe(true)
   })
 })
 
@@ -268,5 +281,95 @@ describe('weekAdherence: sessions done of those scheduled, one program week (Bat
   it('a week with only lifts scheduled has 0 runs scheduled (the screen leaves that half out)', () => {
     const liftsOnly = { ...TEMPLATE, mon: 'off', wed: 'off', fri: 'off' } as const
     expect(weekAdherence({ ...base, template: liftsOnly, week: 1, runs: [], workouts: [workout('2026-11-03')] })).toEqual({ liftsDone: 1, liftsScheduled: 3, runsDone: 0, runsScheduled: 0 })
+  })
+})
+
+describe('targetForWeek with down periods (Batch E, PROGRAM-QUESTIONS 183)', () => {
+  /** The seed's plan: each down week equals the week before it. */
+  const seed: MileageWeek[] = [10, 11, 12, 12, 13, 14, 15, 15, 16, 17, 18, 18].map((targetMiles, i) => ({ week: i + 1, targetMiles, isDown: [4, 8, 12].includes(i + 1) }))
+  const AT = '2026-11-01T08:00:00-05:00'
+  const period = (start: string, plannedEnd: string, endedOn?: string): DownPeriod => ({ id: `dp-${start}`, start, plannedEnd, declaredAt: AT, ...(endedOn ? { endedOn } : {}) })
+  const targets = (p: readonly MileageWeek[], periods: readonly DownPeriod[], runs: Run[] = [], readings: SubjectReading[] = []) =>
+    p.map((w) => targetForWeek(p, w.week, START, runs, readings, periods).target)
+  const P1 = period('2026-11-14', '2026-11-20')
+
+  it('no period: rule 7 exactly as before', () => {
+    expect(targets(seed, [])).toEqual([10, 11, 12, 12, 13, 14, 15, 15, 16, 17, 18, 18])
+    expect(targetForWeek(seed, 3, START, [], [], [])).toEqual(targetForWeek(seed, 3, START, [], []))
+  })
+
+  it('worked example 5: declared Wed Nov 11 to Tue Nov 17, week 2 stays 11 and week 3 holds at 11, for the whole week', () => {
+    const p4 = period('2026-11-11', '2026-11-17')
+    const week3 = targetForWeek(seed, 3, START, [], [], [p4])
+    expect(week3).toEqual({ target: 11, capped: true, reason: 'down period: held at last week’s 11 miles', downPeriod: { kind: 'held', lastWeek: 11 } })
+    expect(targetForWeek(seed, 2, START, [], [], [p4])).toEqual(targetForWeek(seed, 2, START, [], []))
+    // Week 4 (a flat down week) climbs one plan step from 11: 11 + (12 − 12) = 11; week 5: 11 + 1; and so on, never above the plan.
+    expect(targets(seed, [p4])).toEqual([10, 11, 11, 11, 12, 13, 14, 14, 15, 16, 17, 17])
+    expect(targetForWeek(seed, 5, START, [], [], [p4])).toMatchObject({ target: 12, capped: true, reason: 'after a down period: up one plan step from last week’s 11 miles', downPeriod: { kind: 'climbing', lastWeek: 11 } })
+  })
+
+  it('ended early, the week whose Monday it covered still holds', () => {
+    expect(targets(seed, [period('2026-11-14', '2026-11-20', '2026-11-17')]).slice(0, 4)).toEqual([10, 11, 11, 11])
+    // Ended on Sunday: Monday Nov 16 is free.
+    expect(targets(seed, [period('2026-11-14', '2026-11-20', '2026-11-15')])).toEqual(targets(seed, []))
+  })
+
+  it('worked example 3: a period over the deload week holds nothing the plan doesn’t already hold', () => {
+    const p2 = period('2026-11-23', '2026-11-27')
+    expect(targetForWeek(seed, 4, START, [], [], [p2])).toEqual({ target: 12, capped: false, reason: 'from the plan' })
+    expect(targets(seed, [p2])).toEqual(targets(seed, []))
+  })
+
+  it('a dropping down week keeps its lower number (the min)', () => {
+    // The test plan drops to 9 in week 4.
+    const over4 = period('2026-11-22', '2026-11-30')
+    expect(targetForWeek(plan, 4, START, [], [], [over4])).toEqual({ target: 9, capped: false, reason: 'from the plan' })
+    // Week 5's Monday Nov 30 is covered: it holds at week 4's 9, not the plan's 13.
+    expect(targetForWeek(plan, 5, START, [], [], [over4])).toMatchObject({ target: 9, downPeriod: { kind: 'held', lastWeek: 9 } })
+  })
+
+  it('held weeks in a row hold the same number; week 1 has nothing to hold from', () => {
+    // Covering the Mondays of weeks 1 and 2: week 2 holds at 10, week 3 climbs one step (10 + 1), flat week 4 stays.
+    const long = period('2026-11-02', '2026-11-15')
+    expect(targets(seed, [long]).slice(0, 4)).toEqual([10, 10, 11, 11])
+    // Two periods back to back over the Mondays of weeks 2 to 4: all three hold at week 1's 10, then the climb.
+    expect(targets(seed, [period('2026-11-09', '2026-11-22'), period('2026-11-23', '2026-11-25')]).slice(0, 6)).toEqual([10, 10, 10, 10, 11, 12])
+    expect(targetForWeek(seed, 1, START, [], [], [long])).toEqual({ target: 10, capped: false, reason: 'from the plan' })
+  })
+
+  it('rule 7’s cap still binds, and the lower number stands', () => {
+    // Week 2: a hold, 6 miles run. Week 3 is capped at 6 by rule 7, and held at 11 by the period: 6 stands.
+    const runs = [run('2026-11-09', 6)]
+    const readings = [reading('2026-11-09', 'hold')]
+    expect(targetForWeek(seed, 3, START, runs, readings, [P1])).toEqual(targetForWeek(seed, 3, START, runs, readings))
+    expect(targetForWeek(seed, 3, START, runs, readings, [P1]).target).toBe(6)
+  })
+
+  it('never above what rule 7 alone gives, week by week, over many periods', () => {
+    const sets: DownPeriod[][] = [
+      [P1],
+      [period('2026-11-02', '2026-11-15')],
+      [period('2026-11-29', '2026-12-12')],
+      [period('2026-11-14', '2026-11-20', '2026-11-16'), period('2026-11-21', '2026-12-04')],
+      [period('2026-12-28', '2027-01-10')],
+    ]
+    const runs = [run('2026-11-09', 6), run('2026-11-30', 13)]
+    for (const readings of [[], [reading('2026-11-09', 'hold')], [reading('2026-11-30', 'back-off')]]) {
+      for (const periods of sets) {
+        for (const p of [seed, plan]) {
+          for (let w = 1; w <= 13; w++) {
+            const paused = targetForWeek(p, w, START, runs, readings, periods)
+            const unpaused = targetForWeek(p, w, START, runs, readings)
+            if (paused.downPeriod === undefined) expect(paused).toEqual(unpaused)
+            else expect(paused.target ?? 0).toBeLessThan(unpaused.target ?? 0)
+            expect(paused.capped).toBe((paused.target ?? Infinity) < (p.find((x) => x.week === w)?.targetMiles ?? -Infinity))
+          }
+        }
+      }
+    }
+  })
+
+  it('weekMilesSummary passes the periods on', () => {
+    expect(weekMilesSummary(seed, 3, START, [run('2026-11-16', 3)], [], [P1])).toEqual({ target: targetForWeek(seed, 3, START, [], [], [P1]), miles: 3, sessions: 1, swaps: 0 })
   })
 })

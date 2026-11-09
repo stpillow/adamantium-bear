@@ -1,7 +1,7 @@
 import { db } from './db.ts'
 import { ensureLocations, forgetSwaps, getSettings, getSettingsRow, getStoredSettings, saveExportStamp, saveSettings, type HomeLists } from './repo.ts'
-import { BACKUP_TABLES, backupFrom, buildBackup, importStamp, redFlagOnImport, type Backup, type ExportResult, type StoredContents } from '../rules/backup.ts'
-import { Settings, type IsoDate, type IsoDateTime } from '../schema/index.ts'
+import { BACKUP_TABLES, backupFrom, buildBackup, downPeriodsOnImport, importStamp, redFlagOnImport, type Backup, type ExportResult, type StoredContents } from '../rules/backup.ts'
+import { DownPeriod, Settings, type IsoDate, type IsoDateTime } from '../schema/index.ts'
 
 /**
  * Export and import (M6 brief, section 2): read every table, and replace every table in one
@@ -9,7 +9,11 @@ import { Settings, type IsoDate, type IsoDateTime } from '../schema/index.ts'
  * this file only moves rows.
  */
 
-/** The settings row aside, every Dexie table is one the file carries; a table added to db.ts and not to the file stops both directions here, before anything is read or written. */
+/**
+ * The settings row aside, every Dexie table is one the file carries; a table added to db.ts and not
+ * to BACKUP_TABLES stops both directions here, before anything is read or written. (A table in
+ * BACKUP_TABLES that `readStored` doesn't read is caught by the `StoredContents` type, not here.)
+ */
 function checkCovered(): void {
   const carried = new Set<string>(['settings', ...BACKUP_TABLES])
   const missing = db.tables.map((t) => t.name).filter((name) => !carried.has(name))
@@ -35,6 +39,7 @@ export async function readStored(): Promise<StoredContents> {
       vo2Readings: await db.vo2Readings.toArray(),
       koosEntries: await db.koosEntries.toArray(),
       aclRsiEntries: await db.aclRsiEntries.toArray(),
+      downPeriods: await db.downPeriods.toArray(),
     }
   })
 }
@@ -66,7 +71,9 @@ export async function markExported(exportedAt: IsoDateTime): Promise<void> {
  * settings come from the file with `lastExportedAt` set to the file's `exportedAt` (the phone now
  * holds what that file holds), or to `now`, the import's own moment, when the file's is later
  * (`importStamp`); except a red flag the phone has on, which stays on until Settings
- * clears it with a note (`redFlagOnImport`, PROGRAM-QUESTIONS 128); a file with no home gym gets
+ * clears it with a note (`redFlagOnImport`, PROGRAM-QUESTIONS 128); a down period the phone has
+ * standing (on today, ended today, or dated ahead) stays too, and a file period overlapping it is
+ * left out (`downPeriodsOnImport`, PROGRAM-QUESTIONS 189), `createdOn` being today; a file with no home gym gets
  * one through `ensureLocations`, the launch path, from its own settings. The runner's stored swaps
  * go, as on Reset.
  */
@@ -79,10 +86,16 @@ export async function replaceAll(backup: Backup, lists: HomeLists, createdOn: Is
     // The phone's red flag, read as stored: a settings row that no longer reads whole still gives its flag, and never blocks a restore.
     const flag = Settings.shape.redFlag.safeParse((await getSettingsRow())?.redFlag)
     const settings = Settings.parse({ ...file.settings, redFlag: redFlagOnImport(flag.success ? flag.data : undefined, file.settings.redFlag) })
+    // The phone's standing down period, read as stored and each row through its schema: an unreadable row never blocks a restore.
+    const phonePeriods = (await db.downPeriods.toArray()).flatMap((row) => {
+      const parsed = DownPeriod.safeParse(row)
+      return parsed.success ? [parsed.data] : []
+    })
+    const tables = { ...file, downPeriods: downPeriodsOnImport(phonePeriods, file.downPeriods, createdOn) }
     for (const table of db.tables) await table.clear()
     await saveSettings(settings)
     await saveExportStamp(importStamp(file.exportedAt, now))
-    for (const name of BACKUP_TABLES) await db.table(name).bulkAdd(file[name])
+    for (const name of BACKUP_TABLES) await db.table(name).bulkAdd(tables[name])
     await ensureLocations(lists, createdOn)
   })
   forgetSwaps()

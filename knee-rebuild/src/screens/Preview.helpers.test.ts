@@ -4,7 +4,7 @@ import { homeLocation } from '../db/migrations.ts'
 import type { History } from '../db/repo.ts'
 import { exerciseById } from '../program/program.ts'
 import { DEFAULT_KIT, Settings, type Workout } from '../schema/index.ts'
-import { caveatWords, nextLiftWords, previewRampWords, previewRange, previewSlots, previewView, relationWords } from './Preview.helpers.ts'
+import { caveatWords, nextLiftWords, previewRampWords, previewDownPeriodWords, previewRange, previewSlots, previewView, relationWords } from './Preview.helpers.ts'
 
 const settings = Settings.parse({ injuredSide: 'right', startDate: '2026-11-02', dumbbellMax: 80, restTimerSeconds: 60, painPerSet: false, currentPhase: 1, phaseEnteredWeek: 1 })
 const empty: History = { workouts: [], setLogs: [], morningChecks: [], runs: [], gateTests: [], sessionMoves: [] }
@@ -105,5 +105,16 @@ describe('previewSlots, on the live seed', () => {
     expect(previewRampWords({ kind: 'sets', workingLoad: 10, sets: [{ load: 0, reps: 8, light: 'empty-bar' }] }, exerciseById('smith-box-squat'))).toBe('Warm-up set: empty bar × 8 (not logged).')
     expect(previewRampWords({ kind: 'none', why: 'too-light', workingLoad: 5 }, exerciseById('db-bench-press'))).toBeNull()
     expect(previewRampWords(undefined, exerciseById('db-bench-press'))).toBeNull()
+  })
+})
+
+describe('a down period on the Preview (Batch E)', () => {
+  const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T13:00:00.000Z' }
+  it('says when a period covers the day, until its last paused day', () => {
+    expect(previewDownPeriodWords('2026-11-17', [P1])).toBe('A down period covers this day: progression paused until Friday Nov 20.')
+    expect(previewDownPeriodWords('2026-11-17', [{ ...P1, endedOn: '2026-11-17' }])).toBe('A down period covers this day: progression paused until Tuesday Nov 17.')
+    expect(previewDownPeriodWords('2026-11-21', [P1])).toBeNull()
+    expect(previewView({ date: '2026-11-17', today: '2026-11-16', settings, history: { ...empty, downPeriods: [P1] }, program: PROGRAM }).downPeriod).toBe('A down period covers this day: progression paused until Friday Nov 20.')
+    expect(previewView({ date: '2026-11-17', today: '2026-11-16', settings, history: empty, program: PROGRAM }).downPeriod).toBeNull()
   })
 })

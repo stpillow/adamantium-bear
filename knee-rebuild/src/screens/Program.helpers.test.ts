@@ -5,6 +5,7 @@ import mileageChart from '../../docs/media/image2.png?inline'
 import { planSession } from '../app/session.ts'
 import { homeLocation } from '../db/migrations.ts'
 import { program, templateFor } from '../program/program.ts'
+import { newDownPeriod } from '../rules/downPeriod.ts'
 import { fallbacksAfter } from '../rules/equipment.ts'
 import { substitutionProblem } from '../rules/overrides.ts'
 import { parseInline, parseMarkdown, type Block } from '../rules/markdown.ts'
@@ -37,7 +38,7 @@ const seedSlot = (templateId: string, slotId: string): Slot => {
 
 describe('phaseScreen: this phase, as it runs this week', () => {
   it('Phase 1 in week 2: its three sessions, every slot with its label, exercise, prescription verbatim, cues and substitutions in order', () => {
-    const screen = phaseScreen(settingsIn(), '2026-11-10', [])
+    const screen = phaseScreen(settingsIn(), '2026-11-10', [], [])
     expect(screen.lead).toBe('Phase 1, Foundation: week 2 of the phase. Read-only until you tap Edit on a slot.')
     expect(screen.notWritten).toBeNull()
     expect(screen.sessions.map((s) => s.heading)).toEqual(['Session A', 'Session B', 'Session C'])
@@ -56,30 +57,44 @@ describe('phaseScreen: this phase, as it runs this week', () => {
 
   it('shows only the slots that run this week of the phase: snap-downs join Phase 2 from its third week', () => {
     const phaseTwo = settingsIn({ currentPhase: 2, phaseEnteredWeek: 4 })
-    expect(phaseScreen(phaseTwo, '2026-11-23', []).sessions[0]?.rows.some((r) => r.label === 'prep')).toBe(false)
-    expect(phaseScreen(phaseTwo, '2026-12-07', []).sessions[0]?.rows[0]?.label).toBe('prep')
+    expect(phaseScreen(phaseTwo, '2026-11-23', [], []).sessions[0]?.rows.some((r) => r.label === 'prep')).toBe(false)
+    expect(phaseScreen(phaseTwo, '2026-12-07', [], []).sessions[0]?.rows[0]?.label).toBe('prep')
+  })
+
+  it('a down period holds the bands this week the way Today plans them (PROGRAM-QUESTIONS 188)', () => {
+    // Phase 3 entered in week 8; a period Sat Jan 2 to Fri Jan 8, 2027; Tue Jan 5 is the calendar's phase week 3.
+    const phaseThree = settingsIn({ currentPhase: 3, phaseEnteredWeek: 8 })
+    const period = newDownPeriod({ today: '2027-01-02', days: 7, declaredAt: '2027-01-02T13:00:00.000Z' })
+    const plyo = (screen: ReturnType<typeof phaseScreen>) => (screen.sessions[0]?.rows ?? []).map((r) => r.id).filter((id) => id.includes('plyo'))
+    const held = phaseScreen(phaseThree, '2027-01-05', [], [period])
+    expect(held.lead).toBe('Phase 3, Power, deceleration and lacrosse prep: week 2 of the phase. Read-only until you tap Edit on a slot.')
+    expect(plyo(held)).toEqual(['p3a-plyo-1', 'p3a-plyo-2', 'p3a-plyo-3'])
+    // The same slots Today's plan runs.
+    const planned = planSession({ template: templateFor(3, 'A'), week: 10, settings: phaseThree, history: { workouts: [], setLogs: [], morningChecks: [], runs: [], gateTests: [], sessionMoves: [], downPeriods: [period] }, gym: { location: homeLocation(80, program.planetFitness, '2026-11-02', program.equipmentListVersion), kit: DEFAULT_KIT }, before: '2027-01-05' })
+    expect(plyo(held)).toEqual(planned.map((p) => p.slot.id).filter((id) => id.includes('plyo')))
+    expect(plyo(phaseScreen(phaseThree, '2027-01-05', [], []))).toEqual(['p3a-plyo-4', 'p3a-plyo-5', 'p3a-plyo-6', 'p3a-plyo-7'])
   })
 
   it('before the start date it reads week 1 of the phase', () => {
-    expect(phaseScreen(settingsIn(), '2026-10-30', []).lead).toBe('Phase 1, Foundation: week 1 of the phase. Read-only until you tap Edit on a slot.')
+    expect(phaseScreen(settingsIn(), '2026-10-30', [], []).lead).toBe('Phase 1, Foundation: week 1 of the phase. Read-only until you tap Edit on a slot.')
   })
 
   it('an edited slot runs Shawn’s lists and says Edited; the rest stay program.md’s', () => {
-    const screen = phaseScreen(settingsIn(), '2026-11-10', [edit({ cues: ['Feet high'], substitutionIds: ['goblet-squat-bench'] })])
+    const screen = phaseScreen(settingsIn(), '2026-11-10', [edit({ cues: ['Feet high'], substitutionIds: ['goblet-squat-bench'] })], [])
     const [first, second] = screen.sessions[0]?.rows ?? []
     expect(first).toMatchObject({ cues: ['Feet high'], substitutions: ['Goblet squat to a bench'], edited: true })
     expect(second?.edited).toBe(false)
   })
 
   it('names a superset’s other slots, and says when a slot is optional', () => {
-    const rows = phaseScreen(settingsIn(), '2026-11-10', []).sessions[0]?.rows ?? []
+    const rows = phaseScreen(settingsIn(), '2026-11-10', [], []).sessions[0]?.rows ?? []
     expect(rows.find((r) => r.label === '5')?.notes).toEqual(['Grouped with 6 and 7.'])
     expect(rows.find((r) => r.label === '9')?.notes).toEqual(['Optional.'])
     expect(rows.find((r) => r.label === '1')?.notes).toEqual([])
   })
 
   it('Phase 4: no sessions, said in words', () => {
-    const screen = phaseScreen(settingsIn({ currentPhase: 4, phaseEnteredWeek: 13 }), '2027-01-25', [])
+    const screen = phaseScreen(settingsIn({ currentPhase: 4, phaseEnteredWeek: 13 }), '2027-01-25', [], [])
     expect(screen.sessions).toEqual([])
     expect(screen.lead).toBe('Phase 4, Lacrosse.')
     expect(screen.notWritten).toBe('Phase 4’s sessions are not written yet; program.md says they come once Gate 3 is clean. Its preview is under program.md.')
@@ -125,7 +140,7 @@ describe('the lists the Program screen shows are the lists the runner runs', () 
     const misfit = edit({ substitutionIds: ['farmers-carry', 'smith-box-squat'] })
     const slot = seedSlot('p1-a', 'p1a-1')
     expect(editorView(slot, misfit).substitutions.map((s) => s.id)).toEqual(['smith-box-squat'])
-    const row = phaseScreen(settingsIn(), '2026-11-10', [misfit]).sessions[0]?.rows[0]
+    const row = phaseScreen(settingsIn(), '2026-11-10', [misfit], []).sessions[0]?.rows[0]
     expect(row?.substitutions).toEqual(['Smith machine box squat'])
     const ran = planSession({
       template: templateFor(1, 'A'),

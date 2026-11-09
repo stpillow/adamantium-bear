@@ -2,7 +2,7 @@ import { lateCheckOffer } from './MorningCheck.helpers.ts'
 import { describe, expect, it } from 'vitest'
 import { weekSchedule } from '../rules/calendar.ts'
 import type { WeekMiles } from '../rules/weekPlan.ts'
-import type { MileageWeek, MorningCheck, Run, SessionMove, SessionTemplate, SetLog, Settings, Workout } from '../schema/index.ts'
+import type { DownPeriod, MileageWeek, MorningCheck, Run, SessionMove, SessionTemplate, SetLog, Settings, Workout } from '../schema/index.ts'
 import {
   buildMove,
   checkNote,
@@ -27,6 +27,7 @@ import {
   weekChoices,
   weekHeader,
   weekSpanWords,
+  weekDownPeriodLines,
   weekView,
   type HistoryLike,
   type ProgramLike,
@@ -416,5 +417,40 @@ describe('a past day missing its morning check offers it (Batch D, PROGRAM-QUEST
   it('the offer’s own rule: a lift left open offers nothing', () => {
     expect(lateCheckOffer({ date: '2026-11-17', today: '2026-11-20', startDate: START, history: { workouts: [workout('w', '2026-11-17', 'in-progress')], runs: [], morningChecks: [] } })).toBeNull()
     expect(dayLateFlagNote('2026-11-17', [check('2026-11-18', { redFlags: ['locking'] })], PROGRAM.redFlags)).toBeNull()
+  })
+})
+
+describe('a down period on the Week screen (Batch E, PROGRAM-QUESTIONS 183, 185)', () => {
+  const AT = '2026-11-14T13:00:00.000Z'
+  const P1: DownPeriod = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: AT }
+  const view = (today: string, selected: number | null, periods: DownPeriod[] = [P1]) => weekView({ today, selected, settings: settings(), history: history({ downPeriods: periods }), program: PROGRAM })
+
+  it('week 3, whose Monday the period covers: the target held at last week’s, in words', () => {
+    const v = view('2026-11-18', 3)
+    expect(v.target).toBe('Held at last week’s 11 miles: a down period covers the start of this week')
+    expect(v.capped).toBe(true)
+    // Week 4 climbs back one plan step from 11 (the test plan drops to 9, so the drop stands): no down-period words.
+    expect(view('2026-11-18', 4).target).toBe('Target from the plan')
+    // Week 5 is the first climbing week over the drop: min(13, 9 + 4) = 13, from the plan.
+    expect(view('2026-11-18', 5).target).toBe('Target from the plan')
+  })
+
+  it('a climbing week says so', () => {
+    const over5 = { ...P1, id: 'dp-2026-11-28', start: '2026-11-28', plannedEnd: '2026-12-04' }
+    // Week 5 (Mon Nov 30) holds at week 4's 9; week 6 climbs one plan step: 9 + (14 − 13) = 10.
+    expect(view('2026-12-08', 5, [over5]).target).toBe('Held at last week’s 9 miles: a down period covers the start of this week')
+    expect(view('2026-12-08', 6, [over5]).target).toBe('Up one plan step from last week’s 9 miles, after a down period')
+  })
+
+  it('the days it covers carry the words, and the week lists the period as history', () => {
+    const v = view('2026-11-18', 3)
+    expect(v.days.map((d) => d.downPeriod)).toEqual(['Down period', 'Down period', 'Down period', 'Down period', 'Down period', null, null])
+    expect(v.downPeriods).toEqual(['Down period: Saturday Nov 14 to Friday Nov 20 (7 days)'])
+    const ended = view('2026-11-25', 3, [{ ...P1, endedOn: '2026-11-17' }])
+    expect(ended.days.map((d) => d.downPeriod)).toEqual(['Down period', 'Down period', null, null, null, null, null])
+    expect(ended.downPeriods).toEqual(['Down period: Saturday Nov 14 to Friday Nov 20, ended early on Tuesday Nov 17 (4 of 7 days)'])
+    expect(view('2026-11-18', 2).downPeriods).toEqual(['Down period: Saturday Nov 14 to Friday Nov 20 (7 days)'])
+    expect(view('2026-11-18', 4).downPeriods).toEqual([])
+    expect(weekDownPeriodLines(START, 1, [P1])).toEqual([])
   })
 })

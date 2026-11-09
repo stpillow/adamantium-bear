@@ -1,6 +1,7 @@
 import type { EquipmentId, Exercise, IsoDate, LoadUnit, ReadingResult, RepUnit, Requirement, SetLog, SetSide, Side, Slot } from '../schema/index.ts'
 import { isDeloadWeek } from './calendar.ts'
 import { prescribedSets } from './deload.ts'
+import { pausedNote, type Pause } from './downPeriod.ts'
 import { effectiveSlot } from './effectiveSlot.ts'
 import { DUMBBELLS, fallbacksAfter, missingFor, slotOrder, stageCeiling, type Available, type ExerciseLookup } from './equipment.ts'
 
@@ -18,6 +19,11 @@ export type Basis =
   | 'repeat'
   | 'back-off'
   | 'at-top'
+  /**
+   * Clean twice inside a down period (Batch E, PROGRAM-QUESTIONS 181): the step up waits, and the
+   * last session's load and target repeat. Only the clean-twice branch reads the pause.
+   */
+  | 'paused'
 
 export interface Prescription {
   /** The exercise to run: the slot's current one, or a substitution the rules moved it to. */
@@ -78,6 +84,12 @@ export interface PrescriptionInput {
   /** Settings' rack; the cap reads it only when no gym is given. */
   dumbbellMax: number
   redFlagActive: boolean
+  /**
+   * The day being planned is inside a down period (src/rules/downPeriod.ts `pauseOn`, Batch E):
+   * clean twice repeats instead of stepping up. Absent outside one. It never touches hold, back
+   * off, the deload, the red flag or the whole-knee back-off.
+   */
+  pause?: Pause
   /**
    * Where the session runs. Absent, everything on the slot's list is here and the rack stops at
    * `dumbbellMax`: the prescription as it was before M4b.
@@ -409,6 +421,8 @@ function prescribeSideAnywhere(input: PrescriptionInput, here: Here, side: SetSi
     case 'clean-once':
       return { ...carried, load: lastLoad, repsTarget: lastTarget, basis: 'same', note: 'Clean once: same load, same target; clean again to progress.' }
     case 'clean-twice':
+      // A down period pauses the step up, never a hold or a back-off (PROGRAM-QUESTIONS 181): the clean-once shape, with why.
+      if (input.pause) return { ...carried, load: lastLoad, repsTarget: lastTarget, basis: 'paused', note: `Clean twice: same load, same target. ${pausedNote(input.pause)}` }
       break
   }
 

@@ -116,13 +116,15 @@ const late: MorningCheck = {
   loggedOn: '2026-11-09',
 }
 
-describe('a version 9 database opened at version 10', () => {
+describe('a version 9 database opened at version 10 (and on: 11 since Batch E)', () => {
   it('keeps every row exactly, adds no table, and invents no tag or late mark', async () => {
     await writeVersionNine()
 
     await db.open()
-    expect(db.verno).toBe(10)
-    expect(db.tables.map((t) => t.name).sort()).toEqual(Object.keys(v9Rows).sort())
+    expect(db.verno).toBe(11)
+    // Version 11 (Batch E) adds the down periods table, empty.
+    expect(db.tables.map((t) => t.name).sort()).toEqual([...Object.keys(v9Rows), 'downPeriods'].sort())
+    expect(await db.downPeriods.count()).toBe(0)
     const before = await rawRows()
     for (const [name, rows] of Object.entries(v9Rows)) expect(before[name], name).toEqual(sorted(rows))
     for (const row of await db.morningChecks.toArray()) {
@@ -159,13 +161,15 @@ describe('a version 9 database opened at version 10', () => {
     expect(await db.morningChecks.get('mc-2026-11-09')).toEqual({ ...onTime, id: 'mc-2026-11-09', date: '2026-11-09', appliesTo: null, worseThanYesterday: true })
   })
 
-  it('rolls back: a version 9 declaration opens the version 10 database with its own tables and reads the tagged late row raw', async () => {
+  it('rolls back: a version 9 declaration opens the version 10-and-on database with its own tables and reads the tagged late row raw', async () => {
     db.close()
     const old = declareVersionNine()
     await old.open()
     // Dexie 4.4.7 keeps the DECLARED schema on its VersionError retry (PROGRAM-QUESTIONS 149): the
-    // same tables as version 10, since version 10 added none. If a Dexie upgrade ever changes that, this is the tripwire.
+    // same tables as version 10, since version 10 added none, and not version 11's down periods table (Batch E).
+    // If a Dexie upgrade ever changes that, this is the tripwire.
     expect(old.tables.map((t) => t.name).sort()).toEqual(Object.keys(v9Rows).sort())
+    expect(old.tables.map((t) => t.name)).not.toContain('downPeriods')
     expect(await old.table('settings').get('settings')).toEqual(settings)
     // Reads don't parse: the row comes back with both new fields intact.
     expect(await old.table('morningChecks').get('mc-2026-11-07')).toEqual(late)

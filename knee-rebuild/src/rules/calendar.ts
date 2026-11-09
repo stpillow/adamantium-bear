@@ -122,3 +122,14 @@ export function nextLiftDate(
   return null
 }
 
+/**
+ * The date a session falls on in a program week, after moves (the first day it is scheduled on);
+ * null when the week doesn't schedule it or is before the program. The Morning check's "next time"
+ * plans the next session of yesterday's letter on this day (Batch E: a down period pauses by the day planned).
+ */
+export function sessionDateInWeek(startDate: IsoDate, week: number, template: WeeklyTemplate, moves: readonly SessionMove[], session: DaySession): IsoDate | null {
+  if (week < 1) return null
+  const schedule = weekSchedule(template, week, moves)
+  const day = DAYS.find((d) => schedule[d] === session)
+  return day === undefined ? null : dateOf(startDate, week, day)
+}

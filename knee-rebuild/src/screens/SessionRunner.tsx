@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { navigate } from '../app/router.ts'
-import { availableAt, planSession, PROGRAM, sessionExtensions, slotRamp, warmUpFor, windowFit, withExtensions, type Gym, type SlotPlan } from '../app/session.ts'
+import { availableAt, planSession, PROGRAM, sessionBandWeek, sessionExtensions, slotRamp, warmUpFor, windowFit, withExtensions, type Gym, type SlotPlan } from '../app/session.ts'
 import { isExtraSlotId } from '../rules/extensions.ts'
-import { sessionPhaseWeek } from '../rules/compliance.ts'
 import { isLateEntry } from '../rules/retro.ts'
 import { TimeWindow } from '../components/TimeWindow.tsx'
 import { useToday } from '../app/today.ts'
@@ -145,7 +144,7 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
     )
   }
   if (workout.status === 'finished' || workout.status === 'abandoned') {
-    const summaryTemplate = withExtensions(template, history, sessionExtensions(template, history, settings, workout.week))
+    const summaryTemplate = withExtensions(template, history, sessionExtensions(template, history, settings, workout.week, workout.date))
     return (
       <Screen title={`Session ${template.letter}`} lead={lead}>
         <Summary
@@ -153,7 +152,7 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
           template={summaryTemplate}
           sets={sets}
           injuredSide={settings.injuredSide}
-          phaseWeek={sessionPhaseWeek(workout, settings)}
+          phaseWeek={sessionBandWeek(workout, settings, history)}
           checkLine={summaryCheckLine({ workout, today, startDate: settings.startDate, history })}
           timing={{
             workout,
@@ -229,7 +228,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
   const available = useMemo(() => availableAt(gym), [gym])
   const planInput = { template, week: workout.week, settings, history, gym, before: workout.date }
   // The pool for extra time, worked out from the same inputs each time: which of it runs is the minutes' call (`windowFit`).
-  const extend = useMemo(() => sessionExtensions(template, history, settings, workout.week), [template, history, settings, workout.week])
+  const extend = useMemo(() => sessionExtensions(template, history, settings, workout.week, workout.date), [template, history, settings, workout.week, workout.date])
   const everySlot = useMemo(() => planSession({ ...planInput, extend }), [template, workout.week, workout.date, settings, history, gym, extend])
   const ownCount = useMemo(() => everySlot.filter((p) => !isExtraSlotId(p.slot.id)).length, [everySlot])
   // What the minutes leave out is decided on the unswapped plan, so a Swap never changes which exercises run; a slot with a set logged always stays.

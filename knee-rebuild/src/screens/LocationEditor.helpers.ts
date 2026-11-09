@@ -1,11 +1,12 @@
 import { PROGRAM, currentTemplate } from '../app/session.ts'
 import { weekOf } from '../rules/calendar.ts'
+import { bandWeek } from '../rules/downPeriod.ts'
 import { forNextProgramUpdate, type Available, type ChecklistGroup, type ChecklistItem, type CoverageMove, type ExerciseLookup, type RunSwapType } from '../rules/equipment.ts'
 import { phaseWeekOf } from '../rules/session.ts'
 import { RACK_MAX_LB, RACK_STEP_LB, rackValue } from '../rules/locations.ts'
 import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
 import { ifNotHere, nameShows, nameTakenBy, newOnList, phaseCoverage, type SubstitutionRow, type TypedOutcome } from '../rules/whereYouTrain.ts'
-import { EXTRA_TEXT_MAX, Location, type Equipment, type EquipmentId, type Exercise, type IsoDate, type ProgramOverride, type Requirement, type SessionTemplate, type Settings } from '../schema/index.ts'
+import { EXTRA_TEXT_MAX, Location, type DownPeriod, type Equipment, type EquipmentId, type Exercise, type IsoDate, type ProgramOverride, type Requirement, type SessionTemplate, type Settings } from '../schema/index.ts'
 
 /*
  * The location editor (`#/location/:id`, `#/location/new`, M4b design section 5): its choices and
@@ -237,9 +238,14 @@ export const KEEP_AS_TYPED = 'Neither: keep as typed'
 
 // --- What this changes --------------------------------------------------------
 
-/** The week of the phase "What this changes" reads banded slots by: today's, as Today and the plan read it (from week 1 before the start). */
-export function coverageWeek(settings: Pick<Settings, 'startDate' | 'phaseEnteredWeek'>, today: IsoDate): number {
-  return phaseWeekOf(Math.max(weekOf(today, settings.startDate), settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+/**
+ * The week of the phase "What this changes" and the Program screen read banded slots by: today's, as
+ * Today and the plan read it (from week 1 before the start), so held where a down period holds the
+ * bands (`bandWeek`, PROGRAM-QUESTIONS 188).
+ */
+export function coverageWeek(settings: Pick<Settings, 'startDate' | 'phaseEnteredWeek'>, today: IsoDate, downPeriods: readonly DownPeriod[]): number {
+  const calendar = phaseWeekOf(Math.max(weekOf(today, settings.startDate), settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  return bandWeek({ date: today, phaseWeek: calendar, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods: downPeriods })
 }
 
 /** The current phase's sessions, A then B then C; none in Phase 4, whose sessions aren't written. */

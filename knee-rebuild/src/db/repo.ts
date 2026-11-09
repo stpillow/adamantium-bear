@@ -18,9 +18,11 @@ import {
 import { addedSlotProblem, phaseExerciseIds } from '../rules/addedSlots.ts'
 import { cleanWindow } from '../rules/fitWindow.ts'
 import { overrideProblems } from '../rules/overrides.ts'
+import { declareProblem, endProblem, endedEarly, extendProblem, extended, newDownPeriod, resumeProblem, resumed } from '../rules/downPeriod.ts'
 import {
   AclRsiEntry,
   AddedSlot,
+  DownPeriod,
   GateTest,
   HrSettings,
   KoosEntry,
@@ -424,6 +426,56 @@ export async function addLateMorningCheck(check: MorningCheck): Promise<void> {
   })
 }
 
+/** Every declared down period, in start order. */
+export async function getDownPeriods(): Promise<DownPeriod[]> {
+  return db.downPeriods.orderBy('start').toArray()
+}
+
+/**
+ * Declares a down period starting `today` for `days` days (Batch E, PROGRAM-QUESTIONS 185). The rule
+ * is asked again inside one transaction against the stored rows, and a refusal throws its sentence,
+ * writing nothing; the row is added, never put, so nothing is replaced.
+ */
+export async function declareDownPeriod(input: { today: IsoDate; days: number; declaredAt: IsoDateTime; note?: string }): Promise<DownPeriod> {
+  return db.transaction('rw', db.downPeriods, async () => {
+    const problem = declareProblem(await db.downPeriods.toArray(), input.today, input.days)
+    if (problem) throw new Error(problem)
+    const row = DownPeriod.parse(newDownPeriod(input))
+    if (await db.downPeriods.get(row.id)) throw new Error('A down period that starts today is already stored.')
+    await db.downPeriods.add(row)
+    return row
+  })
+}
+
+/** Runs the standing period to `newEnd`, up to 14 days from its start; refused in words, writing nothing. */
+export async function extendDownPeriod(id: string, newEnd: IsoDate, today: IsoDate): Promise<DownPeriod> {
+  return changeDownPeriod(id, (rows, p) => extendProblem(rows, id, newEnd, today) ?? extended(p, newEnd))
+}
+
+/** Ends the standing period today (today still counts); refused in words, writing nothing. */
+export async function endDownPeriod(id: string, today: IsoDate): Promise<DownPeriod> {
+  return changeDownPeriod(id, (rows, p) => endProblem(rows, id, today) ?? endedEarly(p, today))
+}
+
+/** Takes back an end tapped today by mistake; refused in words, writing nothing. */
+export async function resumeDownPeriod(id: string, today: IsoDate): Promise<DownPeriod> {
+  return changeDownPeriod(id, (rows, p) => resumeProblem(rows, id, today) ?? resumed(p))
+}
+
+/** One stored period, changed by `next` (a refusal's sentence, or the new row) inside one transaction. */
+async function changeDownPeriod(id: string, next: (rows: DownPeriod[], period: DownPeriod) => string | DownPeriod): Promise<DownPeriod> {
+  return db.transaction('rw', db.downPeriods, async () => {
+    const rows = await db.downPeriods.toArray()
+    const period = rows.find((p) => p.id === id)
+    if (!period) throw new Error('That down period isn’t stored any more.')
+    const result = next(rows, period)
+    if (typeof result === 'string') throw new Error(result)
+    const row = DownPeriod.parse(result)
+    await db.downPeriods.put(row)
+    return row
+  })
+}
+
 export async function addRun(run: Run): Promise<void> {
   await db.runs.put(Run.parse(run))
 }
@@ -517,11 +569,16 @@ export interface History {
   programOverrides?: ProgramOverride[]
   /** The exercises Shawn added to a session (Dexie version 5), which `planSession` lays after a template's own slots. Optional for the same reason. */
   addedSlots?: AddedSlot[]
+  /**
+   * The declared down periods (Batch E, Dexie version 11): progression pauses on the days they cover
+   * (src/rules/downPeriod.ts). Optional for the same reason: a fixture without it has none.
+   */
+  downPeriods?: DownPeriod[]
 }
 
 /** Everything the engine reads, in one go. The tables are small: one person, twelve weeks. */
 export async function loadHistory(): Promise<History> {
-  const [workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots] = await Promise.all([
+  const [workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots, downPeriods] = await Promise.all([
     db.workouts.toArray(),
     db.setLogs.toArray(),
     db.morningChecks.toArray(),
@@ -530,8 +587,9 @@ export async function loadHistory(): Promise<History> {
     db.sessionMoves.toArray(),
     db.programOverrides.toArray(),
     db.addedSlots.toArray(),
+    db.downPeriods.toArray(),
   ])
-  return { workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots }
+  return { workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots, downPeriods }
 }
 
 /** The prefix the Session runner stores a workout's swaps under in local storage. */

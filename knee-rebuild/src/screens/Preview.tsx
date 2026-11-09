@@ -81,6 +81,7 @@ export function Preview({ date }: { date: IsoDate }) {
           ) : null}
         </div>
         {view.phaseLine ? <p className="text-body text-on-dark-dim">{view.phaseLine}</p> : null}
+        {view.downPeriod ? <p className="text-body text-on-dark">{view.downPeriod}</p> : null}
       </section>
 
       {body.kind === 'before-start' ? (

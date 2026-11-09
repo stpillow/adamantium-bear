@@ -1,5 +1,5 @@
 import type { History } from '../db/repo.ts'
-import { addDays, dayOf, isDeloadWeek, scheduledSession } from '../rules/calendar.ts'
+import { addDays, daysBetween, isDeloadWeek, scheduledSession } from '../rules/calendar.ts'
 import { type Available, type ExerciseLookup, type RunSwapType, type SlotRoute } from '../rules/equipment.ts'
 import { gymChanges, type GymChange, type PlannedSlot } from '../rules/gymChanges.ts'
 import { liftGym, swapCallAt } from '../rules/gymDay.ts'
@@ -7,18 +7,33 @@ import { attachChecks, subjectReadings, workoutReading } from '../rules/history.
 import { listedLocations } from '../rules/locations.ts'
 import { morningCheckApplies, morningReading, type Reading } from '../rules/reading.ts'
 import { phaseWeekOf } from '../rules/session.ts'
+import {
+  DOWN_PERIOD_DEFAULT_DAYS,
+  DOWN_PERIOD_MAX_DAYS,
+  DOWN_PERIOD_MIN_DAYS,
+  activeDownPeriod,
+  bandHeldNote,
+  bandWeek,
+  downPeriodWords,
+  endProblem,
+  lastPausedDay,
+  latestEnd,
+  plannedDays,
+  standingPeriod,
+} from '../rules/downPeriod.ts'
 import { runsInWeek, suggestRun, targetForWeek, type RunSuggestion } from '../rules/weekPlan.ts'
 import { weekMiles } from '../rules/mileage.ts'
 import { lateFlagNotes, stopMessage } from '../rules/redFlags.ts'
 import { exportNudge, loggedRange } from '../rules/backup.ts'
 import { koosDue } from '../rules/koos.ts'
+import { dateWords, monthDayWords, shortDateWords } from '../rules/dateWords.ts'
 import { lateFlagWords } from './MorningCheck.helpers.ts'
 import type {
   IsoDateTime,
   KoosEntry,
   Run,
-  Day,
   DaySession,
+  DownPeriod,
   Equipment,
   EquipmentId,
   Exercise,
@@ -43,45 +58,12 @@ import type {
  * composes the answers and names things. The program pieces are passed in, so tests use fixtures.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves' | 'downPeriods'>
 export type ProgramLike = Pick<Program, 'phases' | 'weeklyTemplate' | 'weeklyTemplateRows' | 'redFlags' | 'templates' | 'mileagePlan'>
 type TemplateRows = ProgramLike['weeklyTemplateRows']
 
-const WEEKDAY: Record<Day, string> = {
-  mon: 'Monday',
-  tue: 'Tuesday',
-  wed: 'Wednesday',
-  thu: 'Thursday',
-  fri: 'Friday',
-  sat: 'Saturday',
-  sun: 'Sunday',
-}
-const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
-function monthAndDay(date: IsoDate): { month: string; day: number } {
-  const [, m, d] = date.split('-').map(Number)
-  const month = m === undefined ? undefined : MONTH[m - 1]
-  if (month === undefined || d === undefined || Number.isNaN(d)) throw new RangeError(`not a YYYY-MM-DD date: ${date}`)
-  return { month, day: d }
-}
-
-/** "Tuesday, November 3": the screen's lead line. */
-export function dateWords(date: IsoDate): string {
-  const { month, day } = monthAndDay(date)
-  return `${WEEKDAY[dayOf(date)]}, ${month} ${day}`
-}
-
-/** "Nov 10": the form a mark-off's date takes. */
-export function monthDayWords(date: IsoDate): string {
-  const { month, day } = monthAndDay(date)
-  return `${month.slice(0, 3)} ${day}`
-}
-
-/** "Monday Nov 2": the form the start line uses. */
-export function shortDateWords(date: IsoDate): string {
-  const { month, day } = monthAndDay(date)
-  return `${WEEKDAY[dayOf(date)]} ${month.slice(0, 3)} ${day}`
-}
+/** Dates in words live in src/rules/dateWords.ts (Batch E); re-exported so no screen changed its import. */
+export { dateWords, monthDayWords, shortDateWords }
 
 const RUN_LABEL: Record<RunType, string> = {
   mbr: 'Run: MBR',
@@ -292,7 +274,7 @@ export type TodayBody =
       /** This week's miles so far and the week's target (null outside the plan), with why when capped. */
       weekMiles: number
       target: number | null
-      /** The rule's own flag: true exactly when rule 7 put the target below the plan's number. */
+      /** The rule's own flag: true exactly when rule 7, or a down period, put the target below the plan's number. */
       capped: boolean
       targetReason: string
       /** Runs already logged today. */
@@ -341,6 +323,93 @@ export interface TodayView {
    * PROGRAM-QUESTIONS 175): a note under every body, the stop included, never the stop itself.
    */
   lateFlags: string[]
+  /** The down period block (Batch E): the offer, the one on now, or the one ended today; null under the stop and before the program. */
+  downPeriod: DownPeriodView | null
+}
+
+/**
+ * Today's down period block (Batch E, PROGRAM-QUESTIONS 185), every line in words: the offer to
+ * declare one; the one on now, with the day of how many and until when, End it today (not on its
+ * last planned day) and Make it longer (up to the 14-day cap); the one ended today, with Keep it going;
+ * or a row dated ahead (from an import or a clock change), said so, with nothing to tap.
+ */
+export type DownPeriodView =
+  | { kind: 'offer'; minDays: number; maxDays: number; defaultDays: number }
+  | {
+      kind: 'active'
+      id: string
+      start: IsoDate
+      line: string
+      note: string | null
+      /** Null on its last planned day: it ends tonight on its own, said in `lastDay`. */
+      canEnd: boolean
+      lastDay: string | null
+      /** Its planned length now, and the most it may run to; null at the cap. */
+      extend: { days: number; maxDays: number } | null
+      atCap: string | null
+    }
+  | { kind: 'ended-today'; id: string; line: string; note: string | null }
+  | { kind: 'ahead'; line: string }
+
+export function downPeriodView(today: IsoDate, periods: readonly DownPeriod[]): DownPeriodView {
+  const active = activeDownPeriod(today, periods)
+  if (active === null) {
+    const standing = standingPeriod(today, periods)
+    if (standing !== null) return { kind: 'ahead', line: `A down period from ${shortDateWords(standing.start)} is stored (${downPeriodWords(standing)}); a new one can’t start before it ends.` }
+    return { kind: 'offer', minDays: DOWN_PERIOD_MIN_DAYS, maxDays: DOWN_PERIOD_MAX_DAYS, defaultDays: DOWN_PERIOD_DEFAULT_DAYS }
+  }
+  const day = daysBetween(active.start, today) + 1
+  const of = plannedDays(active)
+  const note = active.note ?? null
+  if (active.endedOn === today) {
+    return { kind: 'ended-today', id: active.id, line: `Down period ended today, day ${day} of ${of}. Progression resumes tomorrow, ${shortDateWords(addDays(today, 1))}.`, note }
+  }
+  const atCap = active.plannedEnd >= latestEnd(active)
+  return {
+    kind: 'active',
+    id: active.id,
+    start: active.start,
+    line: `Down period, day ${day} of ${of}: progression paused until ${shortDateWords(lastPausedDay(active))}.`,
+    note,
+    canEnd: endProblem(periods, active.id, today) === null,
+    lastDay: today === active.plannedEnd ? `Its last day: progression resumes tomorrow, ${shortDateWords(addDays(today, 1))}.` : null,
+    extend: atCap ? null : { days: of, maxDays: DOWN_PERIOD_MAX_DAYS },
+    atCap: atCap ? `It runs the full ${DOWN_PERIOD_MAX_DAYS} days, to ${shortDateWords(active.plannedEnd)}; a down period can’t run longer.` : null,
+  }
+}
+
+/** "Today, Saturday Nov 14, to Friday Nov 20. …": what declaring a period of `days` would do, under the stepper. */
+export function declareWords(today: IsoDate, days: number): { line: string; button: string } {
+  return {
+    line: `Today, ${shortDateWords(today)}, to ${shortDateWords(addDays(today, days - 1))}. Loads, reps and the week’s miles hold; hold and back off still apply; every session is read as normal.`,
+    button: `Pause progression for ${days} days`,
+  }
+}
+
+/**
+ * What declaring a period does to a lift open today (PROGRAM-QUESTIONS 187; a change to an open
+ * lift's remaining prescriptions is never silent, 176(e)): its remaining exercises plan again with
+ * progression paused, equal or lower, and the logged sets stay. Null with no lift open today.
+ */
+export function pauseReplanWords(openLabel: string | null): string | null {
+  return openLabel === null ? null : `${openLabel}, open today, now plans its remaining exercises with progression paused; the sets already logged stay as logged.`
+}
+
+/** The tap came after midnight under a form opened yesterday: refused, so a period never starts on a day already past. */
+export function pastMidnightWords(now: IsoDate): string {
+  return `It is past midnight: today is now ${shortDateWords(now)}. Nothing was saved; close this and open it again to start from today.`
+}
+
+/** A refused or failed down-period write, in one sentence: the rule's own when it refused. */
+export function downPeriodErrorWords(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return /[.!?]$/.test(message) ? `${message} Nothing was saved.` : `Nothing was saved (${message}).`
+}
+
+/** "Run it to Sunday Nov 22 (9 days)": Make it longer's button for a period of `days` days in all. */
+export function extendWords(start: IsoDate, days: number): { end: IsoDate; button: string } {
+  const end = addDays(start, days - 1)
+  return { end, button: `Run it to ${shortDateWords(end)} (${days} days)` }
 }
 
 /** Everything the Today screen renders, from today's date, the settings, the stored history and the program. */
@@ -364,6 +433,7 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     yesterday: yesterdayReadings(today, history, program.templates, settings.injuredSide),
     open: openWorkouts(history.workouts, program.templates, workout?.status === 'in-progress' ? workout.id : null),
     lateFlags: lateFlagNotes(history.morningChecks, today, program.redFlags).map(lateFlagWords),
+    downPeriod: null,
   }
 
   const stop = stopMessage(settings.redFlag, program.redFlags)
@@ -372,21 +442,25 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     return { ...base, body: { kind: 'before-start', line: `Week 1 starts ${shortDateWords(settings.startDate)}` } }
   }
 
+  const periods = history.downPeriods ?? []
+  const withPeriod = { ...base, downPeriod: downPeriodView(today, periods) }
   const session = scheduled.session
-  const phaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  // A down period holds the phase-week bands (the tempo among them) where it began (PROGRAM-QUESTIONS 188).
+  const calendarPhaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  const phaseWeek = bandWeek({ date: today, phaseWeek: calendarPhaseWeek, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods })
   if (letter) {
     const [record] = workout && workout.status === 'finished' ? attachChecks([workout], history.setLogs, history.morningChecks) : []
     const reading = record ? workoutReading(record, settings.injuredSide) : null
     const checkDone = record?.morningCheck !== undefined
     return {
-      ...base,
+      ...withPeriod,
       body: { kind: 'lift', letter, label: sessionLabel(session), week, phaseWeek, isDeload: isDeloadWeek(week), template, workout, earlierPhase, reading, checkDone },
     }
   }
-  if (session === 'off') return { ...base, body: { kind: 'off', label: sessionLabel(session, program.weeklyTemplateRows) } }
+  if (session === 'off') return { ...withPeriod, body: { kind: 'off', label: sessionLabel(session, program.weeklyTemplateRows) } }
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
-  const target = targetForWeek(program.mileagePlan, week, settings.startDate, history.runs, readings)
+  const target = targetForWeek(program.mileagePlan, week, settings.startDate, history.runs, readings, periods)
   const before = runsInWeek(history.runs, settings.startDate, week).filter((r) => r.date < today)
   const todays = history.runs.filter((r) => r.date === today)
   const check = history.morningChecks.find((c) => c.date === today)
@@ -399,9 +473,11 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     currentPhase: settings.currentPhase,
     phaseWeek,
     morning,
+    calendarPhaseWeek,
+    bandNote: bandHeldNote({ date: today, calendarPhaseWeek, band: phaseWeek, periods }),
   })
   return {
-    ...base,
+    ...withPeriod,
     body: {
       kind: 'run',
       label: sessionLabel(session),

@@ -34,7 +34,7 @@ Decided with Shawn on Nov 6, 2026, one question at a time. Each phase lands as i
 | 3 · **built** | VO2 max readings typed in; trend on Progress. As built: PROGRAM-QUESTIONS 153 to 155 | New `vo2Readings` table, one reading per day keyed by date (Dexie v8 additive, backup schema 8 with a 7→8 step) |
 | 4 | Photo → run, elliptical or rowing: `api/photo.ts` sends the image to Claude with a strict JSON schema; the run logger opens filled in; pain still rated by hand | None (fills the existing form). Needs `ANTHROPIC_API_KEY` in Vercel, a monthly spend cap on the key, and a per-day request cap in the function |
 | 5 | Photo → strength session: sets, reps and loads matched to that day's slots by the catalog's names; each set confirmed in the runner's after-the-fact mode | None beyond phase 1 |
-| 6 | Cycling and cross-training: a new activity (type, minutes, RPE, HR, pain) that counts toward load and readings, never miles; photo and Strava (Ride, Swim, Hike…) map onto it | New `crossTraining` table (Dexie v11: Batch A took v9 and Batch D v10); the morning check can read one; PROGRAM-QUESTIONS entry for how it reads |
+| 6 | Cycling and cross-training: a new activity (type, minutes, RPE, HR, pain) that counts toward load and readings, never miles; photo and Strava (Ride, Swim, Hike…) map onto it | New `crossTraining` table (Dexie v12: Batch A took v9, Batch D v10 and Batch E v11); the morning check can read one; PROGRAM-QUESTIONS entry for how it reads |
 
 ## Barriers to flag now
 
