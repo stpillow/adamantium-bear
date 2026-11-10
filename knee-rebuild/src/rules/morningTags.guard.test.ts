@@ -29,7 +29,14 @@ const sources = import.meta.glob<string>('/src/**/*.{ts,tsx}', { query: '?raw', 
  * The counting module's importers: the screen helper that shows the counts, the module's own tests,
  * and the down-period guard (Batch E), which reads the counts only to prove a down period never changes them.
  */
-const IMPORTERS: readonly string[] = ['/src/rules/morningTags.test.ts', '/src/screens/Progress.helpers.ts', '/src/screens/Progress.helpers.test.ts', '/src/rules/downPeriod.guard.test.ts']
+const IMPORTERS: readonly string[] = [
+  '/src/rules/morningTags.test.ts',
+  '/src/screens/Progress.helpers.ts',
+  '/src/screens/Progress.helpers.test.ts',
+  '/src/rules/downPeriod.guard.test.ts',
+  // The tester-mode guard (M-U3) spies on its exports only to prove tester mode never calls the counts.
+  '/src/rules/engineMode.guard.test.ts',
+]
 
 /** The files that may mention tags: the schema, the counting module, the form, and the Progress section. */
 const MENTIONS: readonly string[] = [

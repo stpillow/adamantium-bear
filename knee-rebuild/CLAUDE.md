@@ -1,6 +1,6 @@
 # Knee Rebuild
 
-Single-writer-per-account PWA (invite-gated accounts; each phone the only writer and the primary copy of its own log) that runs Shawn's 12-week knee return-to-sport program on his iPhone: says what to do today, logs what happened, reads the knee's response, decides the next session. Read these before changing anything:
+Single-writer-per-account PWA (invite-gated accounts; each phone the only writer and the primary copy of its own log) that runs Shawn's 12-week knee return-to-sport program on his iPhone: says what to do today, logs what happened, reads the knee's response, decides the next session (for Shawn's account; a tester account logs and reads the program as written: M-U3). Read these before changing anything:
 
 - `PROMPT.md`: owns app behavior (model, rules, screens, build plan, working agreements).
 - `docs/program.md`: owns training content. Its training content is transcribed into the seed data (`data/program.json`) once and never parsed at runtime, never "improved" in code. The Program screen renders program.md for reading only (`src/rules/markdown.ts` reads it into headings, paragraphs, lists and tables); nothing the engine decides comes from it.
@@ -81,6 +81,7 @@ knee-rebuild/
 - **Swap**: replacing a slot's exercise with the next substitution in its ordered list; the slot's job stays the same.
 - **Effective reading**: what the last two combined readings add up to for one exercise: clean twice, clean once, hold, or back-off (two holds in a row read back-off).
 - **Pain per exercise**: when `Settings.painPerSet` is false, the runner stores the exercise's one pain value on every set it logs; the engine reads pain per set either way.
+- **Tester mode**: the engine off for a tester account (M-U3). `src/rules/engineMode.ts` decides full or tester from the account answer the phone last kept (and, with none, whether it holds sets logged before Nov 10, 2026); every view helper and the planner take the mode, and in tester mode never call a prescription, reading, gate or red-flag function (`src/rules/engineMode.guard.test.ts`; the tester planner is `src/app/written.ts`, `planFor` the one door). Slots show the program's written text; loads are typed; nothing is read; a ticked flag is the tester's own note. Derived, never stored. Shawn's admin account and an install without accounts run in full, byte for byte as before (`src/screens/fullMode.snapshot.test.ts`; never update its snapshot to make a change pass).
 - **Today**: screens compute the date once with `todayIn(new Date(), zone)` in the user's time zone (a setting, America/New_York by default; M-U1) and pass it to the engine; nothing in `src/rules/` reads the clock or the phone's time zone.
 
 ## Design

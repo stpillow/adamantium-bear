@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
-import { availableAt, planSession, PROGRAM, sessionBandWeek, sessionExtensions, slotRamp, warmUpFor, windowFit, withExtensions, type Gym, type SlotPlan } from '../app/session.ts'
-import { isExtraSlotId } from '../rules/extensions.ts'
+import { availableAt, PROGRAM, warmUpFor, type Gym } from '../app/session.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { isLateEntry } from '../rules/retro.ts'
 import { TimeWindow } from '../components/TimeWindow.tsx'
 import { useToday } from '../app/today.ts'
@@ -14,9 +15,8 @@ import { exerciseById } from '../program/program.ts'
 import { effectiveSlot } from '../rules/effectiveSlot.ts'
 import { gymLocked, listedLocations, locationIdOf } from '../rules/locations.ts'
 import { loggedPain, painRewriteAllowed, type Draft } from '../rules/prefill.ts'
-import { firstOpenStepOf, nextStep, openStepForSide, restAfter, sessionSteps, type Step } from '../rules/runOrder.ts'
-import { asksForRack, cardHoldsOff, notHereSlots, skipTakesBack, swapOffer, type SwapOffer } from '../rules/runnerGym.ts'
-import { healthySideTargets } from '../rules/unilateral.ts'
+import { firstOpenStepOf, nextStep, openStepForSide, restAfter, type Step } from '../rules/runOrder.ts'
+import { asksForRack, notHereSlots, skipTakesBack, swapOffer, type SwapOffer } from '../rules/runnerGym.ts'
 import { warmUpParts } from '../rules/warmUp.ts'
 import type { IsoDate, Location, SessionTemplate, SetLog, SetSide, Settings, StopReason, Workout } from '../schema/index.ts'
 import { ActiveCard } from './session/ActiveCard.tsx'
@@ -29,13 +29,15 @@ import { Summary } from './session/Summary.tsx'
 import { windowWords } from './Window.helpers.ts'
 import {
   buildSet,
+  cardModel,
+  activeCardKey,
+  deloadBadge,
   doneWords,
   heldBarWords,
+  holdsOffFor,
   holdsOffWords,
-  lastRpeFor,
   loggedMaxPain,
   markedWords,
-  mergeSwaps,
   NO_DUMBBELLS_WORDS,
   notHereEntries,
   notHereWords,
@@ -45,27 +47,32 @@ import {
   parseStoredSlotIds,
   parseStoredSwaps,
   pickNotHereWords,
-  picksOnList,
   RACK_ASK_LB,
   rackAskWords,
   rackSetWords,
+  redFlagRunnerLine,
   routeLines,
+  runnerPlan,
+  runsExerciseId,
   setStepKey,
+  setTarget,
+  sideSets,
+  slotRepUnit,
   standingMarkFor,
   staleStoredSwaps,
   stopReasonLabel,
+  summaryPhaseWeek,
+  summaryTemplateFor,
   swapChoices,
   swapPick,
-  swapsFromSets,
   templateForWorkout,
   todayGymWords,
   todayTooLabel,
   warmUpWords,
-  rampWords,
   timedSets,
-  withoutEnginePicks,
   type GymMark,
   type HoldsOff,
+  type RunnerSlot,
   summaryCheckLine,
 } from './SessionRunner.helpers.ts'
 import { shortDateWords } from './Today.helpers.ts'
@@ -118,6 +125,7 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
   const settings = useSettings()
   const history = useHistory()
   const today = useToday()
+  const { mode } = useEngineMode()
 
   if (workout === undefined || sets === undefined || settings === undefined || history === undefined) {
     return <Screen title="Session" lead="Opening storage…">{null}</Screen>
@@ -144,16 +152,17 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
     )
   }
   if (workout.status === 'finished' || workout.status === 'abandoned') {
-    const summaryTemplate = withExtensions(template, history, sessionExtensions(template, history, settings, workout.week, workout.date))
+    const summaryTemplate = summaryTemplateFor(mode, template, history, settings, workout)
     return (
       <Screen title={`Session ${template.letter}`} lead={lead}>
         <Summary
+          mode={mode}
           workout={workout}
           template={summaryTemplate}
           sets={sets}
           injuredSide={settings.injuredSide}
-          phaseWeek={sessionBandWeek(workout, settings, history)}
-          checkLine={summaryCheckLine({ workout, today, startDate: settings.startDate, history })}
+          phaseWeek={summaryPhaseWeek(mode, workout, settings, history)}
+          checkLine={summaryCheckLine({ mode, workout, today, startDate: settings.startDate, history })}
           timing={{
             workout,
             sets: timedSets(sets, (slotId) => summaryTemplate.slots.find((s) => s.id === slotId)?.repUnit),
@@ -165,10 +174,10 @@ export function SessionRunner({ workoutId }: { workoutId: string }) {
       </Screen>
     )
   }
-  return <RunnerAtGym workout={workout} template={template} sets={sets} settings={settings} history={history} today={today} lead={lead} />
+  return <RunnerAtGym mode={mode} workout={workout} template={template} sets={sets} settings={settings} history={history} today={today} lead={lead} />
 }
 
-type RunnerProps = { workout: Workout; template: SessionTemplate; sets: SetLog[]; settings: Settings; history: History; today: IsoDate; lead: string }
+type RunnerProps = { mode: EngineMode; workout: Workout; template: SessionTemplate; sets: SetLog[]; settings: Settings; history: History; today: IsoDate; lead: string }
 
 /**
  * The runner plans at the workout's own gym, stamped at Start (absent means Planet Fitness), not the
@@ -183,7 +192,7 @@ function RunnerAtGym(props: RunnerProps) {
   return <Runner key={location.id} {...props} location={location} />
 }
 
-function Runner({ workout, template, sets, settings, history, today, lead, location }: RunnerProps & { location: Location }) {
+function Runner({ mode, workout, template, sets, settings, history, today, lead, location }: RunnerProps & { location: Location }) {
   const storageKey = `${SWAP_KEY_PREFIX}${workout.id}`
   const anywayKey = `${storageKey}:anyway`
   const locations = useLocations()
@@ -226,37 +235,23 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
 
   const gym = useMemo<Gym>(() => ({ location, kit: settings.kit }), [location, settings.kit])
   const available = useMemo(() => availableAt(gym), [gym])
-  const planInput = { template, week: workout.week, settings, history, gym, before: workout.date }
-  // The pool for extra time, worked out from the same inputs each time: which of it runs is the minutes' call (`windowFit`).
-  const extend = useMemo(() => sessionExtensions(template, history, settings, workout.week, workout.date), [template, history, settings, workout.week, workout.date])
-  const everySlot = useMemo(() => planSession({ ...planInput, extend }), [template, workout.week, workout.date, settings, history, gym, extend])
-  const ownCount = useMemo(() => everySlot.filter((p) => !isExtraSlotId(p.slot.id)).length, [everySlot])
-  // What the minutes leave out is decided on the unswapped plan, so a Swap never changes which exercises run; a slot with a set logged always stays.
-  const loggedForFit = useMemo(() => new Set(sets.map((s) => s.slotId)), [sets])
   // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym comes off the top; a late entry shows, and so counts, no warm-up sets.
   const warmParts = useMemo(() => warmUpFor(workout.phase, gym), [workout.phase, gym])
   const lateEntry = isLateEntry(workout)
-  const fit = useMemo(
-    () => windowFit(everySlot, settings.restTimerSeconds, minutes, { warmUpMinutes: warmParts.total, ramps: !lateEntry, logged: loggedForFit }),
-    [everySlot, settings.restTimerSeconds, minutes, loggedForFit, warmParts, lateEntry],
+  // The plan for the mode (`runnerPlan`): the engine's in full mode, the session as written in tester mode (M-U3). What the minutes leave
+  // out is decided on the unswapped plan, so a Swap never changes which exercises run; a slot with a set logged always stays.
+  const { everySlot, fit, unswapped, engineBySlot, chosen, plans, steps, ownCount } = useMemo(
+    () => runnerPlan(mode, { template, workout, settings, history, gym, stored, minutes, sets, late: lateEntry }),
+    [mode, template, workout, settings, history, gym, stored, minutes, sets, lateEntry],
   )
-  const unswapped = useMemo(() => everySlot.filter((p) => fit.keep.includes(p.slot.id)), [everySlot, fit])
-  const engineBySlot = useMemo(() => new Map(unswapped.map((p) => [p.slot.id, p.exercise.id])), [unswapped])
-  // Only picks on their slot's list as it runs now: a Program edit mid-session can take one off, and the engine then runs the slot's history.
-  const chosen = useMemo(() => picksOnList(withoutEnginePicks(mergeSwaps(swapsFromSets(unswapped, sets), stored), engineBySlot), unswapped), [unswapped, sets, stored, engineBySlot])
   // A stored swap taken off its slot's list is forgotten, so putting the exercise back on the list later doesn't bring the old pick back with it.
   useEffect(() => {
-    const stale = staleStoredSwaps(stored, everySlot)
+    const stale = staleStoredSwaps(stored, everySlot.map((rs) => rs.plan))
     if (stale.length === 0) return
     const next = Object.fromEntries(Object.entries(stored).filter(([slotId]) => !stale.includes(slotId)))
     setStored(next)
     writeStored(storageKey, Object.keys(next).length > 0 ? next : null)
   }, [stored, everySlot, storageKey])
-  const plans = useMemo(() => planSession({ ...planInput, chosenExercise: chosen, extend }).filter((p) => fit.keep.includes(p.slot.id)), [template, workout.week, workout.date, settings, history, gym, chosen, fit, extend])
-  const steps = useMemo(
-    () => sessionSteps(plans.map((p) => ({ slotId: p.slot.id, ...(p.slot.groupId ? { groupId: p.slot.groupId } : {}), optional: p.slot.optional, sides: p.prescriptions.map((x) => ({ side: x.side, sets: x.sets })) }))),
-    [plans],
-  )
   const done = useMemo(() => new Set(sets.map(setStepKey)), [sets])
   const stopped = useMemo(() => new Set(sets.filter((s) => s.stopped).map((s) => s.slotId)), [sets])
   const loggedSlots = useMemo(() => new Set(sets.map((s) => s.slotId)), [sets])
@@ -264,7 +259,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
   const notHere = useMemo(
     () =>
       notHereSlots(
-        plans.map((p) => ({ slotId: p.slot.id, route: p.route })),
+        plans.map((rs) => ({ slotId: rs.plan.slot.id, route: rs.plan.route })),
         new Set(runAnyway),
         new Set(Object.keys(chosen).filter((slotId) => chosen[slotId] !== undefined)),
         loggedSlots,
@@ -279,7 +274,8 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
   const focused = focusSlot && !notHere.has(focusSlot) ? firstOpenStepOf(steps, focusSlot, done, stopped) : null
   const current: Step | null = pinned ?? focused ?? (focusSlot ? null : nextStep(steps, done, stopped, last ? setStepKey(last) : null, notHere))
   const activeSlotId = editing?.slotId ?? pinned?.slotId ?? focusSlot ?? current?.slotId ?? null
-  const activePlan: SlotPlan | undefined = plans.find((p) => p.slot.id === activeSlotId)
+  const activeSlot: RunnerSlot | undefined = plans.find((rs) => rs.plan.slot.id === activeSlotId)
+  const activePlan = activeSlot?.plan
   const held = activePlan !== undefined && editing === null && notHere.has(activePlan.slot.id)
   const fallback = nextStep(steps, done, stopped, last ? setStepKey(last) : null, notHere)
 
@@ -311,26 +307,25 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
     return painPicked[painKey(slotId, exerciseId)] ?? loggedPain(slotSetsOf(slotId).filter((s) => s.exerciseId === exerciseId))
   }
 
-  function prescriptionFor(plan: SlotPlan, side: SetSide) {
-    return plan.prescriptions.find((p) => p.side === side) ?? plan.prescriptions[0]
-  }
-
-  function logStep(step: Step, plan: SlotPlan, draft: Draft, stop?: StopReason) {
-    const prescription = prescriptionFor(plan, step.side)
-    if (!prescription) return
-    const exercise = exerciseById(prescription.exerciseId)
+  function logStep(step: Step, rs: RunnerSlot, draft: Draft, stop?: StopReason) {
+    // What the set is stored as (`setTarget`): the prescription's exercise, unit and rack cap in full mode; in tester mode the
+    // written plan's exercise, the unit it counts, and never a rack cap (M-U3 review B2).
+    const target = setTarget(rs, step.side)
+    if (!target) return
+    const plan = rs.plan
+    const exercise = exerciseById(target.exerciseId)
     const pain = settings.painPerSet ? draft.pain : exercisePain(plan.slot.id, exercise.id)
     const set = buildSet({
       workoutId: workout.id,
       slot: plan.slot,
       exercise,
-      repUnit: prescription.repUnit,
+      repUnit: target.repUnit,
       side: step.side,
       setNumber: step.setNumber,
       draft: { ...draft, pain },
       loggedAt: new Date().toISOString(),
       ...(stop ? { stop } : {}),
-      rackCapped: prescription.rackCapped === true,
+      rackCapped: target.rackCapped,
     })
     void write(
       () => upsertSet(set),
@@ -341,7 +336,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
     )
   }
 
-  function saveEdit(original: SetLog, plan: SlotPlan, draft: Draft) {
+  function saveEdit(original: SetLog, plan: RunnerSlot['plan'], draft: Draft) {
     const exercise = exerciseById(original.exerciseId)
     const unit = effectiveSlot(plan.slot, exercise).repUnit
     const pain = settings.painPerSet ? draft.pain : (painPicked[painKey(plan.slot.id, exercise.id)] ?? original.painDuring ?? null)
@@ -412,12 +407,12 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
    * The exercise the plan runs without a swap when the card doesn't run it (`cardHoldsOff`: past
    * the rack, or backed off), read off the unswapped plan, so Swap can say why a tap on it keeps the card.
    */
-  function holdsOffFor(slotId: string): HoldsOff | null {
-    const plan = unswapped.find((p) => p.slot.id === slotId)
-    const engineId = engineBySlot.get(slotId)
-    if (!plan || !engineId) return null
-    const why = cardHoldsOff(engineId, plan.prescriptions, false)
-    return why ? { exerciseId: engineId, why, cardName: nameOf(plan.prescriptions[0]?.exerciseId ?? engineId), rackLb: location.dumbbellMaxLb } : null
+  function heldOff(slotId: string): HoldsOff | null {
+    return holdsOffFor(
+      unswapped.find((rs) => rs.plan.slot.id === slotId),
+      engineBySlot.get(slotId),
+      location.dumbbellMaxLb,
+    )
   }
 
   /**
@@ -426,14 +421,15 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
    * isn't here lacks, or what the exercise on the card needed that a pick that is here doesn't. A
    * pick of what the plan runs when the card holds it off answers in words: the card stays.
    */
-  function swap(plan: SlotPlan, exerciseId: string | null) {
+  function swap(rs: RunnerSlot, exerciseId: string | null) {
+    const plan = rs.plan
     const slotId = plan.slot.id
-    const cardId = plan.prescriptions[0]?.exerciseId ?? plan.exercise.id
+    const cardId = runsExerciseId(rs)
     const pick = swapPick({ pickId: exerciseId, engineId: engineBySlot.get(slotId) ?? plan.slot.exerciseId, cardId, routeKind: plan.route.kind })
     const next = { ...stored, [slotId]: pick.value }
     setStored(next)
     writeStored(storageKey, next)
-    const held = holdsOffFor(slotId)
+    const held = heldOff(slotId)
     setMarked(held && exerciseId === held.exerciseId ? { slotId, text: holdsOffWords(nameOf(held.exerciseId), held.why, held.cardName, held.rackLb) } : null)
     if (pick.anyway) {
       setOffer(null)
@@ -461,10 +457,11 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
    * lacks (`standingMarkFor`, read from what is stored, so a reload keeps it) and says what the gym
    * lacks for a pick in words; otherwise the last pick's offer stands.
    */
-  function gymFor(plan: SlotPlan): { lines: string[]; actions: GymAction[]; rack: RackAsk | null } {
+  function gymFor(rs: RunnerSlot): { lines: string[]; actions: GymAction[]; rack: RackAsk | null } {
+    const plan = rs.plan
     const slotId = plan.slot.id
     const swapped = chosen[slotId] !== undefined
-    const cardId = plan.prescriptions[0]?.exerciseId ?? plan.exercise.id
+    const cardId = runsExerciseId(rs)
     const lines = routeLines({ route: plan.route, swapped, gymName: location.name, items: ITEMS, nameOf })
     const pickLine = swapped ? pickNotHereWords(exerciseById(cardId), available, location.name, ITEMS) : null
     const standingId = standingMarkFor({ routeKind: plan.route.kind, routeExerciseId: plan.route.exerciseId, swapped, cardId, held: notHere.has(slotId) })
@@ -563,11 +560,12 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
       ? { words: todayGymWords(todayGym.name), label: todayTooLabel(location.name), onUse: () => void write(() => setActiveLocation(location.id), undefined, 'gym') }
       : null
 
-  const notHereLine = notHereWords(location.name, notHereEntries(plans, loggedSlots, nameOf))
-  const notLogged = notLoggedWords(notLoggedLabels(plans, steps, done, stopped, notHere), notHereLine !== null)
+  const slotPlans = plans.map((rs) => rs.plan)
+  const notHereLine = notHereWords(location.name, notHereEntries(slotPlans, loggedSlots, nameOf))
+  const notLogged = notLoggedWords(notLoggedLabels(slotPlans, steps, done, stopped, notHere), notHereLine !== null, mode)
   const finished = doneWords(
     location.name,
-    plans.filter((p) => !p.slot.optional && notHere.has(p.slot.id)).map((p) => `${p.slot.label} ${p.exercise.name}`),
+    slotPlans.filter((p) => !p.slot.optional && notHere.has(p.slot.id)).map((p) => `${p.slot.label} ${p.exercise.name}`),
   )
   const staleDay = workout.date < today
   const busy = saving || cooling
@@ -576,20 +574,17 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
   // What Finish and End preset the session's minutes from: the sets' times, or for a late entry an estimate of them (metrics phase 1).
   const timing = {
     workout,
-    sets: timedSets(sets, (slotId) => plans.find((p) => p.slot.id === slotId)?.prescriptions[0]?.repUnit),
+    sets: timedSets(sets, (slotId) => {
+      const rs = plans.find((p) => p.plan.slot.id === slotId)
+      return rs ? slotRepUnit(rs) : undefined
+    }),
     restSeconds: settings.restTimerSeconds,
     warmUpMinutes: warmParts.total,
   }
-  // The active slot's warm-up sets (display only, PROGRAM-QUESTIONS 165): from the exercise and load it runs now, so a swap or a
-  // rack move follows; none for a late entry, and none once a set of that exercise is logged on any slot this session.
-  const activeExerciseId = activePlan?.prescriptions[0]?.exerciseId ?? activePlan?.exercise.id
-  const activeRamp =
-    activePlan && activeExerciseId
-      ? rampWords(slotRamp(activePlan, { late, alreadyWarm: sets.some((s) => s.exerciseId === activeExerciseId) }), exerciseById(activeExerciseId))
-      : null
+  const activeExerciseId = activeSlot ? runsExerciseId(activeSlot) : undefined
 
   const stopOfActive = activePlan && stopped.has(activePlan.slot.id) ? slotSetsOf(activePlan.slot.id).find((s) => s.stopped) : undefined
-  const nextName = fallback ? (plans.find((p) => p.slot.id === fallback.slotId)?.exercise.name ?? 'the next slot') : null
+  const nextName = fallback ? (slotPlans.find((p) => p.slot.id === fallback.slotId)?.exercise.name ?? 'the next slot') : null
   const idleBar = fallback
     ? {
         line: held
@@ -602,10 +597,25 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
       }
     : { line: held ? heldBarWords(location.name) : finished.bar, label: 'Finish session', onPress: () => openPanel('finish') }
 
-  const sidesFor = (plan: SlotPlan) =>
-    plan.slot.unilateral && !plan.slot.injuredOnly && !notHere.has(plan.slot.id)
-      ? plan.prescriptions.map((p) => ({ side: p.side, open: openStepForSide(steps, plan.slot.id, p.side, done, stopped) !== null }))
+  const sidesFor = (rs: RunnerSlot) =>
+    rs.plan.slot.unilateral && !rs.plan.slot.injuredOnly && !notHere.has(rs.plan.slot.id)
+      ? sideSets(rs).map((p) => ({ side: p.side, open: openStepForSide(steps, rs.plan.slot.id, p.side, done, stopped) !== null }))
       : []
+  const activeStep = editing ? null : current && activePlan && current.slotId === activePlan.slot.id ? current : null
+  const activeModel = activeSlot
+    ? cardModel(mode, {
+        rs: activeSlot,
+        step: activeStep,
+        editing,
+        slotSets: slotSetsOf(activeSlot.plan.slot.id),
+        sessionSets: sets,
+        allSets: history.setLogs,
+        injuredSide: settings.injuredSide,
+        painPerSet: settings.painPerSet,
+        swapped: chosen[activeSlot.plan.slot.id] !== undefined,
+        late,
+      })
+    : null
 
   return (
     <Screen title={`Session ${template.letter}`} lead={lead}>
@@ -622,7 +632,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
         <Button variant="quiet" onClick={() => navigate({ name: 'today' })}>
           Today
         </Button>
-        {workout.isDeload ? <span className="font-mono text-small uppercase tracking-[0.22em] text-on-dark">Deload week: fewer sets, same loads</span> : null}
+        {workout.isDeload ? <span className="font-mono text-small uppercase tracking-[0.22em] text-on-dark">{deloadBadge(mode)}</span> : null}
       </div>
       {!late && sets.length === 0 && workout.status === 'in-progress' ? (
         <TimeWindow
@@ -631,12 +641,12 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
             setMinutes(m)
             writeWindow(workout.id, m)
           }}
-          lines={windowWords(fit, minutes, ownCount, (slotId) => everySlot.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId, warmParts)}
+          lines={windowWords(fit, minutes, ownCount, (slotId) => everySlot.find((rs) => rs.plan.slot.id === slotId)?.plan.exercise.name ?? slotId, warmParts)}
         />
       ) : minutes !== null ? (
         <p className="text-small text-on-dark-dim">{`${fit.added.length > 0 ? `Fitted to ${minutes} min: all ${ownCount} exercises, and ${fit.added.length} added.` : `Fitted to ${minutes} min: ${fit.keep.length} of ${ownCount} exercises.`}`}</p>
       ) : null}
-      {settings.redFlag.active ? <p className="text-body text-on-dark">Red-flag state: progression is suspended; loads repeat the last session.</p> : null}
+      {redFlagRunnerLine(mode, settings) ? <p className="text-body text-on-dark">{redFlagRunnerLine(mode, settings)}</p> : null}
       {staleDay ? (
         <div className="flex flex-col gap-2">
           <p className="text-body text-on-dark">
@@ -676,6 +686,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
       <div ref={topRef} className="scroll-mt-4">
         {panel === 'finish' ? (
           <FinishPanel
+            mode={mode}
             notHere={notHereLine}
             notLogged={notLogged}
             loggedCount={sets.length}
@@ -688,38 +699,38 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
             onBack={() => setPanel(null)}
           />
         ) : panel === 'end' ? (
-          <EndPanel loggedCount={sets.length} timing={timing} late={late} busy={busy} error={sessionError} onEnd={end} onBack={() => setPanel(null)} />
-        ) : activePlan ? (
+          <EndPanel mode={mode} loggedCount={sets.length} timing={timing} late={late} busy={busy} error={sessionError} onEnd={end} onBack={() => setPanel(null)} />
+        ) : activeSlot && activePlan && activeModel ? (
           <ActiveCard
-            key={`${editing ? `edit:${editing.id}` : (current?.slotId === activePlan.slot.id ? current.key : `view:${activePlan.slot.id}`)}:${activePlan.prescriptions[0]?.exerciseId ?? ''}`}
-            plan={activePlan}
-            step={editing ? null : current && current.slotId === activePlan.slot.id ? current : null}
+            key={activeCardKey({ mode, editingId: editing?.id ?? null, stepKey: current?.slotId === activePlan.slot.id ? current.key : null, slotId: activePlan.slot.id, exerciseId: activeExerciseId ?? null })}
+            mode={mode}
+            slot={activePlan.slot}
+            route={activePlan.route}
+            model={activeModel}
+            step={activeStep}
             editing={editing}
             slotSets={slotSetsOf(activePlan.slot.id)}
-            ramp={activeRamp}
-            setsBySide={Object.fromEntries(activePlan.prescriptions.map((p) => [p.side, p.sets]))}
-            sides={sidesFor(activePlan)}
+            setsBySide={Object.fromEntries(sideSets(activeSlot).map((p) => [p.side, p.sets]))}
+            sides={sidesFor(activeSlot)}
             injuredSide={settings.injuredSide}
             painPerSet={settings.painPerSet}
             rackLb={location.dumbbellMaxLb}
-            historyRpe={lastRpeFor(activePlan.prescriptions[0]?.exerciseId ?? activePlan.exercise.id, history.setLogs)}
-            budget={healthySideTargets(slotSetsOf(activePlan.slot.id).filter((s) => s.side === settings.injuredSide && s.exerciseId === (activePlan.prescriptions[0]?.exerciseId ?? activePlan.exercise.id)))}
-            exercisePain={exercisePain(activePlan.slot.id, editing?.exerciseId ?? activePlan.prescriptions[0]?.exerciseId ?? activePlan.exercise.id)}
-            onExercisePain={(v) => setExercisePain(activePlan.slot.id, editing?.exerciseId ?? activePlan.prescriptions[0]?.exerciseId ?? activePlan.exercise.id, v)}
+            exercisePain={exercisePain(activePlan.slot.id, editing?.exerciseId ?? activeExerciseId ?? activePlan.exercise.id)}
+            onExercisePain={(v) => setExercisePain(activePlan.slot.id, editing?.exerciseId ?? activeExerciseId ?? activePlan.exercise.id, v)}
             swapped={chosen[activePlan.slot.id] !== undefined}
-            choices={swapChoices(exerciseById(activePlan.slot.exerciseId), activePlan.substitutions, available, ITEMS, holdsOffFor(activePlan.slot.id))}
+            choices={swapChoices(exerciseById(activePlan.slot.exerciseId), activePlan.substitutions, available, ITEMS, heldOff(activePlan.slot.id))}
             backToName={nameOf(engineBySlot.get(activePlan.slot.id) ?? activePlan.slot.exerciseId)}
-            gym={gymFor(activePlan)}
+            gym={gymFor(activeSlot)}
             held={held}
             busy={busy}
             error={sessionError}
             timer={timer}
             idleBar={idleBar}
-            onLog={(draft, stop) => current && logStep(current, activePlan, draft, stop)}
+            onLog={(draft, stop) => current && logStep(current, activeSlot, draft, stop)}
             onSave={(set, draft) => saveEdit(set, activePlan, draft)}
             onRemove={(set) => void write(() => deleteSet(set.id), () => setEditingId(null))}
             onEdit={(set) => setEditingId(set ? set.id : null)}
-            onSwap={(id) => swap(activePlan, id)}
+            onSwap={(id) => swap(activeSlot, id)}
             onPickSide={(side) => pickSide(activePlan.slot.id, side)}
           />
         ) : (
@@ -739,7 +750,7 @@ function Runner({ workout, template, sets, settings, history, today, lead, locat
       </div>
 
       <SlotList
-        plans={plans}
+        plans={plans.map((rs) => ({ slot: rs.plan.slot, runsExerciseId: runsExerciseId(rs) }))}
         steps={steps}
         done={done}
         stopped={stopped}

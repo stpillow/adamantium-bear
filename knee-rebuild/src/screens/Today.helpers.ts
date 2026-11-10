@@ -1,4 +1,10 @@
 import type { History } from '../db/repo.ts'
+import { planSession, sessionExtensions, warmUpFor, windowFit, type Gym } from '../app/session.ts'
+import { writtenFit, writtenSession } from '../app/written.ts'
+import type { EngineMode, EngineModeState } from '../rules/engineMode.ts'
+import { isExtraSlotId } from '../rules/extensions.ts'
+import { ownFlagNote } from '../rules/written.ts'
+import { planTarget } from '../rules/mileage.ts'
 import { addDays, daysBetween, isDeloadWeek, scheduledSession } from '../rules/calendar.ts'
 import { type Available, type ExerciseLookup, type RunSwapType, type SlotRoute } from '../rules/equipment.ts'
 import { gymChanges, type GymChange, type PlannedSlot } from '../rules/gymChanges.ts'
@@ -27,7 +33,8 @@ import { lateFlagNotes, stopMessage } from '../rules/redFlags.ts'
 import { exportNudge, loggedRange } from '../rules/backup.ts'
 import { koosDue } from '../rules/koos.ts'
 import { dateWords, monthDayWords, shortDateWords } from '../rules/dateWords.ts'
-import { lateFlagWords } from './MorningCheck.helpers.ts'
+import { lateFlagWords, ownFlagWords } from './MorningCheck.helpers.ts'
+import { windowWords } from './Window.helpers.ts'
 import type {
   IsoDateTime,
   KoosEntry,
@@ -39,6 +46,7 @@ import type {
   Exercise,
   IsoDate,
   Location,
+  MorningCheck,
   Phase,
   Program,
   ReadingResult,
@@ -307,6 +315,8 @@ export function runWeekWords(body: Pick<RunBody, 'weekMiles' | 'target' | 'cappe
 }
 
 export interface TodayView {
+  /** Tester mode's view carries `written: true`; this one never does. */
+  written?: undefined
   dateWords: string
   phaseNumber: number
   phaseName: string
@@ -412,8 +422,177 @@ export function extendWords(start: IsoDate, days: number): { end: IsoDate; butto
   return { end, button: `Run it to ${shortDateWords(end)} (${days} days)` }
 }
 
-/** Everything the Today screen renders, from today's date, the settings, the stored history and the program. */
-export function todayView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView {
+// ---- Tester mode (M-U3; PROGRAM-QUESTIONS 223 to 232): the program as written, nothing read ----
+
+/**
+ * The line under the date, and in Settings, Account, on a phone in tester mode: why nothing here is
+ * worked out from the logs. Null in full mode.
+ */
+export function modeLine(state: EngineModeState): string | null {
+  switch (state.reason) {
+    case 'tester':
+      return 'Tester account: this app shows the program as written and works out nothing from your logs.'
+    case 'signed-out':
+      return 'Signed out: this app shows the program as written and works out nothing from your logs. Sign in from Settings, Account.'
+    case 'unconfirmed':
+      return 'This phone hasn’t reached the app’s server yet, so it shows the program as written and works out nothing from your logs. Open the app once with a connection.'
+    default:
+      return null
+  }
+}
+
+export interface LoggedLine {
+  label: string
+  /** "Session A: logged.", "Run: easy: logged." */
+  words: string
+}
+
+/** Yesterday's finished or ended lifts and runs, logged, with no reading (tester mode). Empty when there was none. */
+export function yesterdayLogged(today: IsoDate, history: Pick<HistoryLike, 'workouts' | 'runs'>, templates: readonly SessionTemplate[]): LoggedLine[] {
+  const yesterday = addDays(today, -1)
+  const lifts = history.workouts.filter((w) => w.date === yesterday && (w.status === 'finished' || w.status === 'abandoned')).map((w) => workoutLabel(w, templates))
+  const runs = history.runs.filter((r) => r.date === yesterday).map((r) => runLabel(r.type))
+  return [...lifts, ...runs].map((label) => ({ label, words: `${label}: logged.` }))
+}
+
+/** This morning's ticked flags as the tester's own note, in words; empty with none ticked (tester mode). */
+export function ownFlagLines(today: IsoDate, checks: readonly Pick<MorningCheck, 'date' | 'redFlags'>[], catalog: ProgramLike['redFlags']): string[] {
+  const check = checks.find((c) => c.date === today)
+  const note = check ? ownFlagNote(check, catalog) : null
+  return note ? [ownFlagWords(note, today)] : []
+}
+
+export type TesterTodayBody =
+  | { kind: 'before-start'; line: string }
+  | {
+      kind: 'lift'
+      letter: SessionLetter
+      label: string
+      week: number
+      phaseWeek: number
+      isDeload: boolean
+      template: SessionTemplate | null
+      workout: Workout | null
+      earlierPhase: number | null
+    }
+  | {
+      kind: 'run'
+      label: string
+      /** program.md's own row note for the day, verbatim. */
+      note: string | null
+      weekMiles: number
+      /** The plan's number for the week, never capped; null outside the plan. */
+      target: number | null
+      capped: false
+      targetReason: string
+      loggedToday: Run[]
+    }
+  | { kind: 'off'; label: string }
+
+/** Today in tester mode: what the day holds as written, and what was logged; no stop, no reading, no suggestion, no down period. */
+export interface TesterTodayView {
+  written: true
+  dateWords: string
+  phaseNumber: number
+  phaseName: string
+  phaseHasSessions: boolean
+  week: number | null
+  deload: boolean
+  body: TesterTodayBody
+  yesterday: LoggedLine[]
+  open: OpenWorkout[]
+  /** A flag ticked on this morning's check, as the tester's own note. */
+  ownFlags: string[]
+}
+
+function testerTodayView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TesterTodayView {
+  const { today, settings, history, program } = input
+  const scheduled = scheduledSession(today, settings.startDate, program.weeklyTemplate, history.sessionMoves)
+  const week = scheduled.session === null ? null : scheduled.week
+  const letter = scheduled.session === null ? null : sessionLetter(scheduled.session)
+  const workout = letter ? todaysLift(history.workouts, today, letter, program.templates) : null
+  const own = workout ? (program.templates.find((t) => t.id === workout.templateId) ?? null) : null
+  const earlierPhase = own && own.phase !== settings.currentPhase ? own.phase : null
+  const template = own ?? (letter ? (program.templates.find((t) => t.phase === settings.currentPhase && t.letter === letter) ?? null) : null)
+  const base = {
+    written: true as const,
+    dateWords: dateWords(today),
+    phaseNumber: settings.currentPhase,
+    phaseName: phaseName(program.phases, settings.currentPhase),
+    phaseHasSessions: program.templates.some((t) => t.phase === settings.currentPhase),
+    week,
+    deload: week !== null && isDeloadWeek(week),
+    yesterday: yesterdayLogged(today, history, program.templates),
+    open: openWorkouts(history.workouts, program.templates, workout?.status === 'in-progress' ? workout.id : null),
+    ownFlags: ownFlagLines(today, history.morningChecks, program.redFlags),
+  }
+  if (scheduled.session === null || week === null) return { ...base, body: { kind: 'before-start', line: `Week 1 starts ${shortDateWords(settings.startDate)}` } }
+  const session = scheduled.session
+  if (letter) {
+    // The calendar's phase week: no down period holds a written band (PROGRAM-QUESTIONS 231).
+    const phaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+    return { ...base, body: { kind: 'lift', letter, label: sessionLabel(session), week, phaseWeek, isDeload: isDeloadWeek(week), template, workout, earlierPhase } }
+  }
+  if (session === 'off') return { ...base, body: { kind: 'off', label: sessionLabel(session, program.weeklyTemplateRows) } }
+  const todays = history.runs.filter((r) => r.date === today)
+  const before = runsInWeek(history.runs, settings.startDate, week).filter((r) => r.date < today)
+  const target = planTarget(program.mileagePlan, week)
+  return {
+    ...base,
+    body: {
+      kind: 'run',
+      label: sessionLabel(session),
+      note: sessionNote(session, program.weeklyTemplateRows),
+      weekMiles: weekMiles([...before, ...todays]),
+      target,
+      capped: false,
+      targetReason: target === null ? `week ${week} is outside the 12-week plan` : 'from the plan',
+      loggedToday: todays,
+    },
+  }
+}
+
+/** What the lift block shows before Start: the gym's changes and the time window, in words. */
+export interface LiftPlanView {
+  movesHeading: string
+  moves: string[]
+  window: string[]
+}
+
+/**
+ * Today's lift block before Start (MovesBlock and FitBlock): in full mode the plan the runner runs
+ * there (`planSession`, with the extra-time pool for the window); in tester mode the session as
+ * written (`writtenSession`): routes only, no rack moves, the window over the written sets, nothing added.
+ */
+export function liftPlanView(
+  mode: EngineMode,
+  input: { template: SessionTemplate; week: number; settings: Settings; history: History; gym: Location; before: IsoDate; minutes: number | null; label: string; byId: ExerciseLookup; items: readonly ItemLike[] },
+): LiftPlanView {
+  const { template, week, settings, history, before, minutes } = input
+  const gym: Gym = { location: input.gym, kit: settings.kit }
+  const warm = warmUpFor(template.phase, gym)
+  if (mode === 'tester') {
+    const plans = writtenSession({ template, week, settings, history, gym })
+    const moves = liftChanges({ plans: plans.map((p) => ({ slot: p.slot, exercise: p.exercise, route: p.route, prescriptions: [] })), byId: input.byId, items: input.items, rackLb: input.gym.dumbbellMaxLb })
+    const fit = writtenFit(plans, settings.restTimerSeconds, minutes, { warmUpMinutes: warm.total })
+    const nameOf = (slotId: string) => plans.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId
+    return { movesHeading: movesHeading(input.gym.name, input.label, moves.length), moves, window: windowWords(fit, minutes, plans.length, nameOf, warm) }
+  }
+  const plans = planSession({ template, week, settings, history, gym, before })
+  const moves = liftChanges({ plans, byId: input.byId, items: input.items, rackLb: input.gym.dumbbellMaxLb })
+  const extend = sessionExtensions(template, history, settings, week, before)
+  const withExtra = planSession({ template, week, settings, history, gym, before, extend })
+  // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym off the top, and the warm-up sets the runner will show counted.
+  const fit = windowFit(withExtra, settings.restTimerSeconds, minutes, { warmUpMinutes: warm.total, ramps: true })
+  const nameOf = (slotId: string) => withExtra.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId
+  return { movesHeading: movesHeading(input.gym.name, input.label, moves.length), moves, window: windowWords(fit, minutes, withExtra.filter((p) => !isExtraSlotId(p.slot.id)).length, nameOf, warm) }
+}
+
+/** Everything the Today screen renders, from today's date, the settings, the stored history and the program. In tester mode, the written view: no engine call at all. */
+export function todayView(input: { mode: 'full'; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView
+export function todayView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView | TesterTodayView
+export function todayView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView | TesterTodayView {
+  if (input.mode === 'tester') return testerTodayView(input)
   const { today, settings, history, program } = input
   const scheduled = scheduledSession(today, settings.startDate, program.weeklyTemplate, history.sessionMoves)
   const week = scheduled.session === null ? null : scheduled.week

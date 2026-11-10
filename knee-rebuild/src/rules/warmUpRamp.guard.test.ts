@@ -13,7 +13,13 @@ import { describe, expect, it } from 'vitest'
 const sources = import.meta.glob<string>('/src/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 const rules = import.meta.glob<string>('./*.ts', { query: '?raw', import: 'default', eager: true })
 
-const IMPORTERS: readonly string[] = ['/src/rules/warmUpRamp.test.ts', '/src/app/session.ts', '/src/app/session.ramp.test.ts']
+const IMPORTERS: readonly string[] = [
+  '/src/rules/warmUpRamp.test.ts',
+  '/src/app/session.ts',
+  '/src/app/session.ramp.test.ts',
+  // The tester-mode guard (M-U3) spies on its exports only to prove tester mode never computes a ramp.
+  '/src/rules/engineMode.guard.test.ts',
+]
 /** Rule modules that may mention a ramp: the module itself, and the time window that counts its reps. */
 const RAMP_RULES: readonly string[] = ['./warmUpRamp.ts', './fitWindow.ts']
 

@@ -1,4 +1,5 @@
 import { PROGRAM } from '../app/session.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import type { Block } from '../rules/markdown.ts'
 import { plainText } from '../rules/markdown.ts'
 import { addableSubstitutions, cleanCue, cueLength, editedParts, overridesBySlot, slotEdit, substitutionProblem, type Edited, type SlotEdit } from '../rules/overrides.ts'
@@ -82,7 +83,13 @@ export function groupWords(slot: Slot, slots: readonly Slot[]): string | null {
  * phase (`slotsForPhaseWeek`, from the week Today plans, a down period's held band included), every
  * slot with its edits laid over it.
  */
-export function phaseScreen(settings: Settings, today: IsoDate, overrides: readonly ProgramOverride[], downPeriods: readonly DownPeriod[]): PhaseScreen {
+/** What the Program screen lets a mode do (M-U3, PROGRAM-QUESTIONS 232): a tester reads the program; only full mode edits a slot or adds an exercise. */
+export function programControls(mode: EngineMode): { canEdit: boolean } {
+  return { canEdit: mode === 'full' }
+}
+
+export function phaseScreen(settings: Settings, today: IsoDate, overrides: readonly ProgramOverride[], downPeriods: readonly DownPeriod[], mode: EngineMode = 'full'): PhaseScreen {
+
   const phase = PROGRAM.phases.find((p) => p.number === settings.currentPhase)
   const name = phase ? `Phase ${phase.number}, ${phase.name}` : `Phase ${settings.currentPhase}`
   const templates = currentTemplates(settings)
@@ -94,10 +101,11 @@ export function phaseScreen(settings: Settings, today: IsoDate, overrides: reado
     }
   }
   // Held where a down period holds the bands, so this week's sessions are the ones Today plans (PROGRAM-QUESTIONS 188).
-  const phaseWeek = coverageWeek(settings, today, downPeriods)
+  // Tester mode (M-U3): the calendar's phase week, with no down period holding a band, and nothing to edit.
+  const phaseWeek = coverageWeek(settings, today, downPeriods, mode)
   const bySlot = overridesBySlot(overrides)
   return {
-    lead: `${name}: week ${phaseWeek} of the phase. Read-only until you tap Edit on a slot.`,
+    lead: mode === 'tester' ? `${name}: week ${phaseWeek} of the phase, as written. A tester account can’t edit it.` : `${name}: week ${phaseWeek} of the phase. Read-only until you tap Edit on a slot.`,
     notWritten: null,
     sessions: templates.map((template) => {
       const slots = slotsForPhaseWeek(template, phaseWeek)

@@ -1,4 +1,4 @@
-import type { SlotPlan } from '../../app/session.ts'
+import type { Slot } from '../../schema/index.ts'
 import { exerciseById } from '../../program/program.ts'
 import type { Step } from '../../rules/runOrder.ts'
 import { cuesWrittenFor } from '../SessionRunner.helpers.ts'
@@ -8,9 +8,15 @@ export interface SlotStatus {
   mark: string
 }
 
+/** A slot as the list names it, in either mode: the slot as planned and the exercise it runs now. */
+export interface ListedSlot {
+  slot: Slot
+  runsExerciseId: string
+}
+
 /** A slot's status in words with a mark: what's done, what's current, what's optional, what nothing here runs (`notHere`). */
 export function slotStatus(
-  plan: SlotPlan,
+  plan: Pick<ListedSlot, 'slot'>,
   steps: readonly Step[],
   done: ReadonlySet<string>,
   stopped: ReadonlySet<string>,
@@ -38,7 +44,7 @@ export function SlotList({
   notHere,
   onPick,
 }: {
-  plans: readonly SlotPlan[]
+  plans: readonly ListedSlot[]
   steps: readonly Step[]
   done: ReadonlySet<string>
   stopped: ReadonlySet<string>
@@ -64,7 +70,7 @@ export function SlotList({
           const header = groupId && !seenGroups.has(groupId) ? groupLabels.get(groupId) : undefined
           if (groupId) seenGroups.add(groupId)
           // The row names what the card runs: the plan's exercise, or where the rack or a back-off moved it on.
-          const runs = exerciseById(plan.prescriptions[0]?.exerciseId ?? plan.exercise.id)
+          const runs = exerciseById(plan.runsExerciseId)
           const firstCue = plan.slot.cues[0]
           // Another exercise runs (moved, swapped, backed off): the cue is program.md's for the slot's own, and says so.
           const writtenFor = cuesWrittenFor(plan.slot.exerciseId, runs.id, (id) => exerciseById(id).name)

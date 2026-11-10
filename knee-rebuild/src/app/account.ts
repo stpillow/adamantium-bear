@@ -1,11 +1,13 @@
 import { stravaDisconnect } from './strava.ts'
 
 /*
- * The PWA's side of accounts (M-U2; PROGRAM-QUESTIONS 220): three calls to its own /api/auth function
- * (never to anyone else, so the CSP's connect-src 'self' holds): the account check when Settings opens
- * online, and Redeem and Sign out on a tap. The last answer is kept in this phone's local storage for
- * display only; nothing else reads it, and nothing about using the app offline waits on it. Fetch,
- * storage and the online flag are passed in, so the tests run without a browser.
+ * The PWA's side of accounts (M-U2; PROGRAM-QUESTIONS 220, 225): three calls to its own /api/auth
+ * function (never to anyone else, so the CSP's connect-src 'self' holds): the account check at launch,
+ * on reconnect and when Settings opens, online only, and Redeem and Sign out on a tap. The last answer
+ * is kept in this phone's local storage. Since M-U3 it also sets the engine mode
+ * (src/rules/engineMode.ts, read through src/app/mode.ts): a change notifies the listeners
+ * (`subscribeAccount`), and the next render runs in the mode it decides. Nothing about using the app
+ * offline waits on it. Fetch, storage and the online flag are passed in, so the tests run without a browser.
  */
 
 const BASE = '/api/auth'
@@ -55,21 +57,64 @@ export function readAnswer(body: unknown): AccountAnswer | null {
   return answer
 }
 
-function cached(io: AccountIo): AccountAnswer | null {
+/** The kept answer as stored, or null (none, or storage that can't be read); never throws. The engine mode's snapshot: a string compares by value. */
+export function keptRaw(io: Pick<AccountIo, 'storage'> = defaultIo): string | null {
   try {
-    const raw = io.storage()?.getItem(CACHE_KEY)
-    return raw ? readAnswer(JSON.parse(raw)) : null
+    return io.storage()?.getItem(CACHE_KEY) ?? null
   } catch {
     return null
   }
 }
 
+/** The kept answer, read defensively, or null. */
+export function keptAccount(io: Pick<AccountIo, 'storage'> = defaultIo): AccountAnswer | null {
+  return parseKept(keptRaw(io))
+}
+
+/** A stored answer read back: only the fields and values the function sends, else null. */
+export function parseKept(raw: string | null): AccountAnswer | null {
+  if (raw === null || raw === '') return null
+  try {
+    return readAnswer(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+function cached(io: AccountIo): AccountAnswer | null {
+  return keptAccount(io)
+}
+
+const listeners = new Set<() => void>()
+
+/** Called after each change to the kept answer, in this context; returns the unsubscribe. */
+export function subscribeAccount(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+/**
+ * Whether an answer may replace the kept one. A `configured:false` never replaces a kept
+ * `configured:true` (M-U3 review A): a deployment that lost its accounts variables, or a preview
+ * without them, must not hand the engine to a tester's phone. The recovery is to clear the site's data.
+ */
+export function replacesKept(kept: AccountAnswer | null, answer: AccountAnswer): boolean {
+  return !(kept?.configured === true && !answer.configured)
+}
+
 function remember(io: AccountIo, answer: AccountAnswer): void {
   try {
-    io.storage()?.setItem(CACHE_KEY, JSON.stringify(answer))
+    if (!replacesKept(cached(io), answer)) return
+    const storage = io.storage()
+    if (!storage) return
+    storage.setItem(CACHE_KEY, JSON.stringify(answer))
   } catch {
     // Private browsing or storage full: the next check asks the server again.
+    return
   }
+  for (const listener of listeners) listener()
 }
 
 /** The body as JSON when the function answered (no function, in a static preview, answers HTML). */

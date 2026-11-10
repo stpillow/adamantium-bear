@@ -278,7 +278,7 @@ describe('openWorkouts', () => {
 })
 
 describe('todayView', () => {
-  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ today, settings: settings(s), history: history(h), program: PROGRAM })
+  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ mode: 'full', today, settings: settings(s), history: history(h), program: PROGRAM })
 
   it('before the start date: the start line, no week, Start disabled by the screen', () => {
     const v = view('2026-11-01')
@@ -387,7 +387,7 @@ describe('todayView', () => {
 })
 
 describe('run days', () => {
-  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ today, settings: settings(s), history: history(h), program: PROGRAM })
+  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ mode: 'full', today, settings: settings(s), history: history(h), program: PROGRAM })
   const run = (date: string, miles: number, type: Run['type'] = 'mbr'): Run => ({ id: `r-${date}`, date, type, miles, minutes: 30, effort: 'easy', maxPain: 1, strides: false, tempo: false })
   it('suggests the run’s share of the week, under the ceiling', () => {
     const v = view('2026-11-06', {}, { runs: [run('2026-11-02', 3), run('2026-11-04', 3, 'easy')] })
@@ -663,11 +663,11 @@ describe('a Hold run day at a gym', () => {
   })
   it('todayView carries the morning’s reading on a run day, and the phase week on a lift day', () => {
     const hold = check('2026-11-04', { worseThanYesterday: true })
-    const runDay = todayView({ today: '2026-11-04', settings: settings(), history: history({ morningChecks: [hold] }), program: PROGRAM })
+    const runDay = todayView({ mode: 'full', today: '2026-11-04', settings: settings(), history: history({ morningChecks: [hold] }), program: PROGRAM })
     expect(runDay.body).toMatchObject({ kind: 'run', morning: 'hold' })
-    const noCheck = todayView({ today: '2026-11-02', settings: settings(), history: history(), program: PROGRAM })
+    const noCheck = todayView({ mode: 'full', today: '2026-11-02', settings: settings(), history: history(), program: PROGRAM })
     expect(noCheck.body).toMatchObject({ kind: 'run', morning: null })
-    const lift = todayView({ today: '2026-11-24', settings: settings({ currentPhase: 2, phaseEnteredWeek: 4 }), history: history(), program: PROGRAM })
+    const lift = todayView({ mode: 'full', today: '2026-11-24', settings: settings({ currentPhase: 2, phaseEnteredWeek: 4 }), history: history(), program: PROGRAM })
     expect(lift.body).toMatchObject({ kind: 'lift', week: 4, phaseWeek: 1 })
   })
 })
@@ -711,27 +711,27 @@ describe('the KOOS due line (Batch A): one quiet word when a check is 28+ days o
 describe('a red flag on a check logged late is a note on Today, never the stop (Batch D, PROGRAM-QUESTIONS 175)', () => {
   const late = check('2026-11-18', { redFlags: [PROGRAM.redFlags[0]?.id ?? 'locking'], loggedOn: '2026-11-20' })
   it('shows under the body, which stays the day’s session, for 14 days from the morning', () => {
-    const v = todayView({ today: '2026-11-20', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM })
+    const v = todayView({ mode: 'full', today: '2026-11-20', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM })
     expect(v.body.kind).not.toBe('stop')
     expect(v.lateFlags).toHaveLength(1)
     expect(v.lateFlags[0]).toMatch(/^A red flag was ticked on the check for Wednesday Nov 18’s morning, logged late on Friday Nov 20: .+\. Any of these means a call to the ortho or PT\./)
-    expect(todayView({ today: '2026-12-02', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toHaveLength(1)
-    expect(todayView({ today: '2026-12-03', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toEqual([])
+    expect(todayView({ mode: 'full', today: '2026-12-02', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toHaveLength(1)
+    expect(todayView({ mode: 'full', today: '2026-12-03', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toEqual([])
   })
   it('rides beside the stop when today’s check took over too', () => {
-    const v = todayView({ today: '2026-11-20', settings: settings({ redFlag: { active: true, since: '2026-11-20', items: ['locking'] } }), history: history({ morningChecks: [late] }), program: PROGRAM })
+    const v = todayView({ mode: 'full', today: '2026-11-20', settings: settings({ redFlag: { active: true, since: '2026-11-20', items: ['locking'] } }), history: history({ morningChecks: [late] }), program: PROGRAM })
     expect(v.body.kind).toBe('stop')
     expect(v.lateFlags).toHaveLength(1)
   })
   it('a flag on an on-time check is not a late note', () => {
-    expect(todayView({ today: '2026-11-20', settings: settings(), history: history({ morningChecks: [check('2026-11-18', { redFlags: ['locking'] })] }), program: PROGRAM }).lateFlags).toEqual([])
+    expect(todayView({ mode: 'full', today: '2026-11-20', settings: settings(), history: history({ morningChecks: [check('2026-11-18', { redFlags: ['locking'] })] }), program: PROGRAM }).lateFlags).toEqual([])
   })
 })
 
 describe('the down period on Today (Batch E, PROGRAM-QUESTIONS 185)', () => {
   const AT = '2026-11-14T13:00:00.000Z'
   const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: AT, note: 'Flu' }
-  const view = (today: string, h: Partial<HistoryLike> = {}, s: Partial<Settings> = {}) => todayView({ today, settings: settings(s), history: history(h), program: PROGRAM })
+  const view = (today: string, h: Partial<HistoryLike> = {}, s: Partial<Settings> = {}) => todayView({ mode: 'full', today, settings: settings(s), history: history(h), program: PROGRAM })
 
   it('offers one with no period: 3 to 14 days, 7 by default, and says what it does', () => {
     expect(downPeriodView('2026-11-14', [])).toEqual({ kind: 'offer', minDays: 3, maxDays: 14, defaultDays: 7 })

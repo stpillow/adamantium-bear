@@ -22,6 +22,24 @@ export function afterMorningCheck(state: RedFlagState, check: MorningCheck): Red
   return { active: true, since: state.active && state.since ? state.since : check.date, items }
 }
 
+/**
+ * Rule 9 over today's checks, for a state that may not have seen them: a check saved while the phone
+ * ran tester mode writes no state (M-U3), so when the same phone runs full, today's flagged check is
+ * folded in here (afterMorningCheck each). A state cleared today, with its note, stays cleared: the
+ * clear is the later act (PROGRAM-QUESTIONS 236). The same object when nothing changes, so a caller
+ * writes only on a change. Late checks and other days' checks never count.
+ */
+export function foldTodaysChecks(state: RedFlagState, checks: readonly MorningCheck[], today: IsoDate): RedFlagState {
+  if (!state.active && state.clearedOn === today) return state
+  let next = state
+  for (const check of checks) {
+    if (check.date !== today || isLateCheck(check) || check.redFlags.length === 0) continue
+    if (next.active && check.redFlags.every((id) => next.items.includes(id))) continue
+    next = afterMorningCheck(next, check)
+  }
+  return next
+}
+
 /** Clearing takes a note; an empty note is refused. */
 export function clearRedFlag(state: RedFlagState, note: string, date: IsoDate): RedFlagState {
   if (note.trim().length === 0) throw new Error('clearing the red-flag state needs a note')

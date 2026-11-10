@@ -41,11 +41,18 @@ describe('configuration', () => {
 
 describe('the sealed cookie', () => {
   it('round-trips, and reads as nothing when tampered with or sealed under another key', async () => {
-    const sealed = await seal(tokens(), ENV.STRAVA_COOKIE_KEY)
-    expect(sealed).not.toContain('r1')
-    expect(await unseal(sealed, ENV.STRAVA_COOKIE_KEY)).toEqual(tokens())
+    // Long, distinctive plaintext: a two-character token like 'r1' can turn up in the sealed text by chance.
+    const plain = tokens({ access_token: 'access-token-plaintext-marker', refresh_token: 'refresh-token-plaintext-marker' })
+    const sealed = await seal(plain, ENV.STRAVA_COOKIE_KEY)
+    expect(sealed).not.toContain('access-token-plaintext-marker')
+    expect(sealed).not.toContain('refresh-token-plaintext-marker')
+    expect(await unseal(sealed, ENV.STRAVA_COOKIE_KEY)).toEqual(plain)
     expect(await unseal(sealed, 'x'.repeat(40))).toBeNull()
-    expect(await unseal(`${sealed.slice(0, -2)}AA`, ENV.STRAVA_COOKIE_KEY)).toBeNull()
+    // Change one character in the middle: always a real change (the last characters can carry unused bits, or already be 'AA').
+    const at = Math.floor(sealed.length / 2)
+    const tampered = `${sealed.slice(0, at)}${sealed[at] === 'A' ? 'B' : 'A'}${sealed.slice(at + 1)}`
+    expect(tampered).not.toBe(sealed)
+    expect(await unseal(tampered, ENV.STRAVA_COOKIE_KEY)).toBeNull()
     expect(await unseal('garbage', ENV.STRAVA_COOKIE_KEY)).toBeNull()
     expect(await unseal(undefined, ENV.STRAVA_COOKIE_KEY)).toBeNull()
   })
@@ -110,14 +117,16 @@ describe('the flow', () => {
   })
 
   it('callback trades the code for tokens and keeps them sealed in the cookie', async () => {
-    const { fetcher } = fakeStrava({ 'https://www.strava.com/oauth/token': tokenResponse(tokens()) })
+    const plain = tokens({ access_token: 'access-token-plaintext-marker', refresh_token: 'refresh-token-plaintext-marker' })
+    const { fetcher } = fakeStrava({ 'https://www.strava.com/oauth/token': tokenResponse(plain) })
     const res = await handle(req('/api/strava?action=callback&state=s1&code=c&scope=read,activity:read_all', { cookies: 'kr_strava_state=s1' }), ENV, () => NOW, fetcher)
     expect(res.headers.get('location')).toBe('/#/strava?result=connected')
     const set = res.headers.getSetCookie().find((c) => c.startsWith('kr_strava='))
     expect(set).toBeDefined()
-    expect(set).not.toContain('r1')
+    expect(set).not.toContain('access-token-plaintext-marker')
+    expect(set).not.toContain('refresh-token-plaintext-marker')
     const value = set!.split(';')[0]!.slice('kr_strava='.length)
-    expect(await unseal(value, ENV.STRAVA_COOKIE_KEY)).toEqual(tokens())
+    expect(await unseal(value, ENV.STRAVA_COOKIE_KEY)).toEqual(plain)
   })
 
   it('activities needs the cookie, a whole-number after, and returns trimmed pages', async () => {

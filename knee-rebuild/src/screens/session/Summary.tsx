@@ -3,45 +3,14 @@ import { navigate } from '../../app/router.ts'
 import { Button } from '../../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../../components/ReadingWord.tsx'
 import { updateWorkout } from '../../db/repo.ts'
-import { exerciseById } from '../../program/program.ts'
 import { sessionCompliance } from '../../rules/compliance.ts'
-import { sessionReading } from '../../rules/reading.ts'
+import type { EngineMode } from '../../rules/engineMode.ts'
 import { isLateEntry } from '../../rules/retro.ts'
 import type { SessionTemplate, SetLog, Side, Workout } from '../../schema/index.ts'
-import { durationWords, loadWords, showsLoad, sideWords, stopReasonLabel, type SummaryCheckAction } from '../SessionRunner.helpers.ts'
+import { durationWords, type SummaryCheckAction } from '../SessionRunner.helpers.ts'
 import { MinutesField, SessionRpeField } from './EndPanels.tsx'
 import { minutesNote, minutesOpening, needsEffortOrMinutes, sessionEffortLine, type SessionTiming } from './EndPanels.helpers.ts'
-import { complianceLine, complianceNote } from './Summary.helpers.ts'
-
-interface ExerciseBlock {
-  exerciseId: string
-  label: string
-  sets: SetLog[]
-}
-
-/** The logged exercises in slot order, one block per exercise (a mid-session swap gives two). */
-export function exerciseBlocks(template: SessionTemplate, sets: readonly SetLog[]): ExerciseBlock[] {
-  const blocks: ExerciseBlock[] = []
-  for (const slot of template.slots) {
-    const slotSets = sets.filter((s) => s.slotId === slot.id)
-    for (const id of Array.from(new Set(slotSets.map((s) => s.exerciseId)))) {
-      blocks.push({ exerciseId: id, label: slot.label, sets: slotSets.filter((s) => s.exerciseId === id) })
-    }
-  }
-  return blocks
-}
-
-function sideLines(block: ExerciseBlock, injuredSide: Side): string[] {
-  const exercise = exerciseById(block.exerciseId)
-  const sides = Array.from(new Set(block.sets.map((s) => s.side))).sort((a, b) => (a === injuredSide || a === 'both' ? -1 : b === injuredSide ? 1 : 0))
-  return sides.map((side) => {
-    const sideSets = block.sets.filter((s) => s.side === side).sort((a, b) => a.setNumber - b.setNumber)
-    const counts = sideSets.map((s) => s.seconds ?? s.reps ?? 0).join(', ')
-    const load = showsLoad(exercise) ? `${loadWords(sideSets.at(-1)?.load ?? 0, exercise)} × ` : ''
-    const label = sideWords(side, injuredSide)
-    return `${label ? `${label}: ` : ''}${load}${counts}`
-  })
-}
+import { complianceLine, complianceNote, summaryBlocks } from './Summary.helpers.ts'
 
 /**
  * Add effort and minutes (metrics phase 1): for a finished or ended session missing its RPE or its
@@ -95,6 +64,7 @@ function AddEffort({ workout, timing, onDone }: { workout: Workout; timing: Sess
  * `phaseWeek` is the week of its phase the session fell in, or null when it can't be said.
  */
 export function Summary({
+  mode,
   workout,
   template,
   sets,
@@ -103,6 +73,7 @@ export function Summary({
   phaseWeek,
   checkLine,
 }: {
+  mode: EngineMode
   workout: Workout
   template: SessionTemplate
   sets: readonly SetLog[]
@@ -113,9 +84,10 @@ export function Summary({
   checkLine: { text: string; action: SummaryCheckAction }
 }) {
   const [adding, setAdding] = useState(false)
-  const blocks = exerciseBlocks(template, sets)
+  // Each exercise's logged sets, and in full mode its session reading (`summaryBlocks`); tester mode reads nothing (M-U3).
+  const blocks = summaryBlocks(mode, template, sets, injuredSide)
   const compliance = sessionCompliance({ slots: template.slots, workout, sets, phaseWeek })
-  const counted = complianceLine(compliance)
+  const counted = complianceLine(compliance, mode)
   const countNote = complianceNote(compliance)
   const duration = durationWords(workout.startedAt, workout.finishedAt)
   const lead =
@@ -141,26 +113,25 @@ export function Summary({
       ) : null}
       {blocks.length === 0 ? <p className="text-body text-on-dark-dim">Nothing was logged.</p> : null}
       <ul className="flex flex-col gap-4">
-        {blocks.map((block) => {
-          const exercise = exerciseById(block.exerciseId)
-          const reading = sessionReading(block.sets, injuredSide)
-          const stop = block.sets.find((s) => s.stopped)
-          return (
-            <li key={`${block.label}-${block.exerciseId}`} className="flex flex-col gap-1 border-b border-on-dark-faint pb-4">
-              <p className="text-body text-on-dark">
-                <span className="font-mono text-small text-on-dark-muted">{block.label}</span> {exercise.name}
+        {blocks.map((block) => (
+          <li key={block.key} className="flex flex-col gap-1 border-b border-on-dark-faint pb-4">
+            <p className="text-body text-on-dark">
+              <span className="font-mono text-small text-on-dark-muted">{block.label}</span> {block.name}
+            </p>
+            {block.lines.map((line) => (
+              <p key={line} className="text-small text-on-dark-dim">
+                {line}
               </p>
-              {sideLines(block, injuredSide).map((line) => (
-                <p key={line} className="text-small text-on-dark-dim">
-                  {line}
-                </p>
-              ))}
-              {stop ? <p className="text-small text-on-dark">Stopped: {stopReasonLabel(stop.stopReason).toLowerCase()}.</p> : null}
-              <ReadingWord result={reading.result} />
-              <p className="text-small text-on-dark-dim">Because: {reading.reasons.join('; ') || readingSentence(reading.result)}.</p>
-            </li>
-          )
-        })}
+            ))}
+            {block.stopped ? <p className="text-small text-on-dark">{block.stopped}</p> : null}
+            {block.reading ? (
+              <>
+                <ReadingWord result={block.reading.result} />
+                <p className="text-small text-on-dark-dim">Because: {block.reading.because ?? readingSentence(block.reading.result)}.</p>
+              </>
+            ) : null}
+          </li>
+        ))}
       </ul>
       <p className="text-body text-on-dark-dim">{checkLine.text}</p>
       {checkLine.action ? (

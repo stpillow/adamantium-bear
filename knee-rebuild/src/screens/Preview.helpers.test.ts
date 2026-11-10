@@ -13,7 +13,7 @@ const nameOf = (id: string) => exerciseById(id).name
 
 describe('previewView', () => {
   it('a lift day ahead: the current phase’s template, its week, and why the numbers can still change', () => {
-    const v = previewView({ date: '2026-11-05', today: '2026-11-03', settings, history: empty, program: PROGRAM })
+    const v = previewView({ mode: 'full', date: '2026-11-05', today: '2026-11-03', settings, history: empty, program: PROGRAM })
     expect(v).toMatchObject({ dateWords: 'Thursday, November 5', relation: 'In 2 days', week: 1, deload: false, prev: '2026-11-04', next: '2026-11-06' })
     expect(v.phaseLine).toMatch(/^Phase 1 · /)
     expect(v.body).toMatchObject({ kind: 'lift', label: 'Session B', letter: 'B', week: 1, logged: null, missingWords: null })
@@ -22,24 +22,24 @@ describe('previewView', () => {
   })
   it('follows a session moved onto another day', () => {
     const history = { workouts: [], sessionMoves: [{ id: 'move-000001', week: 1, dayA: 'tue' as const, dayB: 'wed' as const }] }
-    expect(previewView({ date: '2026-11-04', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'lift', letter: 'A' })
-    expect(previewView({ date: '2026-11-03', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
+    expect(previewView({ mode: 'full', date: '2026-11-04', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'lift', letter: 'A' })
+    expect(previewView({ mode: 'full', date: '2026-11-03', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
   })
   it('a day with the session logged points at it; a deload week says so', () => {
     const done: Workout = { id: '2026-11-03-p1-a', date: '2026-11-03', templateId: 'p1-a', phase: 1, week: 1, isDeload: false, status: 'finished' }
-    expect(previewView({ date: '2026-11-03', today: '2026-11-05', settings, history: { workouts: [done], sessionMoves: [] }, program: PROGRAM }).body).toMatchObject({ kind: 'lift', logged: { workoutId: '2026-11-03-p1-a', status: 'finished' } })
-    expect(previewView({ date: '2026-11-24', today: '2026-11-03', settings, history: empty, program: PROGRAM })).toMatchObject({ week: 4, deload: true })
+    expect(previewView({ mode: 'full', date: '2026-11-03', today: '2026-11-05', settings, history: { workouts: [done], sessionMoves: [] }, program: PROGRAM }).body).toMatchObject({ kind: 'lift', logged: { workoutId: '2026-11-03-p1-a', status: 'finished' } })
+    expect(previewView({ mode: 'full', date: '2026-11-24', today: '2026-11-03', settings, history: empty, program: PROGRAM })).toMatchObject({ week: 4, deload: true })
   })
   it('run and off days, and the days before week 1', () => {
-    expect(previewView({ date: '2026-11-02', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
-    expect(previewView({ date: '2026-11-08', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'off' })
-    const before = previewView({ date: '2026-10-30', today: '2026-10-30', settings, history: empty, program: PROGRAM })
+    expect(previewView({ mode: 'full', date: '2026-11-02', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
+    expect(previewView({ mode: 'full', date: '2026-11-08', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'off' })
+    const before = previewView({ mode: 'full', date: '2026-10-30', today: '2026-10-30', settings, history: empty, program: PROGRAM })
     expect(before).toMatchObject({ prev: null, next: '2026-11-02', body: { kind: 'before-start', line: 'Week 1 starts Monday Nov 2.' } })
   })
   it('steps from the first day to the last Sunday of week 12, or the week after this one past it', () => {
     expect(previewRange('2026-11-03', '2026-11-02')).toEqual({ first: '2026-11-02', last: '2027-01-24' })
-    expect(previewView({ date: '2026-11-02', today: '2026-11-03', settings, history: empty, program: PROGRAM }).prev).toBeNull()
-    expect(previewView({ date: '2027-01-24', today: '2026-11-03', settings, history: empty, program: PROGRAM }).next).toBeNull()
+    expect(previewView({ mode: 'full', date: '2026-11-02', today: '2026-11-03', settings, history: empty, program: PROGRAM }).prev).toBeNull()
+    expect(previewView({ mode: 'full', date: '2027-01-24', today: '2026-11-03', settings, history: empty, program: PROGRAM }).next).toBeNull()
     expect(previewRange('2027-01-27', '2026-11-02').last).toBe('2027-02-07')
   })
 })
@@ -114,7 +114,7 @@ describe('a down period on the Preview (Batch E)', () => {
     expect(previewDownPeriodWords('2026-11-17', [P1])).toBe('A down period covers this day: progression paused until Friday Nov 20.')
     expect(previewDownPeriodWords('2026-11-17', [{ ...P1, endedOn: '2026-11-17' }])).toBe('A down period covers this day: progression paused until Tuesday Nov 17.')
     expect(previewDownPeriodWords('2026-11-21', [P1])).toBeNull()
-    expect(previewView({ date: '2026-11-17', today: '2026-11-16', settings, history: { ...empty, downPeriods: [P1] }, program: PROGRAM }).downPeriod).toBe('A down period covers this day: progression paused until Friday Nov 20.')
-    expect(previewView({ date: '2026-11-17', today: '2026-11-16', settings, history: empty, program: PROGRAM }).downPeriod).toBeNull()
+    expect(previewView({ mode: 'full', date: '2026-11-17', today: '2026-11-16', settings, history: { ...empty, downPeriods: [P1] }, program: PROGRAM }).downPeriod).toBe('A down period covers this day: progression paused until Friday Nov 20.')
+    expect(previewView({ mode: 'full', date: '2026-11-17', today: '2026-11-16', settings, history: empty, program: PROGRAM }).downPeriod).toBeNull()
   })
 })

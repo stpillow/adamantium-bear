@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type RefObject } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
@@ -13,6 +14,7 @@ import {
   exerciseView,
   loadSubtitle,
   pickedRow,
+  progressLead,
   progressView,
   symmetryEmptyWords,
   symmetryName,
@@ -80,9 +82,10 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
 
   // Shawn's max and resting HR (metrics phase 2): only the HR-load line reads them; undefined while loading reads as none.
   const hrSettings = useHrSettings()
+  const { mode } = useEngineMode()
   const view = useMemo(
-    () => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings, koosEntries }),
-    [today, settings, history, hrSettings, vo2Readings, koosEntries],
+    () => progressView({ mode, today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings, koosEntries }),
+    [mode, today, settings, history, hrSettings, vo2Readings, koosEntries],
   )
   const row = pickedRow(view.exercises, picked)
   const exercise = useMemo(
@@ -98,7 +101,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
   }
 
   return (
-    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max, KOOS and morning tags.">
+    <Screen title={TITLE} lead={progressLead(mode)}>
       <CleanDays clean={view.clean} adherence={view.adherence} downPeriods={view.downPeriods} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
@@ -106,7 +109,7 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
       <TrainingLoadSection training={view.training} />
       <Vo2Section vo2={view.vo2} readings={vo2Readings} today={today} />
       <KoosSection koos={view.koos} />
-      <TagsSection tags={view.tags} />
+      {view.tags ? <TagsSection tags={view.tags} /> : null}
     </Screen>
   )
 }
@@ -116,19 +119,24 @@ function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { 
  * (Batch B), each program week's sessions done of those scheduled, in words, newest first: a record
  * beside the count, never a streak.
  */
-function CleanDays({ clean, adherence, downPeriods }: { clean: CleanDaysView; adherence: AdherenceView; downPeriods: string[] }) {
+function CleanDays({ clean, adherence, downPeriods }: { clean: CleanDaysView | null; adherence: AdherenceView; downPeriods: string[] }) {
+  // Tester mode (M-U3): no count of clean days, only the sessions done by week.
   return (
-    <section aria-label="Consecutive clean days" className={SECTION}>
-      <h2 className={HEADING}>Consecutive clean days</h2>
-      <p className="flex flex-col gap-1">
-        <span className="font-display text-stat text-on-dark">{clean.count}</span>
-        <span className="text-body text-on-dark-dim">
-          {/* A text token, not green: on this screen green-bright marks the injured side in the charts, and text never wears a data color. */}
-          {clean.unit ? <span className="text-on-dark">{clean.unit} </span> : null}
-          {clean.context}
-        </span>
-      </p>
-      {clean.note ? <p className="text-small text-on-dark-muted">{clean.note}</p> : null}
+    <section aria-label={clean ? 'Consecutive clean days' : 'Sessions done by week'} className={SECTION}>
+      <h2 className={HEADING}>{clean ? 'Consecutive clean days' : 'Sessions done by week'}</h2>
+      {clean ? (
+        <>
+          <p className="flex flex-col gap-1">
+            <span className="font-display text-stat text-on-dark">{clean.count}</span>
+            <span className="text-body text-on-dark-dim">
+              {/* A text token, not green: on this screen green-bright marks the injured side in the charts, and text never wears a data color. */}
+              {clean.unit ? <span className="text-on-dark">{clean.unit} </span> : null}
+              {clean.context}
+            </span>
+          </p>
+          {clean.note ? <p className="text-small text-on-dark-muted">{clean.note}</p> : null}
+        </>
+      ) : null}
       {adherence.note ? (
         <div className="flex flex-col gap-1">
           <p className="text-small text-on-dark-muted">{adherence.note}</p>

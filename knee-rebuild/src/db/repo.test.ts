@@ -1,10 +1,12 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { program } from '../program/program.ts'
-import { PLANET_FITNESS_LOCATION_ID, type Location } from '../schema/index.ts'
+import { PLANET_FITNESS_LOCATION_ID, type Location, type MorningCheck, type Settings } from '../schema/index.ts'
 import { db } from './db.ts'
 import {
+  addMorningCheck,
   addExtra,
+  foldSettings,
   addLocation,
   archiveLocation,
   clearMarkOff,
@@ -16,6 +18,7 @@ import {
   getSettings,
   getTimeZoneSetting,
   markOff,
+  preAccountsFacts,
   putWorkout,
   removeExtra,
   renameLocation,
@@ -192,5 +195,33 @@ describe('the time zone (M-U1, PROGRAM-QUESTIONS 203, 204)', () => {
     await saveTimeZone('Europe/London')
     expect(Object.keys((await db.settings.get('settings')) ?? {})).not.toContain('zone')
     expect(Object.keys((await db.settings.get('settings')) ?? {})).not.toContain('timeZone')
+  })
+})
+
+describe('preAccountsFacts (M-U3): writes from before accounts', () => {
+  it('an empty log has none; a set stamped before Nov 10, 2026 counts; a late entry’s marker never does', async () => {
+    expect(await preAccountsFacts()).toBe(false)
+    await putWorkout({ id: 'w-late', date: '2026-11-03', templateId: 'p1-a', phase: 1, week: 1, isDeload: false, startedAt: '2026-11-03T17:00:00.000Z', status: 'finished' })
+    expect(await preAccountsFacts()).toBe(false)
+    await upsertSet({ id: '', workoutId: 'w-late', slotId: 'p1a-1', exerciseId: 'leg-press', setNumber: 1, side: 'both', load: 90, loadUnit: 'lb', reps: 10, stopped: false, loggedAt: '2026-11-12T22:00:00.000Z' })
+    expect(await preAccountsFacts()).toBe(false)
+    await putWorkout({ id: 'w-live', date: '2026-11-05', templateId: 'p1-b', phase: 1, week: 1, isDeload: false, startedAt: '2026-11-05T22:00:00.000Z', status: 'finished' })
+    expect(await preAccountsFacts()).toBe(true)
+  })
+})
+
+describe('foldSettings (M-U3): today’s checks folded into the settings in one transaction', () => {
+  const check = (date: string, redFlags: string[]) => ({ id: `mc-${date}`, date, appliesTo: null, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags })
+  const flag = (settings: Settings, checks: MorningCheck[]): Settings =>
+    checks.some((c) => c.redFlags.length > 0) && !settings.redFlag.active ? { ...settings, redFlag: { active: true, since: '2026-11-04', items: ['locking'] } } : settings
+
+  it('hands the fold only today’s checks, writes its answer, and writes nothing when it answers the same object', async () => {
+    await addMorningCheck(check('2026-11-03', ['locking']))
+    expect(await foldSettings('2026-11-04', flag)).toBe(false)
+    expect((await getSettings())?.redFlag.active).toBe(false)
+    await addMorningCheck(check('2026-11-04', ['locking']))
+    expect(await foldSettings('2026-11-04', flag)).toBe(true)
+    expect((await getSettings())?.redFlag).toEqual({ active: true, since: '2026-11-04', items: ['locking'] })
+    expect(await foldSettings('2026-11-04', flag)).toBe(false)
   })
 })

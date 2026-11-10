@@ -24,7 +24,8 @@ import {
   hrSetButtonWords,
   hrUnsetWords,
   IMPORT_CONFIRM,
-  PHASE_NOTE,
+  phaseNote,
+  sideNote,
   exportedOnWords,
   holdsLine,
   holdsWords,
@@ -259,28 +260,35 @@ describe('painWords and phaseWords', () => {
     expect(phaseWords(settings({ currentPhase: 4, phaseEnteredWeek: 13 }), phases).title).toBe('Phase 4')
   })
   it('says the phase is read-only here and that the Gates screen advances it, not a milestone still to come', () => {
-    expect(PHASE_NOTE).toBe('Read-only here. The Gates screen advances the phase once every item of its gate passes and you confirm.')
-    expect(PHASE_NOTE).not.toMatch(/\bM\d/)
+    expect(phaseNote('full')).toBe('Read-only here. The Gates screen advances the phase once every item of its gate passes and you confirm.')
+    expect(phaseNote('full')).not.toMatch(/\bM\d/)
+  })
+  it('tells a tester the phase stays where it is, with no gate verdict or Advance (M-U3, PROGRAM-QUESTIONS 232)', () => {
+    expect(phaseNote('tester')).toBe('Read-only. On a tester account the phase stays where it is; the Gates screen shows its criteria as written.')
+  })
+  it("names the healthy side's budget only where the engine sets one (M-U3)", () => {
+    expect(sideNote('full')).toBe('Unilateral slots log this side first; its reps set the healthy side’s budget.')
+    expect(sideNote('tester')).toBe('Unilateral slots log this side first.')
   })
 })
 
 describe('redFlagView', () => {
   it("spells out an active flag from the engine's stop message", () => {
-    expect(redFlagView({ active: true, since: '2026-11-04', items: ['locking', 'made-up'] }, catalog)).toEqual({
+    expect(redFlagView('full', { active: true, since: '2026-11-04', items: ['locking', 'made-up'] }, catalog)).toEqual({
       active: true,
       headline: 'Stop. Call the ortho or PT.',
       since: 'Flagged since Wednesday Nov 4.',
       items: ['Locking or catching: a mechanical block to straightening or bending', 'made-up'],
     })
-    expect(redFlagView({ active: true, items: ['numbness'] }, catalog)).toMatchObject({ active: true, since: null })
+    expect(redFlagView('full', { active: true, items: ['numbness'] }, catalog)).toMatchObject({ active: true, since: null })
   })
   it('says when nothing is set, and how it was last cleared', () => {
-    expect(redFlagView({ active: false, items: [] }, catalog)).toEqual({ active: false, cleared: null })
-    expect(redFlagView({ active: false, items: [], clearedOn: '2026-11-07', clearNote: 'PT saw it Nov 6' }, catalog)).toEqual({
+    expect(redFlagView('full', { active: false, items: [] }, catalog)).toEqual({ active: false, cleared: null })
+    expect(redFlagView('full', { active: false, items: [], clearedOn: '2026-11-07', clearNote: 'PT saw it Nov 6' }, catalog)).toEqual({
       active: false,
       cleared: 'Last cleared Saturday Nov 7: “PT saw it Nov 6”.',
     })
-    expect(redFlagView({ active: false, items: [], clearedOn: '2026-11-07' }, catalog)).toEqual({ active: false, cleared: 'Last cleared Saturday Nov 7.' })
+    expect(redFlagView('full', { active: false, items: [], clearedOn: '2026-11-07' }, catalog)).toEqual({ active: false, cleared: 'Last cleared Saturday Nov 7.' })
   })
 })
 
@@ -340,24 +348,24 @@ describe('settingsOnImportWords', () => {
   const none = { keptRedFlag: null, changes: [] }
 
   it('says the red flag the import keeps on, when it was set and what was flagged, and that it clears only here with a note', () => {
-    expect(settingsOnImportWords({ keptRedFlag: { active: true, since: '2026-11-05', items: ['locking'] }, changes: [] }, catalog, phases).redFlag).toBe(
+    expect(settingsOnImportWords('full', { keptRedFlag: { active: true, since: '2026-11-05', items: ['locking'] }, changes: [] }, catalog, phases).redFlag).toBe(
       'The red flag set Thursday Nov 5 stays on after the import: Locking or catching: a mechanical block to straightening or bending. It clears only here, with a note.',
     )
     // Joined with the file's own flag: each item once.
-    expect(settingsOnImportWords({ keptRedFlag: { active: true, since: '2026-11-04', items: ['locking', 'numbness'] }, changes: [] }, catalog, phases).redFlag).toBe(
+    expect(settingsOnImportWords('full', { keptRedFlag: { active: true, since: '2026-11-04', items: ['locking', 'numbness'] }, changes: [] }, catalog, phases).redFlag).toBe(
       'The red flag set Wednesday Nov 4 stays on after the import: Locking or catching: a mechanical block to straightening or bending; Numbness or tingling below the knee. It clears only here, with a note.',
     )
-    expect(settingsOnImportWords({ keptRedFlag: { active: true, items: ['numbness'] }, changes: [] }, catalog, phases).redFlag).toBe(
+    expect(settingsOnImportWords('full', { keptRedFlag: { active: true, items: ['numbness'] }, changes: [] }, catalog, phases).redFlag).toBe(
       'The red flag on this phone stays on after the import: Numbness or tingling below the knee. It clears only here, with a note.',
     )
   })
 
   it('says nothing about the red flag when the file carries it as the phone has it', () => {
-    expect(settingsOnImportWords(none, catalog, phases)).toEqual({ redFlag: null, changes: [] })
+    expect(settingsOnImportWords('full', none, catalog, phases)).toEqual({ redFlag: null, changes: [] })
   })
 
   it('says each setting the file changes, the phone’s value then the file’s, in words', () => {
-    const words = settingsOnImportWords(
+    const words = settingsOnImportWords('full', 
       {
         keptRedFlag: null,
         changes: [
@@ -379,7 +387,7 @@ describe('settingsOnImportWords', () => {
   })
 
   it('names the years of a start date only when they differ, and a phase it has no name for by its number', () => {
-    const words = settingsOnImportWords(
+    const words = settingsOnImportWords('full', 
       {
         keptRedFlag: null,
         changes: [

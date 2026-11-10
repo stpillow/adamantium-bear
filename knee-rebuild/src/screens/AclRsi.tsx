@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
@@ -13,7 +14,8 @@ import {
   dropOtherAclRsiDrafts,
   readAclRsiDraft,
   writeAclRsiDraft,
-  ACL_RSI_LEAD,
+  aclRsiLead,
+  aclRsiSavedLine,
   aclRsiBlocker,
   aclRsiReplaceLine,
   aclRsiRows,
@@ -58,6 +60,7 @@ function AclRsiBody({ today, entries }: { today: IsoDate; entries: readonly AclR
   })
   const [saving, setSaving] = useState(false)
   const [savedLine, setSavedLine] = useState<string | null>(null)
+  const { mode } = useEngineMode()
   const blocker = aclRsiBlocker(answers)
   const replaces = aclRsiReplaceLine(entries, today)
   const rows = aclRsiRows(entries)
@@ -70,14 +73,14 @@ function AclRsiBody({ today, entries }: { today: IsoDate; entries: readonly AclR
       await saveAclRsiEntry(entry)
       clearAclRsiDraft(window.localStorage, today)
       setAnswers(emptyAclRsiAnswers())
-      setSavedLine('Saved. The Gates screen reads the latest entry against its 76 line.')
+      setSavedLine(aclRsiSavedLine(mode))
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <Screen title={TITLE} lead={ACL_RSI_LEAD}>
+    <Screen title={TITLE} lead={aclRsiLead(mode)}>
       <ol className="flex flex-col">
         {ACL_RSI_ITEMS.map((item, index) => (
           <li key={item.field} className="flex flex-col gap-2 border-t border-on-dark-faint py-4">

@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
-import { PROGRAM, planSession, rampsInOrder, type SlotPlan } from '../app/session.ts'
+import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { Screen } from '../components/Screen.tsx'
@@ -10,7 +11,8 @@ import { exerciseById } from '../program/program.ts'
 import { gymToOffer, lastLoggedGym, liftGym } from '../rules/gymDay.ts'
 import { lateLift } from '../rules/retro.ts'
 import type { IsoDate, Location } from '../schema/index.ts'
-import { previewSlots, previewView, type PreviewSlot, type PreviewView } from './Preview.helpers.ts'
+import { logLateNote, previewDayLine, previewSlotsFor, previewView, type PreviewSlot, type PreviewView } from './Preview.helpers.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { shortDateWords } from './Today.helpers.ts'
 
 const TITLE = 'Session preview'
@@ -20,8 +22,8 @@ const nameOf = (exerciseId: string) => exerciseById(exerciseId).name
 
 /**
  * A read-only look at one day's session before it comes round: every exercise with the sets, reps
- * and load the engine would prescribe from what's logged so far, at the gym it would run at, with
- * its cues. Today's Start stays on Today; a past lift day can be logged after the fact from here
+ * and load the engine would prescribe from what's logged so far (in tester mode, as program.md
+ * writes it), at the gym it would run at, with its cues. Today's Start stays on Today; a past lift day can be logged after the fact from here
  * (`lateLift`, PROGRAM-QUESTIONS 141). Every number comes from planSession.
  */
 export function Preview({ date }: { date: IsoDate }) {
@@ -30,6 +32,7 @@ export function Preview({ date }: { date: IsoDate }) {
   const history = useHistory()
   const active = useActiveLocation()
   const locations = useLocations()
+  const { mode } = useEngineMode()
 
   if (settings === undefined || history === undefined || active === undefined || locations === undefined) {
     return (
@@ -49,7 +52,7 @@ export function Preview({ date }: { date: IsoDate }) {
     )
   }
 
-  const view = previewView({ date, today, settings, history, program: PROGRAM })
+  const view = previewView({ mode, date, today, settings, history, program: PROGRAM })
   const body = view.body
   let slots: PreviewSlot[] | null = null
   let gymName = active.name
@@ -59,9 +62,8 @@ export function Preview({ date }: { date: IsoDate }) {
     const gym = liftGym(workout, active, locations)
     gymName = gym.name
     try {
-      const plans: SlotPlan[] = planSession({ template: body.template, week: body.week, settings, history, gym: { location: gym, kit: settings.kit }, before: date })
-      // Warm-up sets as the session order shows them (display only, PROGRAM-QUESTIONS 165); a past day logged after the fact shows none.
-      slots = previewSlots(plans, { injuredSide: settings.injuredSide, gymName: gym.name, items: PROGRAM.equipment, nameOf, ramps: rampsInOrder(plans, date < today) })
+      // The engine's plan in full mode, the session as written in tester mode (M-U3).
+      slots = previewSlotsFor(mode, { template: body.template, week: body.week, date, today, settings, history, gym: { location: gym, kit: settings.kit }, items: PROGRAM.equipment, nameOf })
     } catch (e: unknown) {
       planError = `This session could not be planned (${e instanceof Error ? e.message : String(e)}).`
     }
@@ -91,7 +93,7 @@ export function Preview({ date }: { date: IsoDate }) {
           <h2 className={HEADING}>{body.label}</h2>
           {body.note ? <p className="text-body text-on-dark-dim">{body.note}</p> : null}
           <p className="text-small text-on-dark-muted">
-            {body.kind === 'run' ? 'The miles are suggested on the day, from the week so far and that morning’s check.' : 'No lift today.'}
+            {previewDayLine(mode, body.kind)}
           </p>
         </section>
       ) : (
@@ -123,6 +125,7 @@ export function Preview({ date }: { date: IsoDate }) {
           ) : null}
           {date < today && !body.logged && body.template ? (
             <LogLate
+              mode={mode}
               date={date}
               today={today}
               letter={body.template.letter}
@@ -147,6 +150,7 @@ export function Preview({ date }: { date: IsoDate }) {
  * on it to enter the sets as they went. Outside the window it says why instead.
  */
 function LogLate({
+  mode,
   date,
   today,
   letter,
@@ -154,6 +158,7 @@ function LogLate({
   settings,
   workouts,
 }: {
+  mode: EngineMode
   date: IsoDate
   today: IsoDate
   letter: 'A' | 'B' | 'C'
@@ -182,7 +187,7 @@ function LogLate({
       <Button variant="primary" wide disabled={busy} onClick={() => void log()}>
         {busy ? 'Saving…' : `Log this session after the fact at ${gym.name}`}
       </Button>
-      <p className="text-small text-on-dark-muted">You can change the gym before the first set. A session logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged; the app offers it when you finish.</p>
+      <p className="text-small text-on-dark-muted">{logLateNote(mode)}</p>
       {error ? (
         <p role="alert" className="text-body text-on-dark">
           {error}

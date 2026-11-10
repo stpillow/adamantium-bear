@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate, replaceRoute } from '../app/router.ts'
 import { PROGRAM, availableAt } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
@@ -197,6 +198,7 @@ function EditLocation({
   overrides: readonly ProgramOverride[]
   downPeriods: readonly DownPeriod[]
 }) {
+  const { mode } = useEngineMode()
   const today = useToday()
   const [savedField, flashSaved] = useFlash()
   const [problem, setProblem] = useState<Problem>(null)
@@ -228,7 +230,7 @@ function EditLocation({
   const changes = changesView({
     templates: templatesAsRun(settings, overrides),
     phase: settings.currentPhase,
-    phaseWeek: coverageWeek(settings, today, downPeriods),
+    phaseWeek: coverageWeek(settings, today, downPeriods, mode),
     phaseEnteredWeek: settings.phaseEnteredWeek,
     byId: BY_ID,
     available,

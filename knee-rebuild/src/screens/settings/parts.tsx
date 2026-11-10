@@ -1,4 +1,5 @@
 import { useId, useState, type ChangeEvent } from 'react'
+import { useEngineMode } from '../../app/mode.ts'
 import { PROGRAM } from '../../app/session.ts'
 import { Button } from '../../components/Button.tsx'
 import { Note, Section } from '../../components/FormParts.tsx'
@@ -97,6 +98,7 @@ export function ImportSection({
   firstRun?: boolean
 }) {
   const inputId = useId()
+  const { mode } = useEngineMode()
   const [pending, setPending] = useState<PendingImport | null>(null)
   const [step, setStep] = useState<'idle' | 'reading' | 'writing'>('idle')
   const [refusal, setRefusal] = useState<string | null>(null)
@@ -137,8 +139,8 @@ export function ImportSection({
           downPeriods: downPeriodsOnImport(phone.downPeriods, read.backup.downPeriods, today),
           timeZoneSettings: timeZoneOnImport(phoneZone, read.backup.timeZoneSettings),
         }),
-        settings: settingsOnImportWords(settingsOnImport(phone.settings, read.backup.settings), PROGRAM.redFlags, PROGRAM.phases),
-        keptDownPeriod: keptDownPeriodWords(phone.downPeriods, read.backup.downPeriods, today),
+        settings: settingsOnImportWords(mode, settingsOnImport(phone.settings, read.backup.settings), PROGRAM.redFlags, PROGRAM.phases),
+        keptDownPeriod: keptDownPeriodWords(phone.downPeriods, read.backup.downPeriods, today, mode),
         timeZone: timeZoneImportWords(timeZoneImportChange(phoneZone, read.backup.timeZoneSettings), firstRun),
       })
     } catch (e) {

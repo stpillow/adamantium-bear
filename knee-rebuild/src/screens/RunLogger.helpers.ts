@@ -1,5 +1,7 @@
 import { RETRO_DAYS, retroDates } from '../rules/retro.ts'
 import type { History } from '../db/repo.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
+import { writtenWeekMiles } from '../rules/written.ts'
 import { addDays, dayOf, daysBetween, scheduledSession, weekOf } from '../rules/calendar.ts'
 import { runSwapsHere, type Available, type RunSwapHere } from '../rules/equipment.ts'
 import { swapCallAt, type SwapCall } from '../rules/gymDay.ts'
@@ -12,7 +14,7 @@ import { bandHeldNote, bandWeek } from '../rules/downPeriod.ts'
 import { EFFORT_RPE, effortFromRpe, hrLoadOf, hrPair } from '../rules/trainingLoad.ts'
 import { runTypeFor, runsInWeek, suggestRun, weekMilesSummary, type RunSuggestion, type WeekMiles } from '../rules/weekPlan.ts'
 import { Effort, RUN_HR_MAX, RUN_HR_MIN, Run, RunType, type Day, type DaySession, type HrSettings, type IsoDate, type MorningCheck, type Program, type ReadingResult, type Settings } from '../schema/index.ts'
-import { dateWords, noSwapMachineWords, runLabel, sessionLabel, shortDateWords } from './Today.helpers.ts'
+import { dateWords, noSwapMachineWords, runLabel, sessionLabel, sessionNote, shortDateWords } from './Today.helpers.ts'
 
 /**
  * Pure helpers for the Run logger: which dates a run can be logged for, the view the screen renders,
@@ -92,7 +94,8 @@ export function dateChoices(today: IsoDate, startDate: IsoDate): IsoDate[] {
 }
 
 /** The note under the day choices: which days can be logged, and how a late one reads. */
-export function dayChoicesNote(): string {
+export function dayChoicesNote(mode: EngineMode): string {
+  if (mode === 'tester') return `The last ${RETRO_DAYS} days can be logged.`
   return `The last ${RETRO_DAYS} days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged. For yesterday that is this morning’s check; for an earlier day the app offers it after you save.`
 }
 
@@ -157,10 +160,17 @@ export type LoggerView =
       summary: WeekMiles
       /** This program week's runs, by date. */
       weekRuns: Run[]
+      /** Tester mode only (M-U3): program.md's own row note for the day's scheduled session, in place of a suggestion. */
+      written?: { note: string | null }
     }
 
-/** Everything the Run logger renders, from today, what was picked, the settings, the stored history and the program. */
+/**
+ * Everything the Run logger renders, from today, what was picked, the settings, the stored history
+ * and the program. In tester mode (M-U3, PROGRAM-QUESTIONS 230): the plan's own week target, no
+ * suggestion, preset, swap call, stop or morning reading, and program.md's note for the day.
+ */
 export function loggerView(input: {
+  mode: EngineMode
   today: IsoDate
   picked: { date: IsoDate | null; type: RunType | null }
   settings: Settings
@@ -180,6 +190,28 @@ export function loggerView(input: {
   const preselected = runTypeFor(scheduled)
   const type = picked.type ?? preselected
 
+  if (input.mode === 'tester') {
+    return {
+      kind: 'form',
+      week,
+      date,
+      dateLost,
+      dates,
+      scheduled,
+      scheduledLabel: sessionLabel(scheduled, program.weeklyTemplateRows),
+      preselected,
+      type,
+      suggestion: null,
+      stop: null,
+      morning: null,
+      gym: gym.name,
+      swaps: runSwapsHere(gym.available),
+      swapCall: null,
+      summary: writtenWeekMiles(program.mileagePlan, week, settings.startDate, history.runs),
+      weekRuns: runsInWeek(history.runs, settings.startDate, week).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
+      written: { note: sessionNote(scheduled, program.weeklyTemplateRows) },
+    }
+  }
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
   // A down period holds the week's target and the tempo's band (Batch E, PROGRAM-QUESTIONS 183, 188), as on Today, for the date being logged.
@@ -558,7 +590,9 @@ const READING_WORDS: Record<ReadingResult, string> = { clean: 'clean', hold: 'ho
  * the engine reads it as without one: until that morning's check is logged late when it still can
  * be (`canLateCheck`, lateCheckFor; Batch D), and for good when it can't.
  */
-export function loggedWords(run: Run, today: IsoDate, checks: readonly MorningCheck[], canLateCheck = false): string {
+export function loggedWords(mode: EngineMode, run: Run, today: IsoDate, checks: readonly MorningCheck[], canLateCheck = false): string {
+  // Tester mode reads nothing, so saving says only that it is kept (M-U3).
+  if (mode === 'tester') return run.date === today ? 'Logged.' : `Logged for ${shortDateWords(run.date)}.`
   if (run.date === today) return 'Logged. Tomorrow’s morning check reads it.'
   const subject = { kind: 'run' as const, id: run.id, date: run.date }
   const covering = checks.find((c) => morningCheckApplies(c, subject))
@@ -586,6 +620,11 @@ export function runRow(run: Run): RunRow {
     miles: isSwap(run) ? 'no miles (swap)' : milesWords(run.miles),
     pain: `max pain ${run.maxPain}`,
   }
+}
+
+/** Under the pain picker: why it is required, in the mode's words. */
+export function painRequiredWords(mode: EngineMode): string {
+  return mode === 'tester' ? 'Required: the most it hurt during the run.' : 'Required: an unrated run is unknown, and unknown is not clean.'
 }
 
 /** A rejected write, in words. */

@@ -1,3 +1,4 @@
+import { useEngineMode } from '../../app/mode.ts'
 import { PROGRAM, availableAt } from '../../app/session.ts'
 import { Choice, Note, Section } from '../../components/FormParts.tsx'
 import { Stepper } from '../../components/Stepper.tsx'
@@ -17,6 +18,7 @@ const BY_ID = new Map(PROGRAM.exercises.map((e) => [e.id, e]))
 
 /** None, 25, 50, 60, 75, 80, or any rack by 5 lb on the stepper; a weight typed in between saves as the 5 lb below it (`rackValue`). */
 export function RackPicker({ value, onChange: save }: { value: number; onChange: (lb: number) => void }) {
+  const { mode } = useEngineMode()
   const onChange = (lb: number) => save(rackSaved(lb))
   return (
     <>
@@ -34,7 +36,7 @@ export function RackPicker({ value, onChange: save }: { value: number; onChange:
         ))}
       </div>
       <Stepper label="Heaviest dumbbell" unit="lb" value={value} step={RACK_STEP} min={RACK_MIN} max={RACK_MAX} onChange={onChange} />
-      <Note>{rackNote(value)}</Note>
+      <Note>{rackNote(value, mode)}</Note>
       <Note>{rackGridNote}</Note>
     </>
   )
@@ -70,7 +72,8 @@ export function EquipmentChecklist({
   problem?: (group: string) => string | null
 }) {
   const available = availableAt({ location, kit })
-  const sections = checklistSections({ checklist: CHECKLIST, location, available, byId: BY_ID, vocabulary: PROGRAM.equipment, table: PROGRAM.substitutionTable })
+  const { mode } = useEngineMode()
+  const sections = checklistSections({ checklist: CHECKLIST, location, available, byId: BY_ID, vocabulary: PROGRAM.equipment, table: PROGRAM.substitutionTable, mode })
   return (
     <>
       {sections.map((s) => (

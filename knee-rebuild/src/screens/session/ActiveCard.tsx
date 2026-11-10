@@ -1,50 +1,49 @@
 import { useState, type ReactNode } from 'react'
-import type { SlotPlan } from '../../app/session.ts'
 import { Button } from '../../components/Button.tsx'
 import { PAIN_SCALE, RPE_SCALE, ScalePicker } from '../../components/ScalePicker.tsx'
 import { Stepper } from '../../components/Stepper.tsx'
 import { exerciseById } from '../../program/program.ts'
 import { effectiveSlot } from '../../rules/effectiveSlot.ts'
-import { needsLoadPick, prefill, type Draft } from '../../rules/prefill.ts'
-import { progressionNeedsRpe } from '../../rules/prescription.ts'
+import type { EngineMode } from '../../rules/engineMode.ts'
+import type { SlotRoute } from '../../rules/equipment.ts'
+import type { Draft } from '../../rules/prefill.ts'
 import type { Step } from '../../rules/runOrder.ts'
-import type { SetLog, SetSide, Side, StopReason } from '../../schema/index.ts'
+import type { SetLog, SetSide, Side, Slot, StopReason } from '../../schema/index.ts'
 import {
   STOP_REASONS,
   countLabel,
   countStep,
   countWords,
   cuesWrittenFor,
-  draftFromSet,
+  loadBlocked,
   loadLabel,
   loadMax,
   loadStep,
   loadWords,
-  movedByEngine,
-  prescriptionWords,
   rangeStopOptions,
   setWords,
   showsLoad,
   sideLine,
   sideWords,
+  type CardModel,
   type SwapChoice,
 } from '../SessionRunner.helpers.ts'
 import { DoneBar } from './DoneBar.tsx'
 import { GymNotes, type GymAction, type RackAsk } from './GymNotes.tsx'
 
 export interface ActiveCardProps {
-  plan: SlotPlan
+  mode: EngineMode
+  /** The slot as planned (the Program edits laid over), and what the gym does to it. */
+  slot: Slot
+  route: SlotRoute
+  /** What the card shows and how its set opens (`cardModel`): the engine's prescription, or program.md's written cell. */
+  model: CardModel
   /** The open step to log in this slot, or null when the slot is only being looked at. */
   step: Step | null
   /** A logged set being corrected, or null. */
   editing: SetLog | null
   slotSets: SetLog[]
-  /**
-   * The warm-up sets before set 1 of a big lift, in words (`rampWords`, PROGRAM-QUESTIONS 165), or
-   * null. Display only: no tap, nothing logged. Shown above set 1 while nothing is logged on the slot.
-   */
-  ramp: string | null
-  /** Sets prescribed for each side, for "set 2 of 3". */
+  /** Sets for each side, for "set 2 of 3". */
   setsBySide: Record<string, number>
   /** Sides of a two-sided slot and whether each still has an open set, for the side toggle. */
   sides: { side: SetSide; open: boolean }[]
@@ -52,8 +51,6 @@ export interface ActiveCardProps {
   painPerSet: boolean
   /** The gym's heaviest dumbbell, in lb (0 means none): the load field stops there for dumbbell work. */
   rackLb: number
-  historyRpe: number | null
-  budget: number[] | null
   /** Pain for the exercise on the card when pain is logged once per exercise. */
   exercisePain: number | null
   onExercisePain: (value: number) => void
@@ -86,46 +83,29 @@ const sideOrder = (side: string, injured: Side) => (side === 'both' || side === 
  * step remounts it with a fresh prefill: the draft never leaks from one set into the next.
  */
 export function ActiveCard(props: ActiveCardProps) {
-  const { plan, step, editing, slotSets, injuredSide } = props
-  const prescription = plan.prescriptions.find((p) => p.side === (editing?.side ?? step?.side)) ?? plan.prescriptions[0]
-  const exercise = exerciseById(editing?.exerciseId ?? prescription?.exerciseId ?? plan.exercise.id)
-  // The slot as it applies to the exercise on the card: after a swap, unit, targets and rule follow it.
-  const slot = effectiveSlot(plan.slot, exercise)
-  const repUnit = prescription?.exerciseId === exercise.id ? prescription.repUnit : slot.repUnit
-  const [draft, setDraft] = useState<Draft | null>(() => {
-    if (editing) return draftFromSet(editing)
-    if (step && prescription) {
-      const healthy = step.side !== injuredSide && step.side !== 'both'
-      return prefill({ prescription, slot, setNumber: step.setNumber, slotSets, budget: healthy ? props.budget : null, historyRpe: props.historyRpe, painPerSet: props.painPerSet })
-    }
-    return null
-  })
+  const { model, step, editing, slotSets, injuredSide } = props
+  const planSlot = props.slot
+  const { exercise, slot, repUnit } = model
+  // The model's opening values, read once: a new step remounts the card (its key), so the draft never leaks into the next set.
+  const [draft, setDraft] = useState<Draft | null>(() => model.draft)
   const [panel, setPanel] = useState<'swap' | 'stop' | null>(null)
   const [change, setChange] = useState<'height' | 'range' | 'stage' | null>(null)
   const [showCues, setShowCues] = useState(slotSets.length === 0)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const set = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d))
 
-  if (!prescription) return null
   const doneRows = [...slotSets].sort((a, b) => a.setNumber - b.setNumber || sideOrder(a.side, injuredSide) - sideOrder(b.side, injuredSide))
   const activeSide = editing?.side ?? step?.side
-  const totalForSide = activeSide ? (props.setsBySide[activeSide] ?? prescription.sets) : prescription.sets
+  const totalForSide = activeSide ? (props.setsBySide[activeSide] ?? model.sets) : model.sets
   const setNumber = editing?.setNumber ?? step?.setNumber
-  const needsRpe = progressionNeedsRpe(slot)
-  const showRpe = slot.rpeTarget !== undefined || needsRpe
+  const { needsRpe, showRpe } = model
   const hasLoad = showsLoad(exercise)
-  const blockedOnLoad = !editing && draft !== null && needsLoadPick(prescription, hasLoad, exercise.loadDirection, draft)
+  const blockedOnLoad = !editing && draft !== null && loadBlocked(props.mode, model, draft)
   const pain = props.painPerSet ? (draft?.pain ?? null) : props.exercisePain
   const blockedOnPain = !editing && step !== null && pain === null
-  const moved = movedByEngine(plan.slot.exerciseId, prescription.exerciseId, plan.route, props.swapped, prescription.rackMoved === true)
-  const sideNote = sideLine(plan.slot.unilateral, exercise.unilateral)
-  const cuesFor = cuesWrittenFor(plan.slot.exerciseId, exercise.id, (id) => exerciseById(id).name)
-  const healthyStep = step && step.side !== 'both' && step.side !== injuredSide
-  const budgetLine = healthyStep
-    ? props.budget && props.budget[step.setNumber - 1] !== undefined
-      ? `Budget ${props.budget[step.setNumber - 1]}: the injured side did that on set ${step.setNumber}.`
-      : 'Budget: the injured side goes first; its reps set this side’s target.'
-    : null
+  const sideNote = sideLine(planSlot.unilateral, exercise.unilateral)
+  const cuesFor = cuesWrittenFor(planSlot.exerciseId, exercise.id, (id) => exerciseById(id).name)
+  const budgetLine = model.budgetLine
 
   const sideText = activeSide ? sideWords(activeSide, injuredSide) : ''
   const draftLine = draft
@@ -150,7 +130,7 @@ export function ActiveCard(props: ActiveCardProps) {
     barPress = () => props.onSave(editing, draft)
   } else if (step && draft) {
     const sideWord = sideText ? `, ${sideText.split(' · ')[0]?.toLowerCase()}` : ''
-    barLabel = blockedOnLoad ? 'Pick a load first' : blockedOnPain ? 'Rate pain first' : `Done: set ${step.setNumber} of ${totalForSide}${sideWord}`
+    barLabel = blockedOnLoad ? model.loadBar : blockedOnPain ? 'Rate pain first' : `Done: set ${step.setNumber} of ${totalForSide}${sideWord}`
     barDisabled = blockedOnLoad || blockedOnPain
     barPress = () => props.onLog(draft)
   }
@@ -164,7 +144,7 @@ export function ActiveCard(props: ActiveCardProps) {
         onChange={(v) => (props.painPerSet ? set({ pain: v }) : props.onExercisePain(v))}
         ariaLabel={props.painPerSet ? 'Pain this set' : 'Pain this exercise'}
       />
-      {pain === null && step && !editing ? <p className="text-small text-on-dark">Rate the pain to log: unrated pain would read hold, and two holds back the load off.</p> : null}
+      {pain === null && step && !editing ? <p className="text-small text-on-dark">{model.painLine}</p> : null}
     </>
   )
 
@@ -172,22 +152,25 @@ export function ActiveCard(props: ActiveCardProps) {
     <>
       <section aria-label="Now" className="flex flex-col gap-4 rounded-md bg-navy-lift p-4">
         <header className="flex flex-col gap-1">
-          <p className="font-mono text-label uppercase tracking-[0.22em] text-on-dark-muted">{plan.slot.groupId ? `Superset · slot ${plan.slot.label}` : `Slot ${plan.slot.label}`}</p>
+          <p className="font-mono text-label uppercase tracking-[0.22em] text-on-dark-muted">{planSlot.groupId ? `Superset · slot ${planSlot.label}` : `Slot ${planSlot.label}`}</p>
           <h2 className="font-sans text-h3 font-semibold text-on-dark">{exercise.name}</h2>
-          <p className="text-body text-on-dark-dim">{prescriptionWords(prescription, slot, exercise)}</p>
-          {prescription.note ? <p className="text-small text-on-dark-dim">{prescription.note}</p> : null}
-          {moved ? <p className="text-small text-on-dark">Moved to {exercise.name} by the engine.</p> : null}
+          <p className="text-body text-on-dark-dim">{model.header.text}</p>
+          {model.header.writtenFor ? <p className="text-small text-on-dark">{model.header.writtenFor}</p> : null}
+          {model.header.deload ? <p className="text-small text-on-dark">{model.header.deload}</p> : null}
+          {model.header.loadNote ? <p className="text-small text-on-dark-dim">{model.header.loadNote}</p> : null}
+          {model.header.note ? <p className="text-small text-on-dark-dim">{model.header.note}</p> : null}
+          {model.header.moved ? <p className="text-small text-on-dark">{model.header.moved}</p> : null}
           <GymNotes lines={props.gym.lines} actions={props.gym.actions} rack={props.gym.rack} busy={props.busy} />
           {sideNote ? <p className="text-small text-on-dark-dim">{sideNote}</p> : null}
           {exercise.sideMeaning ? <p className="text-small text-on-dark-dim">{exercise.sideMeaning}</p> : null}
         </header>
 
-        {plan.slot.cues.length > 0 ? (
+        {planSlot.cues.length > 0 ? (
           showCues ? (
             <div className="flex flex-col gap-1">
               {cuesFor ? <p className="font-mono text-label uppercase tracking-[0.22em] text-on-dark-muted">{cuesFor}</p> : null}
               <ul className="flex flex-col gap-1">
-                {plan.slot.cues.map((cue) => (
+                {planSlot.cues.map((cue) => (
                   <li key={cue} className="text-small text-on-dark">
                     {cue}
                   </li>
@@ -220,7 +203,7 @@ export function ActiveCard(props: ActiveCardProps) {
                     <span aria-hidden="true">{s.stopped ? '– ' : '✓ '}</span>
                     Set {s.setNumber}
                     {side ? ` · ${side}` : ''}
-                    {own.id !== exercise.id ? ` · ${own.name}` : ''} · {setWords(s, effectiveSlot(plan.slot, own).repUnit, own)}
+                    {own.id !== exercise.id ? ` · ${own.name}` : ''} · {setWords(s, effectiveSlot(planSlot, own).repUnit, own)}
                   </button>
                 </li>
               )
@@ -243,7 +226,7 @@ export function ActiveCard(props: ActiveCardProps) {
           </div>
         ) : null}
 
-        {props.ramp && !editing && step?.setNumber === 1 && slotSets.length === 0 ? <p className="text-small text-on-dark wrap-anywhere">{props.ramp}</p> : null}
+        {model.ramp && !editing && step?.setNumber === 1 && slotSets.length === 0 ? <p className="text-small text-on-dark wrap-anywhere">{model.ramp}</p> : null}
 
         {draft && (step || editing) ? (
           <div aria-label={editing ? `Editing set ${editing.setNumber}` : 'Next set'} className="flex flex-col gap-4">
@@ -251,7 +234,7 @@ export function ActiveCard(props: ActiveCardProps) {
               {editing ? `Editing set ${editing.setNumber}` : `Set ${step?.setNumber} of ${totalForSide}`}
               {sideText ? ` · ${sideText}` : ''}
             </p>
-            {plan.slot.injuredOnly ? <p className="text-small text-on-dark-dim">{injuredSide === 'left' ? 'Left' : 'Right'} (injured) only.</p> : null}
+            {planSlot.injuredOnly ? <p className="text-small text-on-dark-dim">{injuredSide === 'left' ? 'Left' : 'Right'} (injured) only.</p> : null}
             {budgetLine ? <p className="text-small text-on-dark">{budgetLine}</p> : null}
 
             {draft.heightIn !== undefined ? (
@@ -306,7 +289,7 @@ export function ActiveCard(props: ActiveCardProps) {
             {hasLoad ? (
               <Stepper label={loadLabel(exercise)} value={draft.load} step={loadStep(exercise)} min={0} max={loadMax(exercise, props.rackLb)} onChange={(v) => set({ load: v })} />
             ) : null}
-            {blockedOnLoad ? <p className="text-small text-on-dark">First time on this exercise: pick a load that lands at the target RPE.</p> : null}
+            {blockedOnLoad ? <p className="text-small text-on-dark">{model.loadLine}</p> : null}
 
             <Stepper
               label={panel === 'stop' ? `${countLabel(repUnit)} done before stopping` : countLabel(repUnit)}

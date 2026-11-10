@@ -1,4 +1,5 @@
 import type { History } from '../db/repo.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { addDays, daysBetween, weekOf } from '../rules/calendar.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { awaitingMorningCheck, consecutiveCleanDays, loadSeries, milesSeries, symmetryLeftOut, symmetrySeries, type LoadPoint, type MilesWeek, type SymmetryLeftOut, type SymmetryPoint } from '../rules/progress.ts'
@@ -1395,7 +1396,8 @@ export function downPeriodLines(periods: readonly DownPeriod[]): string[] {
 }
 
 export interface ProgressView {
-  clean: CleanDaysView
+  /** Null in tester mode (M-U3): nothing is read, so there are no clean days to count. */
+  clean: CleanDaysView | null
   adherence: AdherenceView
   /** The down periods, newest first, in words; empty with none declared. */
   downPeriods: string[]
@@ -1405,14 +1407,38 @@ export interface ProgressView {
   training: TrainingLoadView
   vo2: Vo2View
   koos: KoosView
-  tags: TagsView
+  /** Null in tester mode: the counts are of readings. */
+  tags: TagsView | null
   records: WorkoutRecord[]
 }
 
+/** The screen's lead for the mode: tester mode shows no clean days and no tag counts. */
+export function progressLead(mode: EngineMode): string {
+  return mode === 'tester'
+    ? 'What is logged on this phone, over time: sessions done, loads, symmetry, miles, training load, VO2 max and KOOS.'
+    : 'What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max, KOOS and morning tags.'
+}
+
 /** Everything the screen shows that doesn't depend on the exercise picked. The VO2 readings and KOOS entries come in on their own, never through History: no rule reads them. */
-export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[]; koosEntries?: readonly KoosEntry[] }): ProgressView {
+export function progressView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[]; koosEntries?: readonly KoosEntry[] }): ProgressView {
   const { today, settings, history, program } = input
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
+  if (input.mode === 'tester') {
+    // Tester mode (M-U3, PROGRAM-QUESTIONS 227): what was logged, with no reading taken: no clean days, no tag counts, no down periods, no gate lines on symmetry.
+    return {
+      clean: null,
+      adherence: adherenceView({ startDate: settings.startDate, today, template: program.weeklyTemplate, moves: history.sessionMoves, runs: history.runs, workouts: history.workouts }),
+      downPeriods: [],
+      exercises: loggedExercises(records, program.exercises),
+      refs: [],
+      miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),
+      training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
+      vo2: vo2View({ readings: input.vo2Readings ?? [] }),
+      koos: koosView({ entries: input.koosEntries ?? [], today }),
+      tags: null,
+      records,
+    }
+  }
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
   return {
     clean: cleanDaysView({ readings, today, records, runs: history.runs, checks: history.morningChecks, templates: program.templates }),

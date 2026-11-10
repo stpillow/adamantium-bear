@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MorningCheck } from '../schema/index.ts'
-import { NO_RED_FLAG, afterMorningCheck, clearRedFlag, lateFlagNote, lateFlagNotes, progressionSuspended, stopMessage } from './redFlags.ts'
+import { NO_RED_FLAG, afterMorningCheck, clearRedFlag, foldTodaysChecks, lateFlagNote, lateFlagNotes, progressionSuspended, stopMessage } from './redFlags.ts'
 
 const check = (redFlags: string[], date = '2026-11-04'): MorningCheck => ({
   id: 'm1', date, appliesTo: null, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags,
@@ -8,6 +8,27 @@ const check = (redFlags: string[], date = '2026-11-04'): MorningCheck => ({
 const catalog = [{ id: 'locking', text: 'Locking or catching: a mechanical block to straightening or bending' }, { id: 'numbness', text: 'Numbness or tingling below the knee' }]
 
 describe('red-flag state (rule 9)', () => {
+  it("folds today's flagged check into the state when it wasn't applied (saved in tester mode), and nothing else", () => {
+    const today = '2026-11-04'
+    const flagged = check(['locking'], today)
+    expect(foldTodaysChecks(NO_RED_FLAG, [flagged], today)).toEqual({ active: true, since: today, items: ['locking'] })
+    // Already applied: the same object, so nothing is written again.
+    const on = afterMorningCheck(NO_RED_FLAG, flagged)
+    expect(foldTodaysChecks(on, [flagged], today)).toBe(on)
+    // Cleared today, with a note: the clear stands.
+    const off = clearRedFlag(on, 'PT saw it this morning', today)
+    expect(foldTodaysChecks(off, [flagged], today)).toBe(off)
+    // Cleared on an earlier day: today's flag turns it back on.
+    const earlier = { active: false, items: [], clearedOn: '2026-11-03', clearNote: 'fine' }
+    expect(foldTodaysChecks(earlier, [flagged], today)).toEqual({ active: true, since: today, items: ['locking'] })
+    // Another day's check, a check logged late, or a check with nothing ticked: unchanged.
+    expect(foldTodaysChecks(NO_RED_FLAG, [check(['locking'], '2026-11-03')], today)).toBe(NO_RED_FLAG)
+    expect(foldTodaysChecks(NO_RED_FLAG, [{ ...check(['locking'], '2026-11-03'), loggedOn: today }], today)).toBe(NO_RED_FLAG)
+    expect(foldTodaysChecks(NO_RED_FLAG, [check([], today)], today)).toBe(NO_RED_FLAG)
+    // New items on an active state are added.
+    expect(foldTodaysChecks(on, [check(['locking', 'numbness'], today)], today)).toEqual({ active: true, since: today, items: ['locking', 'numbness'] })
+  })
+
   it('any ticked flag turns the state on and suspends progression', () => {
     const state = afterMorningCheck(NO_RED_FLAG, check(['locking']))
     expect(state).toEqual({ active: true, since: '2026-11-04', items: ['locking'] })

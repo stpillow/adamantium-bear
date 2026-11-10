@@ -1,5 +1,6 @@
 import { DAYS, DELOAD_WEEKS, addDays, dayOf, daysBetween, isDeloadWeek, isMonday, weekOf } from '../rules/calendar.ts'
 import { rebaseMoves, rebaseWeekNumber } from '../rules/moves.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { clearRedFlag, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
 import { downPeriodWords, standingPeriod } from '../rules/downPeriod.ts'
 import { TABLE_WORDS, daysSinceExport, exportDay, type BackupSummary, type BackupTable, type SettingChange, type SettingsOnImport, type TimeZoneImport } from '../rules/backup.ts'
@@ -44,8 +45,21 @@ export function sideWords(side: Side): string {
  */
 export const DUMBBELLS_LINE = 'Dumbbells are set per gym in Where you train.'
 
-/** Under the Phase section, beside a way to the Gates screen: the phase is shown here, and advanced there. */
-export const PHASE_NOTE = 'Read-only here. The Gates screen advances the phase once every item of its gate passes and you confirm.'
+/**
+ * Under the Phase section, beside a way to the Gates screen: the phase is shown here, and advanced
+ * there. A tester's Gates evaluates nothing and has no Advance, so the phase stays (M-U3,
+ * PROGRAM-QUESTIONS 232).
+ */
+export function phaseNote(mode: EngineMode): string {
+  return mode === 'tester'
+    ? 'Read-only. On a tester account the phase stays where it is; the Gates screen shows its criteria as written.'
+    : 'Read-only here. The Gates screen advances the phase once every item of its gate passes and you confirm.'
+}
+
+/** Under Injured side, here and in first run: the healthy side's budget only where the engine sets one, never in tester mode (M-U3). */
+export function sideNote(mode: EngineMode): string {
+  return mode === 'tester' ? 'Unilateral slots log this side first.' : 'Unilateral slots log this side first; its reps set the healthy side’s budget.'
+}
 
 /** Rest in 15 s steps, from a quarter minute to ten minutes: the stepper's limits are the schema's, so the form and an import refuse the same values. */
 export const REST_STEP = 15
@@ -207,8 +221,15 @@ export function phaseWords(
 
 export type RedFlagView = { active: true; headline: string; since: string | null; items: string[] } | { active: false; cleared: string | null }
 
-/** The red-flag state in words, from the engine's stop message; when off, how it was last cleared. */
-export function redFlagView(state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView {
+/**
+ * The red-flag state in words, from the engine's stop message; when off, how it was last cleared.
+ * Null in tester mode (M-U3, PROGRAM-QUESTIONS 228): no red-flag state is kept or shown there, and a
+ * stored one (from an import) is ignored until the account runs in full.
+ */
+export function redFlagView(mode: 'full', state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView
+export function redFlagView(mode: EngineMode, state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView | null
+export function redFlagView(mode: EngineMode, state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView | null {
+  if (mode === 'tester') return null
   const stop = stopMessage(state, catalog)
   if (stop) {
     return { active: true, headline: stop.headline, since: state.since ? `Flagged since ${dateWords(state.since)}.` : null, items: stop.items }
@@ -376,11 +397,13 @@ function settingChangeWords(change: SettingChange, phases: readonly Pick<Phase, 
  * hangs off that the file changes.
  */
 export function settingsOnImportWords(
+  mode: EngineMode,
   on: SettingsOnImport,
   catalog: readonly RedFlag[],
   phases: readonly Pick<Phase, 'number' | 'name'>[],
 ): { redFlag: string | null; changes: string[] } {
-  const flag = on.keptRedFlag
+  // Tester mode shows no red-flag state, so the import says nothing about one (M-U3).
+  const flag = mode === 'tester' ? null : on.keptRedFlag
   const stop = flag ? stopMessage(flag, catalog) : null
   let redFlag: string | null = null
   if (flag && stop) {
@@ -396,7 +419,9 @@ export function settingsOnImportWords(
  * `downPeriodsOnImport`, PROGRAM-QUESTIONS 189), said beside the red flag's line: an import never
  * lifts a pause. Null when nothing stands, or the file carries the same row.
  */
-export function keptDownPeriodWords(phone: readonly DownPeriod[], file: readonly DownPeriod[], today: IsoDate): string | null {
+export function keptDownPeriodWords(phone: readonly DownPeriod[], file: readonly DownPeriod[], today: IsoDate, mode: EngineMode = 'full'): string | null {
+  // Tester mode has no down periods to keep or say (M-U3, PROGRAM-QUESTIONS 231).
+  if (mode === 'tester') return null
   const standing = standingPeriod(today, phone)
   if (standing === null) return null
   const same = file.find((f) => f.id === standing.id)

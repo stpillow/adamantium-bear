@@ -155,7 +155,11 @@ describe('the session cookie', () => {
 
   it('refuses a tampered value, a value of the wrong kind, and a payload of the wrong types', async () => {
     const good = await sealSession('a', ENV, NOW)
-    expect(await readSession(`kr_session=${good.slice(0, -2)}AA`, ENV, NOW)).toBeNull()
+    // One character changed in the middle: always a real change, unlike overwriting the last two.
+    const at = Math.floor(good.length / 2)
+    const tampered = `${good.slice(0, at)}${good[at] === 'A' ? 'B' : 'A'}${good.slice(at + 1)}`
+    expect(tampered).not.toBe(good)
+    expect(await readSession(`kr_session=${tampered}`, ENV, NOW)).toBeNull()
     for (const bad of [{ k: 'strava-state', sub: 'a', iat: NOW, gen: 1 }, { k: 's', sub: 7, iat: NOW, gen: 1 }, { k: 's', sub: 'a', iat: '1', gen: 1 }, { k: 's', sub: 'a', iat: NOW, gen: 1.5 }, { k: 's', sub: '', iat: NOW, gen: 1 }, 'a', null]) {
       expect(await readSession(`kr_session=${await seal(bad, ENV.AUTH_COOKIE_KEY!, 'kr-session-v1')}`, ENV, NOW), JSON.stringify(bad)).toBeNull()
     }

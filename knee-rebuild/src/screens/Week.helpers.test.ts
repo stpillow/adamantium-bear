@@ -288,27 +288,27 @@ describe('weekView', () => {
   })
 
   it('opens on the current week with its header, relation and neighbours', () => {
-    const v = weekView({ today: '2026-11-18', selected: null, settings: settings(), history: history(), program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-18', selected: null, settings: settings(), history: history(), program: PROGRAM })
     expect(v).toMatchObject({ week: 3, currentWeek: 3, homeWeek: 3, header: 'Week 3 · Nov 16–22', relation: 'This week', deload: false, prev: 2, next: 4 })
   })
   it('opens on week 1 before the program starts, every day upcoming', () => {
-    const v = weekView({ today: '2026-11-01', selected: null, settings: settings(), history: history(), program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-01', selected: null, settings: settings(), history: history(), program: PROGRAM })
     expect(v).toMatchObject({ week: 1, currentWeek: 0, relation: 'The program starts Monday Nov 2', prev: null, next: 2 })
     expect(v.days.map((d) => d.statusWord)).toEqual(['Upcoming', 'Upcoming', 'Upcoming', 'Upcoming', 'Upcoming', 'Upcoming', 'Off'])
   })
   it('badges a deload week', () => {
-    expect(weekView({ today: '2026-11-18', selected: 4, settings: settings(), history: history(), program: PROGRAM }).deload).toBe(true)
+    expect(weekView({ mode: 'full', today: '2026-11-18', selected: 4, settings: settings(), history: history(), program: PROGRAM }).deload).toBe(true)
   })
   it('M4 done: three logged runs show against the week’s target, and the hold caps the following week', () => {
-    const two = weekView({ today: '2026-11-14', selected: null, settings: settings(), history: weekTwo, program: PROGRAM })
+    const two = weekView({ mode: 'full', today: '2026-11-14', selected: null, settings: settings(), history: weekTwo, program: PROGRAM })
     expect(two.miles).toBe('10.5 of 11 miles · 3 runs')
     expect(two.target).toBe('Target from the plan')
     expect(two.days.map((d) => d.statusWord)).toEqual(['Done', 'Missed', 'Done', 'Missed', 'Done', 'Today', 'Off'])
     expect(two.days.map((d) => d.reading)).toEqual(['clean', null, 'clean', null, 'hold', null, null])
-    const three = weekView({ today: '2026-11-14', selected: 3, settings: settings(), history: weekTwo, program: PROGRAM })
+    const three = weekView({ mode: 'full', today: '2026-11-14', selected: 3, settings: settings(), history: weekTwo, program: PROGRAM })
     expect(three).toMatchObject({ miles: '0 of 10.5 miles · no runs logged', target: 'Capped at this week’s 10.5 miles so far: this week read hold', capped: true, relation: 'Next week' })
     // Once week 2 is over, the cap reads as last week's.
-    const after = weekView({ today: '2026-11-16', selected: null, settings: settings(), history: weekTwo, program: PROGRAM })
+    const after = weekView({ mode: 'full', today: '2026-11-16', selected: null, settings: settings(), history: weekTwo, program: PROGRAM })
     expect(after).toMatchObject({ week: 3, target: 'Capped at last week’s 10.5 miles: last week read hold', capped: true, relation: 'This week' })
   })
   it('rows carry the session in words, the status, what was logged and what a tap does', () => {
@@ -318,7 +318,7 @@ describe('weekView', () => {
       runs: [run('r-mon', '2026-11-02', 3, 1, 'mbr')],
       morningChecks: [check('2026-11-03'), check('2026-11-04')],
     })
-    const v = weekView({ today: '2026-11-04', selected: null, settings: settings(), history: h, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-04', selected: null, settings: settings(), history: h, program: PROGRAM })
     const [mon, tue, wed, , , , sun] = v.days
     expect(mon).toMatchObject({ dateWords: 'Monday Nov 2', sessionWords: 'Run: MBR', statusMark: '✓', statusWord: 'Done', reading: 'clean', logged: ['Run: MBR, 3 miles'], action: null, movable: false, swappable: false })
     expect(tue).toMatchObject({ movable: false, swappable: false })
@@ -329,12 +329,12 @@ describe('weekView', () => {
   })
   it('follows moves: the strip, the moved-from line and the list with Undo', () => {
     const h = history({ sessionMoves: [{ id: 'move-000001', week: 1, dayA: 'tue', dayB: 'wed' }] })
-    const v = weekView({ today: '2026-11-02', selected: null, settings: settings(), history: h, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-02', selected: null, settings: settings(), history: h, program: PROGRAM })
     expect(v.days[1]).toMatchObject({ sessionWords: 'Run: easy', movedFrom: 'Moved from Wednesday' })
     expect(v.days[2]).toMatchObject({ sessionWords: 'Session A', movedFrom: 'Moved from Tuesday' })
     expect(v.moves).toMatchObject([{ id: 'move-000001', undoable: true }])
     expect(v.undoNote).toBeNull()
-    expect(weekView({ today: '2026-11-02', selected: 2, settings: settings(), history: h, program: PROGRAM }).moves).toEqual([])
+    expect(weekView({ mode: 'full', today: '2026-11-02', selected: 2, settings: settings(), history: h, program: PROGRAM }).moves).toEqual([])
   })
   it('keeps a finished session where it was logged: no move, no landing, no undo across it', () => {
     // Session A finished on Tuesday; a later move put Thursday's B on Wednesday and back is not offered.
@@ -346,7 +346,7 @@ describe('weekView', () => {
         { id: 'move-000002', week: 1, dayA: 'sat', dayB: 'tue' },
       ],
     })
-    const v = weekView({ today: '2026-11-04', selected: null, settings: settings(), history: h, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-04', selected: null, settings: settings(), history: h, program: PROGRAM })
     expect(v.days[1]).toMatchObject({ movable: false, swappable: false })
     expect(v.moves.map((m) => m.undoable)).toEqual([false, false])
     expect(v.undoNote).toBe('The latest move touches a day with something logged, so it stays.')
@@ -359,30 +359,30 @@ describe('weekView', () => {
         { id: 'move-000002', week: 1, dayA: 'thu', dayB: 'sat' },
       ],
     })
-    const v = weekView({ today: '2026-11-02', selected: null, settings: settings(), history: h, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-02', selected: null, settings: settings(), history: h, program: PROGRAM })
     expect(v.moves.map((m) => m.undoable)).toEqual([false, true])
     expect(v.undoNote).toBe('Only the latest move can be undone; each one swapped days as they stood after the ones before it.')
   })
   it('a finished week stays as it happened', () => {
     const h = history({ sessionMoves: [{ id: 'move-000001', week: 1, dayA: 'tue', dayB: 'wed' }] })
-    const v = weekView({ today: '2026-11-18', selected: 1, settings: settings(), history: h, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-18', selected: 1, settings: settings(), history: h, program: PROGRAM })
     expect(v.days.every((d) => !d.movable && !d.swappable)).toBe(true)
     expect(v.moveNote).toBe('That week is over; its days stay as they happened.')
     expect(v.moves.map((m) => m.undoable)).toEqual([false])
     expect(v.undoNote).toBe('That week is over; its moves stay.')
   })
   it('a row already done today still says it is today', () => {
-    const v = weekView({ today: '2026-11-02', selected: null, settings: settings(), history: history({ runs: [run('r', '2026-11-02', 3, 1, 'mbr')] }), program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-02', selected: null, settings: settings(), history: history({ runs: [run('r', '2026-11-02', 3, 1, 'mbr')] }), program: PROGRAM })
     expect(v.days[0]).toMatchObject({ dateWords: 'Today, Monday Nov 2', statusWord: 'Done', checkNote: 'Morning check not done yet; until then it reads hold at best' })
   })
   it('past week 12 shows the current week without a target', () => {
-    const v = weekView({ today: '2027-02-03', selected: null, settings: settings(), history: history(), program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2027-02-03', selected: null, settings: settings(), history: history(), program: PROGRAM })
     expect(v).toMatchObject({ week: 14, prev: 13, next: null, target: 'No target: week 14 is outside the 12-week plan', miles: '0 miles · no runs logged' })
   })
   it('carries the stop message when the red-flag state is on', () => {
-    const v = weekView({ today: '2026-11-04', selected: null, settings: settings({ redFlag: { active: true, items: ['locking'] } }), history: history(), program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-04', selected: null, settings: settings({ redFlag: { active: true, items: ['locking'] } }), history: history(), program: PROGRAM })
     expect(v.stop?.items).toEqual(['Locking or catching'])
-    expect(weekView({ today: '2026-11-04', selected: null, settings: settings(), history: history(), program: PROGRAM }).stop).toBeNull()
+    expect(weekView({ mode: 'full', today: '2026-11-04', selected: null, settings: settings(), history: history(), program: PROGRAM }).stop).toBeNull()
   })
 })
 
@@ -395,7 +395,7 @@ describe('a past day missing its morning check offers it (Batch D, PROGRAM-QUEST
     morningChecks: [check('2026-11-19'), check('2026-11-20')],
   })
   it('offers it on the session day’s row, and not on yesterday’s', () => {
-    const v = weekView({ today: '2026-11-20', selected: null, settings: settings(), history: h, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-20', selected: null, settings: settings(), history: h, program: PROGRAM })
     const tue = v.days.find((d) => d.date === '2026-11-17')
     expect(tue).toMatchObject({ checkNote: 'No morning check was logged for it', lateCheck: { morning: '2026-11-18', label: 'Log the morning check for Wednesday Nov 18' }, lateFlagNote: null })
     expect(v.days.find((d) => d.date === '2026-11-19')?.lateCheck).toBeNull()
@@ -404,14 +404,14 @@ describe('a past day missing its morning check offers it (Batch D, PROGRAM-QUEST
   })
   it('once logged late the offer goes, the reading recomputes, and a flag on it stays a note on the row', () => {
     const late = check('2026-11-18', { id: 'mc-2026-11-18', appliesTo: { kind: 'workout', id: '2026-11-17-p1-a' }, redFlags: ['locking'], loggedOn: '2026-11-20' })
-    const v = weekView({ today: '2026-11-20', selected: null, settings: settings(), history: { ...h, morningChecks: [...h.morningChecks, late] }, program: PROGRAM })
+    const v = weekView({ mode: 'full', today: '2026-11-20', selected: null, settings: settings(), history: { ...h, morningChecks: [...h.morningChecks, late] }, program: PROGRAM })
     const tue = v.days.find((d) => d.date === '2026-11-17')
     expect(tue).toMatchObject({ lateCheck: null, checkNote: null, reading: 'back-off' })
     expect(tue?.lateFlagNote).toBe('Red flag on the next morning’s check, logged late on Friday Nov 20: Locking or catching. A note, not a stop: any of these means a call to the ortho or PT')
     // No takeover: the Week's stop stays off.
     expect(v.stop).toBeNull()
     // The row keeps the note for good, weeks later.
-    const later = weekView({ today: '2026-12-20', selected: 3, settings: settings(), history: { ...h, morningChecks: [...h.morningChecks, late] }, program: PROGRAM })
+    const later = weekView({ mode: 'full', today: '2026-12-20', selected: 3, settings: settings(), history: { ...h, morningChecks: [...h.morningChecks, late] }, program: PROGRAM })
     expect(later.days.find((d) => d.date === '2026-11-17')?.lateFlagNote).toContain('Locking or catching')
   })
   it('the offer’s own rule: a lift left open offers nothing', () => {
@@ -423,7 +423,7 @@ describe('a past day missing its morning check offers it (Batch D, PROGRAM-QUEST
 describe('a down period on the Week screen (Batch E, PROGRAM-QUESTIONS 183, 185)', () => {
   const AT = '2026-11-14T13:00:00.000Z'
   const P1: DownPeriod = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: AT }
-  const view = (today: string, selected: number | null, periods: DownPeriod[] = [P1]) => weekView({ today, selected, settings: settings(), history: history({ downPeriods: periods }), program: PROGRAM })
+  const view = (today: string, selected: number | null, periods: DownPeriod[] = [P1]) => weekView({ mode: 'full', today, selected, settings: settings(), history: history({ downPeriods: periods }), program: PROGRAM })
 
   it('week 3, whose Monday the period covers: the target held at last week’s, in words', () => {
     const v = view('2026-11-18', 3)
