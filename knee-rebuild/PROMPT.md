@@ -22,7 +22,7 @@ These are set. Shawn flips the first two before handing this over if he disagree
 | Decision | Choice | Alternative, if flipped |
 |---|---|---|
 | Platform | Installable PWA, mobile-first, added to the iPhone home screen; works offline after first load | Native SwiftUI app; everything below still applies except the stack row |
-| Data | Local-first on the device: IndexedDB via Dexie, with JSON export and import for backup. No accounts. One server piece only: the Strava import function (`api/strava.ts`, Nov 6), which holds Strava's client secret and stores nothing; the log never leaves the phone | Cross-device sync via Vercel Postgres in v2, not v1 |
+| Data | Local-first on the device: IndexedDB via Dexie, with JSON export and import for backup. Invite-gated accounts (Nov 8 decisions, M-U2): an invite code typed into Settings signs a phone in to an account (a name and a role) held in Neon Postgres; no open sign-up, no passwords, no vendor auth, no redirects. Two server functions share `api/_session.ts`: `api/strava.ts` (Strava's client secret; stores nothing) and `api/auth.ts` (redeems codes; sets a sealed, same-origin session cookie). The log never leaves the phone | Cross-device sync via Vercel Postgres in v2, not v1 |
 | Stack | Vite + React 19 + TypeScript (strict) + Tailwind, vite-plugin-pwa, Zod for schemas, Vitest for the rules engine, Playwright for one smoke test | Next.js only if a server becomes necessary |
 | Deployment | Vercel, static build, preview deploy on every PR, production on the Vercel URL; a custom subdomain later if Shawn wants one | None |
 | Logic placement | A pure TypeScript rules module (src/rules/) holding every decision the app makes, fully unit-tested; React components render and collect input only | None |
@@ -121,7 +121,7 @@ How to operate, from the first message on:
 4. One commit per task, one PR per milestone, conventional commit messages, the preview URL in the PR description, and a three-line demo note: what to tap, what to expect, what's not done.
 5. Tests before UI for anything in section 4. A rule change without a test change is a bug.
 6. When program.md is ambiguous, take the reading that is more conservative for the knee, note it in PROGRAM-QUESTIONS.md, and keep going. Never change training content to make the data model simpler; change the model.
-7. Dependencies: only what section 2 names plus small, well-maintained utilities. No analytics, no telemetry, no external calls at runtime, except the app's own `/api/strava` when Shawn taps Connect or Check Strava (Nov 6); the page itself still talks only to its own origin. The evidence layer (Batch F) makes zero literature calls: citations are bundled at build time, and a citation link is a plain navigation Shawn taps, not a fetch; scripts/evidence.ts runs only on a developer machine.
+7. Dependencies: only what section 2 names plus small, well-maintained utilities. No analytics, no telemetry, no external calls at runtime, except the app's own `/api/strava` when Shawn taps Connect or Check Strava (Nov 6) and the app's own `/api/auth` (M-U2: the account check when Settings opens online; Redeem and Sign out on tap), on the same terms; nothing about using the app offline waits on either; the page itself still talks only to its own origin. The evidence layer (Batch F) makes zero literature calls: citations are bundled at build time, and a citation link is a plain navigation Shawn taps, not a fetch; scripts/evidence.ts runs only on a developer machine.
 8. If you hit a wall (an iOS PWA limitation, a Dexie quirk, a rule that can't be computed from the logged data), say so in the PR with two options and a recommendation. Don't quietly simplify the behavior.
 9. Tick PLAN.md as tasks finish; it's the status page Shawn reads, so keep it truthful and short.
 
@@ -130,7 +130,7 @@ How to operate, from the first message on:
 Out of scope, so don't build toward them or leave hooks for them:
 
 - Apple Health or Whoop sync, and background Strava sync (Strava import on tap came forward to v1 on Nov 6: `api/strava.ts`, PROGRAM-QUESTIONS 142; the other platforms' barriers are in docs/integrations.md)
-- Accounts, multi-user, or cross-device sync (v2 candidate: Vercel Postgres behind the same Dexie interface)
+- Open sign-up, passwords, vendor auth, redirect sign-in flows, and cross-device sync (invite-gated accounts came forward Nov 8, M-U2; sync is M-U4: Neon behind the same Dexie interface)
 - Push notifications; iOS PWAs make them unreliable, and a home-screen icon is the reminder
 - Nutrition tracking, or any general wellness score (the morning check's fixed tags came forward Nov 9: six optional one-tap tags counted on the phone against the readings, in plain counts, read by no rule; PROGRAM-QUESTIONS 177, 178)
 - AI coaching, chat, or generated advice inside the app; the program is the coach (the evidence takeaways and gate rationales are written at development time and reviewed by Shawn in a PR, never generated in the app)

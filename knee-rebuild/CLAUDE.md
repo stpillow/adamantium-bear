@@ -1,6 +1,6 @@
 # Knee Rebuild
 
-Single-user PWA that runs Shawn's 12-week knee return-to-sport program on his iPhone: says what to do today, logs what happened, reads the knee's response, decides the next session. Read these before changing anything:
+Single-writer-per-account PWA (invite-gated accounts; each phone the only writer and the primary copy of its own log) that runs Shawn's 12-week knee return-to-sport program on his iPhone: says what to do today, logs what happened, reads the knee's response, decides the next session. Read these before changing anything:
 
 - `PROMPT.md`: owns app behavior (model, rules, screens, build plan, working agreements).
 - `docs/program.md`: owns training content. Its training content is transcribed into the seed data (`data/program.json`) once and never parsed at runtime, never "improved" in code. The Program screen renders program.md for reading only (`src/rules/markdown.ts` reads it into headings, paragraphs, lists and tables); nothing the engine decides comes from it.
@@ -15,11 +15,11 @@ Single-user PWA that runs Shawn's 12-week knee return-to-sport program on his iP
 
 ## Stack
 
-Vite 8 · React 19 · TypeScript 7 (strict, `noUncheckedIndexedAccess`) · Tailwind 4 (spdc tokens in `src/index.css`) · vite-plugin-pwa (offline-first service worker, update on prompt) · Dexie (IndexedDB, local-first, no server) · Zod (schemas, from M1) · Vitest · Playwright (one smoke test, M6) · oxlint.
+Vite 8 · React 19 · TypeScript 7 (strict, `noUncheckedIndexedAccess`) · Tailwind 4 (spdc tokens in `src/index.css`) · vite-plugin-pwa (offline-first service worker, update on prompt) · Dexie (IndexedDB, local-first; the log stays on the phone) · Zod (schemas, from M1) · Vitest · Playwright (one smoke test, M6) · oxlint.
 
-Dependencies: only what PROMPT section 2 names plus small, well-maintained utilities. No analytics, no telemetry, no external calls at runtime, except the app's own `/api/strava` function on Shawn's tap (Nov 6). Fonts are vendored through fontsource for that reason.
+Dependencies: only what PROMPT section 2 names plus small, well-maintained utilities. No analytics, no telemetry, no external calls at runtime, except the app's own `/api/strava` function on Shawn's tap (Nov 6) and the app's own `/api/auth` on the same own-origin terms (M-U2). Fonts are vendored through fontsource for that reason. The Neon driver (`@neondatabase/serverless`) is server-only and PGlite (`@electric-sql/pglite`) is dev and test only; `src/app/serverSide.guard.test.ts` and the build's bundle check (`scripts/bundleCheck.ts`) prove neither ships.
 
-Server: `api/strava.ts` is the one Vercel function: self-contained (no imports from `src/`), typechecked through tsconfig.node.json, tested by `api/_strava.test.ts`. It keeps no data; Strava's tokens live in one encrypted HttpOnly cookie. Its secrets are Vercel environment variables, never in the bundle. See docs/integrations.md.
+Server: two Vercel functions, `api/strava.ts` and `api/auth.ts`, self-contained (no imports from `src/`), sharing underscore files Vercel doesn't deploy as functions: `api/_session.ts` (sealing, cookies, the accounts switch, the session and the `/api` gate), `api/_accounts.ts` (every SQL statement, Neon behind a tiny query adapter) and `api/_code.ts` (invite codes). Imports inside `api/` end in `.js`. Typechecked through tsconfig.node.json; tested by `api/_strava.test.ts`, `_auth`, `_session`, `_accounts` and `_code`, the database ones on PGlite in-process. Strava's function keeps no data (its tokens live in one encrypted HttpOnly cookie); the accounts database holds names, roles, code hashes and last-seen times only. Secrets are Vercel environment variables, never in the bundle: `STRAVA_*`, `DATABASE_URL`, `AUTH_COOKIE_KEY`, `AUTH_CODE_PEPPER`, `AUTH_KEY_GENERATION`, `AUTH_BOOTSTRAP_CODE`. Accounts are off until `DATABASE_URL` and `AUTH_COOKIE_KEY` are both set. See docs/integrations.md and docs/accounts.md.
 
 ## Commands
 
@@ -29,11 +29,12 @@ npm run typecheck    # tsc -b
 npm run lint         # oxlint
 npm run test         # vitest run (rules engine)
 npm run check        # typecheck + lint + test
-npm run build        # tsc -b && vite build → dist/ (includes sw.js and manifest)
+npm run build        # tsc -b && vite build → dist/ (includes sw.js and manifest), then the bundle check (no server code ships)
 npm run preview      # serve dist/ locally; test the service worker here, not in dev
 npm run e2e          # Playwright on a fresh build: the Session A smoke test and the PWA checklist (docs/pwa-audit.md); needs Chromium, not in check
 npm run program -- --week 5 --session B   # prints a session from the seed data, deload-aware
 npm run evidence     # monthly digest: re-runs saved searches, verifies entries; prints only (docs/evidence-digest.md)
+npm run accounts -- <code|migrate|mint|list|revoke|recode|bootstrap|unblock>   # dev-time account admin against Neon, reads .env.accounts (docs/accounts.md)
 ```
 
 Deploy: Vercel project `knee-rebuild` (SPDC team), root directory `knee-rebuild/`, framework Vite. Every push gets a preview deploy; `main` is production. Builds are skipped when this folder didn't change.
@@ -48,6 +49,8 @@ knee-rebuild/
   data/evidence.json       hand-curated citations (Batch F), validated by src/schema/evidence.test.ts; evidence.notes.json holds the curator's notes, read by scripts only
   scripts/program.ts       prints a session (npm run program)
   scripts/evidence.ts      the monthly evidence digest, dev-only (npm run evidence, docs/evidence-digest.md)
+  scripts/accounts.ts      dev-time account admin (npm run accounts, docs/accounts.md); scripts/bundleCheck.ts runs after every build
+  api/                     the two Vercel functions (strava.ts, auth.ts) and their shared _session, _accounts, _code; tests beside them
   public/                  icons, static assets
   src/
     main.tsx  App.tsx  index.css (tokens live here)
@@ -84,7 +87,7 @@ knee-rebuild/
 
 spdc-design is installed and applied: Duke navy ground, Fraunces display (SOFT 0, WONK 0, upright), IBM Plex Sans body, IBM Plex Mono for short labels only, the 4px spacing scale, radii 0/2/4, one green accent word per surface. Tailwind's default palette, fonts, sizes and radii are cleared in `src/index.css`, so an off-system value won't compile into a utility.
 
-Gym rules on top of that: text-first; 44 px minimum tap targets (`tap` utility); numeric keypads (`inputmode="decimal"`) and steppers, not free text; no modals that trap; every logging interaction under 10 seconds without reading. Units: pounds, miles, seconds. Dates in the user's time zone (a setting, New York by default); weeks start Monday.
+Gym rules on top of that: text-first; 44 px minimum tap targets (`tap` utility); numeric keypads (`inputmode="decimal"`) and steppers, not free text (the invite code in Settings, Account is the one exception: a one-time entry, not logging; PROGRAM-QUESTIONS 220); no modals that trap; every logging interaction under 10 seconds without reading. Units: pounds, miles, seconds. Dates in the user's time zone (a setting, New York by default); weeks start Monday.
 
 ## Working agreements, short form
 

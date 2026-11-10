@@ -1,6 +1,6 @@
 # Multi-user accounts, admin controls and releases: the alpha plan
 
-Decided with Shawn on Nov 8, 2026, from a four-sweep research study (auth, data architecture, release mechanics, obligations) and its critic pass. Only M-U1 (first-run setup and the time zone setting) is built; the rest is not. The study's full option tables live in the workflow record; this document records what was chosen and why, the corrections the critic forced, and the build spec. Where the study recommended differently than Shawn chose, the deviation is recorded, not hidden.
+Decided with Shawn on Nov 8, 2026, from a four-sweep research study (auth, data architecture, release mechanics, obligations) and its critic pass. M-U1 (first-run setup and the time zone setting) and M-U2 (invite-code accounts, Nov 9; docs/accounts.md) are built; the rest is not. The study's full option tables live in the workflow record; this document records what was chosen and why, the corrections the critic forced, and the build spec. Where the study recommended differently than Shawn chose, the deviation is recorded, not hidden.
 
 A standing gate above everything else: **no tester install ships before Shawn has put section 5's questions in front of a qualified professional.** The research is input to that conversation, not a substitute for it.
 
@@ -57,16 +57,16 @@ A per-account role, enforced in the rules layer, not hidden in the UI:
 
 ## 6. Amendments this work requires (the Nov 6 Strava amendment is the process)
 
-1. PROMPT section 2: "no accounts" → invite-gated accounts with per-device-primary, server-synced storage; section 8's non-goal rewritten accordingly.
-2. PROMPT section 7 / CLAUDE.md: runtime calls allowed to the app's own `/api/auth` and `/api/sync` alongside `/api/strava`, on the same own-origin-only terms.
+1. PROMPT section 2: "no accounts" → invite-gated accounts with per-device-primary, server-synced storage; section 8's non-goal rewritten accordingly — done in M-U2 (Nov 9) for the accounts; the sync wording waits for M-U4.
+2. PROMPT section 7 / CLAUDE.md: runtime calls allowed to the app's own `/api/auth` and `/api/sync` alongside `/api/strava`, on the same own-origin-only terms — done for `/api/auth` in M-U2 (Nov 9); `/api/sync` waits for M-U4.
 3. PROMPT section 2 "Units and time": timezone becomes a per-user setting — done in M-U1 (Nov 9).
-4. CLAUDE.md "single-user PWA" framing → single-writer-per-account; the two non-negotiable rules unchanged.
+4. CLAUDE.md "single-user PWA" framing → single-writer-per-account; the two non-negotiable rules unchanged — done in M-U2 (Nov 9).
 5. docs/integrations.md: note the per-tester Strava visibility rule under sync. (The study's claimed higher rate-limit figures stay out until read on Strava's own page — **unverified**.)
 
 ## 7. Build order (each its own PR to `dev`, after the current batch queue)
 
 1. **M-U1 Onboarding and de-hardcoding** — the wizard, timezone setting, seed-assumption sweep. Gating for everything; useful even solo. — built (Nov 9; PLAN.md's M-U1 block, PROGRAM-QUESTIONS 203 to 212).
-2. **M-U2 Accounts** — Neon, `api/auth.ts`, invite codes, roles, session cookie; the app works logged-out exactly as today until a code is entered.
+2. **M-U2 Accounts** — Neon, `api/auth.ts`, invite codes, roles, session cookie; the app works logged-out exactly as today until a code is entered. — built (Nov 9; PLAN.md's M-U2 block, PROGRAM-QUESTIONS 213 to 222, docs/accounts.md). "Logged-out as today" holds while accounts are off; once on, Strava needs a session.
 3. **M-U3 Tester mode** — the role enforcement and its guard tests.
 4. **M-U4 Sync** — `/api/sync`, catch-up exchange, deletion on request, the privacy note.
 5. **M-U5 Admin screen** — invites, tester list, revocation, opt-in debug share.
