@@ -10,7 +10,7 @@ import { scheduledSession } from '../rules/calendar.ts'
 import { candidates, importedStravaIds, stravaActivityUrl, syncAfter, type Candidate } from '../rules/stravaImport.ts'
 import { runTypeFor } from '../rules/weekPlan.ts'
 import { dateChoices } from './RunLogger.helpers.ts'
-import { candidateWords, disconnectWords, resultWords } from './Strava.helpers.ts'
+import { accountNeededWords, candidateWords, disconnectWords, resultLine, stravaPanel } from './Strava.helpers.ts'
 
 const LABEL = 'font-mono text-small uppercase tracking-[0.22em] text-on-dark-muted'
 
@@ -86,15 +86,23 @@ export function Strava({ result }: { result?: string | undefined }) {
       setBusy(false)
     }
   }
-  const came = resultWords(result)
+  const came = resultLine(result, status)
+  const panel = stravaPanel(status)
 
   return (
     <Screen title="Import from Strava" lead="Bring in runs, elliptical and rowing sessions you recorded on Strava.">
       {came ? <p className="text-body text-on-dark">{came}</p> : null}
       {left ? <p className="text-body text-on-dark">{left}</p> : null}
-      {!status.configured ? (
+      {status.account ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-body text-on-dark-dim">{accountNeededWords(status.account)}</p>
+          <Button wide onClick={() => navigate({ name: 'settings' })}>
+            Open Settings
+          </Button>
+        </div>
+      ) : panel === 'not-set-up' ? (
         <p className="text-body text-on-dark-dim">Strava isn’t set up on this deployment yet. It needs a Strava API app and three settings in Vercel (docs/integrations.md).</p>
-      ) : !status.connected ? (
+      ) : panel === 'connect' ? (
         <div className="flex flex-col gap-3">
           <p className="text-body text-on-dark-dim">Connecting lets this app read your activities when you tap Check Strava, and nothing else. It never posts to Strava, and nothing syncs in the background.</p>
           <a href={STRAVA_CONNECT_URL} className="tap flex w-full items-center justify-center rounded-sm bg-paper px-6 py-3 font-sans text-body font-medium text-on-light">

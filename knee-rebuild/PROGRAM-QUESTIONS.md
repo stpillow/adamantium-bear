@@ -347,3 +347,62 @@ In this section **confirm** = reading taken and built, Shawn to confirm or overr
 
 212. **Dates that don't come from the setting.** (a) The late-entry marker (`lateStartedAt` in `src/rules/retro.ts`): a fixed `T17:00:00.000Z` on the session's date, compared as a string by `isLateEntry`; its value never changes, since stored rows match on it. It also orders sessions where "the latest workout" is picked (`subjectFor` in `src/screens/MorningCheck.helpers.ts` through `Date.parse`, `src/rules/history.ts`, `src/rules/gymDay.ts`, `src/screens/Today.helpers.ts`): in New York it sorts at local noon; at UTC+7 and east it falls on the next local day, so a late entry sorts after every session started live that day (pinned by a Tokyo case). Accepted: a late entry and a live session on one day is rare, and either order picks a real session of that day. (b) A Strava activity's date is its own local date (`stravaImport.ts`), and `syncAfter`'s 86,400 s margin covers zones up to 24 hours from UTC. (c) The 36-hour morning-check window (`reading.ts`) is words only. (d) The run logger pins its date when it opens.
 
+
+## M-U2: accounts (Nov 9)
+
+Not program questions: the readings this build took on accounts, recorded here as M-U1's were (203 to 212). Setup and operations: docs/accounts.md.
+
+213. **The code format and its entropy** (`api/_code.ts`). 16 Crockford base32 symbols printed as `XXXX-XXXX-XXXX-XXXX`, with no I, L, O or U. 15 are random: a random byte `& 31` is exactly uniform, giving 75 bits. The 16th is a Luhn mod 32 check symbol, which catches every single mistyped character and most swapped neighbours, so a typo is answered on the server without a lookup. Typing is forgiving: lower case, spaces, dashes and underscores are fine, O reads as 0 and I or L as 1. The phone checks the shape first (`codeProblem` in `src/screens/Account.helpers.ts`); it carries its own copy of the normalising, pinned to the server's by one fixture table, `api/_codeFixtures.ts`, that both `api/_code.test.ts` and `src/screens/Account.helpers.test.ts` import, so changing either side without the other fails a test (test data only; the underscore keeps Vercel from deploying it, and the guard lets only those two tests import it).
+
+214. **Hashing, the pepper, and constant-time comparison.**
+- The database stores HMAC-SHA-256(`AUTH_CODE_PEPPER`, `'kr-code-v1:' + code`), never the code. The lookup is an indexed equality on that keyed hash, and both secret comparisons are constant-time: the row's hash against the computed one, and the bootstrap code's against the submitted one.
+- Changing the pepper voids every code, while existing sessions survive. If it leaks: rotate it, then `recode` every account.
+- The function stores an HMAC of its pepper (`meta.pepper_check`) on each redeem. `npm run accounts` refuses to `mint`, `recode` or `bootstrap` when the local pepper differs, so a pepper copied with a stray newline can't mint codes that never work.
+- Secrets with whitespace around them are refused, by the function (the broken state, 219) and by the script, never trimmed silently.
+
+215. **The first admin: `AUTH_BOOTSTRAP_CODE`** (`bootstrap` in `api/auth.ts`).
+- While no admin exists, redeeming the code from that environment variable creates the admin account, named `AUTH_BOOTSTRAP_NAME` (default "Admin", trimmed, 40 characters at most). The code becomes the admin's own, so the second context (the home-screen app) signs in through the ordinary lookup.
+- Once an admin exists the variable does nothing, and docs/accounts.md makes removing it mandatory.
+- A terminal fallback, `npm run accounts -- bootstrap --name "Shawn"`, refuses when an admin exists.
+- One admin at most is enforced by a partial unique index (`accounts_one_admin`), and the bootstrap insert absorbs a clash on either index. Shawn is the operational-only admin, and a later migration can drop the index if that changes. **confirm** the name and the one-admin index.
+
+216. **The session's life, its revocation, and what Sign out does** (`api/_session.ts`).
+- `kr_session`: sealed (AES-GCM, key = SHA-256 of `'kr-session-v1'` and `AUTH_COOKIE_KEY`), HttpOnly, Secure, SameSite=Strict, Path=/api, 400 days (Chrome's cap). It holds `{ k: 's', sub, iat, gen }`, with its types checked when it is read.
+- `me` and redeem re-issue a session older than 30 days, and the gate never does. So a phone that doesn't open Settings online for 400 days types its code again.
+- Revoking one account (`revoked_at`) takes effect on its next `/api` call. Bumping `AUTH_KEY_GENERATION` or rotating the cookie key revokes every session.
+- Sign out first revokes a connected Strava at Strava, while still signed in, freeing the athlete slot (a cap of 10). Strava's `oauth/deauthorize` revokes every token for the athlete and this app, so signing out in Safari disconnects the home-screen app (and any other context) too; `SIGN_OUT_NOTE` and the sign-out words say Strava is disconnected for every phone and browser the account uses. It then clears both this context's session and its Strava cookie, whatever the gate says (no session, revoked, a database error, accounts half set or off). Clearing the caller's own cookies needs no database.
+- Reset all data doesn't sign out.
+- Strava data is shown only to its own athlete. With accounts on, the callback binds the Strava tokens to the account that connected them (`{ k: 'strava', sub, tokens }`), and every Strava action treats another account's token cookie as not connected and clears it, so a context that changes hands never shows or uses the last account's Strava. A token cookie sealed before accounts (Shawn's) is adopted by the first account to use it, and reads as ever with accounts off.
+- As well, a different account redeeming on a context forgets that context's Strava cookie. For that, `me` and the gate clear only an unreadable session cookie: one that reads but is stale or names a revoked account stays (refused all the same), so the redeem that follows Settings' `me` still sees whose context it was. The same account redeeming again, after a generation bump, keeps its connection.
+- If Sign out can't read whether Strava is connected (a refused gate, a database blip, a server error, a dropped fetch), it still signs out and its words send the tester to Strava, Settings, My Apps.
+- **confirm**: the 400-day life with re-issue only from Settings, and Sign out revoking Strava.
+
+217. **The redeem rate limit and the uniform words** (`redeem` in `api/auth.ts`).
+- Every well-formed redeem counts, successes included, against two limits per 15 minutes: 10 per client and 200 overall.
+- Each attempt is recorded first and then counted, itself included; the redeem is refused when this client's count is over 10 or everyone's over 200 (the same 10th try passes and 11th is refused as when counts were read before recording). Every statement commits on its own (Neon over HTTP has no interactive transactions), so any attempt that got past was in the table before its own count: concurrent redeems can only over-count, never slip past together. Sixty at once from one client, statements interleaved, let at most 10 through (`api/_auth.test.ts`); a burst may refuse a few that would have fitted, which errs on the side of the limit.
+- A refused attempt takes its own row back (`forgetAttempt`), so a client at its limit adds no rows. One client alone therefore can't hold the overall count up, and tripping the overall cap takes about 20 distinct clients. A take-back that fails leaves a row that only over-counts, and the answer is still 429.
+- A client is a keyed hash of its address. IPv6 addresses are taken by their /64, since one host can walk its /64 for free. Raw addresses are never stored, and rows are kept 24 hours.
+- The overall cap can still be exhausted on purpose. That delays new redemptions by 15 minutes, while live sessions are unaffected. `npm run accounts -- unblock` lifts it from the terminal. Accepted at alpha scale.
+- An unknown, revoked, mistyped or closed-bootstrap code gets the same 401 and the same words. Checks that don't need the database (origin, content type, a body of 1024 bytes at most) answer before it is touched.
+
+218. **The /api gate, the callback exemption, and previews** (`requireSession` in `api/_session.ts`; `api/strava.ts`).
+- With accounts on, every `/api` route needs a session except `/api/auth`'s redeem and me. That includes Strava's status, and its "not set up" answer.
+- A missing, unreadable or stale-generation cookie is refused without waking the database. Only an unreadable cookie is cleared (216).
+- Strava's callback is exempt, because Strava's return is a cross-site navigation and a Strict cookie isn't sent on it. Connect seals `{ state, sub, iat, gen }` into the 10-minute state cookie, and the callback refuses one that is older, from another generation, or for a revoked account.
+- Connect, refused by the gate, goes back to the screen with `result=account`, `account-setup` or `unavailable` (carrying any cookie-clearing).
+- Disconnect also requires a same-origin request, with accounts on only, so the off path stays byte-for-byte what it was.
+- Previews: the `AUTH_*` variables go on Production only, so previews stay off. Whether Vercel's deployment protection covers previews is **unverified**.
+
+219. **Off, on, broken** (`accountsMode`). Off unless `DATABASE_URL` and `AUTH_COOKIE_KEY` are both set; the state after Neon is added and before the cookie key is still off. On when both secrets are 32 characters or more with nothing around them and `AUTH_KEY_GENERATION` is unset or a positive whole number. Anything else is broken: every gated route answers 503 "Accounts are half set up on this deployment." and the Strava callback goes back with `account-setup`, so a half-set deployment never opens the gate and never locks anyone out silently. Each function answers a thrown error with a plain 500, and no answer, header or log carries a secret or an error's own text (`src/app/serverSide.guard.test.ts`).
+
+220. **What Settings shows, the free-text exception, offline** (`accountView` in `src/screens/Account.helpers.ts`; `src/app/account.ts`; `src/screens/settings/account.tsx`).
+- The Account section sits after the red flag and before Export. It is hidden on a deployment without accounts, or when nothing is known, which is Shawn's phone while accounts are off. It never shows on the "Set up" screen: a fresh tester sets up first, then redeems.
+- Signed out: "Have an invite code?", a text field and Redeem.
+- Signed in: "Signed in as Alex, a tester." and Sign out.
+- Online, Settings asks `me`. Offline, it shows the last answer kept on the phone, said as such ("As of the last time this phone was online"), and makes no call.
+- Only an answer from the function replaces the kept one. An iPhone app that thinks it is online with no network, or a page with no function, never reads a signed-in phone as signed out.
+- The code field is the one free-text field outside notes, an exception to CLAUDE.md's gym rule: a one-time entry, not logging, with no autocorrect and capitals on. **confirm**
+
+221. **Last seen and the app version.** `last_seen_at` is written by an authenticated request (`me`, a gated call, a redeem) at most once an hour. Settings says so to a signed-in tester: "the account holds your name, your role and when this app last checked in." `last_app_version` stays NULL until M-U4 can fill it from sync requests: an in-app telemetry call is ruled out.
+
+222. **Roles are display-only in this build.** `admin` and `tester` show in words and decide nothing; tester-mode enforcement is M-U3, in the rules layer. There is no admin screen (M-U5); `npm run accounts` stands in on Shawn's machine.

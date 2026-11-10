@@ -12,7 +12,11 @@ const DRAFT_KEY = 'knee-rebuild:strava-draft'
 export interface StravaStatus {
   configured: boolean
   connected: boolean
+  /** When accounts are on (M-U2): why the function wouldn't answer for this phone. */
+  account?: 'required' | 'setup' | 'unavailable'
 }
+
+const ACCOUNT_REASONS = ['required', 'setup', 'unavailable'] as const
 
 async function readJson<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as T & { error?: string }
@@ -20,11 +24,21 @@ async function readJson<T>(res: Response): Promise<T> {
   return body
 }
 
-/** Whether this deployment has Strava set up, and whether this phone is connected. Offline, or with no function deployed, it reads as not set up. */
-export async function stravaStatus(): Promise<StravaStatus> {
+/**
+ * Whether this deployment has Strava set up, and whether this phone is connected. Offline, or with no
+ * function deployed, it reads as not set up. When accounts are on and this phone isn't signed in (or
+ * accounts can't be checked), the function's 401 or 503 names why, and that comes back as `account`.
+ */
+export async function stravaStatus(fetcher: typeof fetch = fetch): Promise<StravaStatus> {
   try {
-    const res = await fetch(`${BASE}?action=status`, { credentials: 'same-origin' })
-    if (!res.ok || !(res.headers.get('content-type') ?? '').includes('application/json')) return { configured: false, connected: false }
+    const res = await fetcher(`${BASE}?action=status`, { credentials: 'same-origin' })
+    if (!(res.headers.get('content-type') ?? '').includes('application/json')) return { configured: false, connected: false }
+    if (res.status === 401 || res.status === 503) {
+      const body = (await res.json().catch(() => ({}))) as { account?: unknown }
+      const account = ACCOUNT_REASONS.find((r) => r === body.account)
+      return account ? { configured: true, connected: false, account } : { configured: false, connected: false }
+    }
+    if (!res.ok) return { configured: false, connected: false }
     return await readJson<StravaStatus>(res)
   } catch {
     return { configured: false, connected: false }
@@ -40,8 +54,8 @@ export async function stravaActivities(after: number): Promise<StravaActivity[]>
 }
 
 /** Disconnects; true when Strava confirmed the revoke, false when only this phone's cookie went. */
-export async function stravaDisconnect(): Promise<boolean> {
-  const body = await readJson<{ revoked?: boolean }>(await fetch(`${BASE}?action=disconnect`, { method: 'POST', credentials: 'same-origin' }))
+export async function stravaDisconnect(fetcher: typeof fetch = fetch): Promise<boolean> {
+  const body = await readJson<{ revoked?: boolean }>(await fetcher(`${BASE}?action=disconnect`, { method: 'POST', credentials: 'same-origin' }))
   return body.revoked === true
 }
 

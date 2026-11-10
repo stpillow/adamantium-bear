@@ -7,5 +7,8 @@ test-results/
 playwright-report/
 .DS_Store
 
+# Local secrets: scripts/accounts.ts reads .env.accounts (DATABASE_URL, AUTH_CODE_PEPPER).
+.env*
+
 # The root .gitignore excludes lockfiles; this app commits its own for reproducible builds.
 !package-lock.json

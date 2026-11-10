@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { joinTime } from './RunLogger.helpers.ts'
-import { candidateWords, disconnectWords, needsWords, resultWords } from './Strava.helpers.ts'
+import { accountNeededWords, candidateWords, disconnectWords, needsWords, resultLine, resultWords, stravaPanel } from './Strava.helpers.ts'
 
 describe('resultWords', () => {
   it('says what came back from the consent page', () => {
@@ -37,5 +37,37 @@ describe('candidateWords', () => {
     expect(candidateWords({ kind: 'run', activityId: '1', draft: { date: '2026-11-05', type: 'rower-swap', miles: 0, minutes: 30, rpe: 3, avgHr: null, maxHr: null, stravaUrl: '', notes: '' }, needs: ['max pain'], guessed: [] }).detail).toBe('Rower swap, 30 minutes. Max pain to rate before it saves.')
     expect(candidateWords({ kind: 'lift', activityId: '2', date: '2026-11-05', name: 'Lift' }).detail).toMatch(/preview/)
     expect(candidateWords({ kind: 'skip', activityId: '3', date: '2026-11-05', name: 'Commute', reason: 'Ride isn’t a run.' }).detail).toBe('Left out. Ride isn’t a run.')
+  })
+})
+
+describe('accounts (M-U2)', () => {
+  it('stravaPanel puts an account first, then set-up, connect and connected', () => {
+    expect(stravaPanel({ configured: true, connected: false, account: 'required' })).toBe('account')
+    expect(stravaPanel({ configured: false, connected: false })).toBe('not-set-up')
+    expect(stravaPanel({ configured: true, connected: false })).toBe('connect')
+    expect(stravaPanel({ configured: true, connected: true })).toBe('connected')
+  })
+  it('says in words that an account is needed, half set up, or can’t be checked', () => {
+    expect(accountNeededWords('required')).toBe('Strava needs an account on this app first. Enter your invite code in Settings, under Account, then come back.')
+    expect(accountNeededWords('setup')).toBe('Accounts are half set up on this deployment, so Strava is closed for now.')
+    expect(accountNeededWords('unavailable')).toBe('The account check didn’t answer. Try again in a minute.')
+  })
+  it('connect sent back for an account says so', () => {
+    expect(resultWords('account')).toBe(accountNeededWords('required'))
+    expect(resultWords('account-setup')).toBe(accountNeededWords('setup'))
+    expect(resultWords('unavailable')).toBe(accountNeededWords('unavailable'))
+  })
+  it('resultLine says a refused connect once: the account panel already carries the same sentence', () => {
+    const signedOut = { configured: true, connected: false, account: 'required' as const }
+    const down = { configured: true, connected: false, account: 'unavailable' as const }
+    expect(resultLine('account', signedOut)).toBeNull()
+    expect(resultLine('unavailable', down)).toBeNull()
+    expect(resultLine('account-setup', { configured: true, connected: false, account: 'setup' })).toBeNull()
+    // Different news is still said: the panel's reason differs, or there is no account panel any more.
+    expect(resultLine('account', down)).toBe(accountNeededWords('required'))
+    expect(resultLine('unavailable', { configured: true, connected: false })).toBe(accountNeededWords('unavailable'))
+    expect(resultLine('connected', { configured: true, connected: true })).toBe('Connected to Strava.')
+    expect(resultLine('denied', signedOut)).toBe(resultWords('denied'))
+    expect(resultLine(undefined, signedOut)).toBeNull()
   })
 })

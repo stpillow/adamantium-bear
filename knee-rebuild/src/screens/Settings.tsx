@@ -16,6 +16,7 @@ import { timeZoneChange } from '../rules/calendar.ts'
 import type { HrSettings, IsoDate, IsoDateTime, Settings as SettingsRecord } from '../schema/index.ts'
 import { forgetFirstRunDraft, leaveNotice } from './firstRun.ts'
 import { forgetSlotDrafts } from './program/drafts.ts'
+import { AccountSection } from './settings/account.tsx'
 import { ImportSection, LINK_BUTTON, StartDatePicker } from './settings/parts.tsx'
 import {
   DUMBBELLS_LINE,
@@ -432,6 +433,8 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
       </Section>
 
       {flagFirst ? null : redFlag}
+
+      <AccountSection />
 
       <ExportSection today={today} timeZone={timeZone} lastExportedAt={draft.lastExportedAt} saved={savedField === 'export'} problem={problemFor('export')} onExported={recordExport} />
 
