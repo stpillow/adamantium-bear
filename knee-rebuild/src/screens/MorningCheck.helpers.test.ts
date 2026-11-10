@@ -5,8 +5,13 @@ import type { Prescription } from '../rules/prescription.ts'
 import { MORNING_TAGS, type Exercise, type MorningCheck, type Run, type Settings, type Slot, type Workout } from '../schema/index.ts'
 import { MorningCheck as MorningCheckSchema } from '../schema/index.ts'
 import { NO_RED_FLAG } from '../rules/redFlags.ts'
+import { PROGRAM, planSession } from '../app/session.ts'
+import { RICH_TODAY, richHistory, richHome, richSettings } from '../testing/richHistory.fixture.test.ts'
+import { todayView } from './Today.helpers.ts'
 import {
   LATE_FLAG_INTRO,
+  afterSave,
+  withTodaysFlags,
   TAG_INTRO,
   TAG_LABELS,
   appliesTo,
@@ -303,8 +308,8 @@ describe('a morning check for a past day (Batch D, PROGRAM-QUESTIONS 174, 175)',
     expect(lateSubjectWords(null, '2026-11-18', templates)).toBe('For Wednesday Nov 18: the check for the next morning, Thursday Nov 19, logged late.')
   })
   it('the late form compares with the day before, not yesterday', () => {
-    expect(formWords(false)).toEqual({ worse: 'Worse than yesterday', painLabel: 'Pain change since yesterday', painNote: 'Minus means less pain than yesterday. Up 2 or more reads back off.' })
-    expect(formWords(true)).toEqual({ worse: 'Worse than the day before', painLabel: 'Pain change since the day before', painNote: 'Minus means less pain than the day before. Up 2 or more reads back off.' })
+    expect(formWords(false, 'full')).toEqual({ worse: 'Worse than yesterday', painLabel: 'Pain change since yesterday', painNote: 'Minus means less pain than yesterday. Up 2 or more reads back off.' })
+    expect(formWords(true, 'full')).toEqual({ worse: 'Worse than the day before', painLabel: 'Pain change since the day before', painNote: 'Minus means less pain than the day before. Up 2 or more reads back off.' })
     expect(LATE_FLAG_INTRO).toContain('a note, not a stop')
   })
   it('says each refusal in words', () => {
@@ -351,5 +356,34 @@ describe('a morning check for a past day (Batch D, PROGRAM-QUESTIONS 174, 175)',
     expect(reachLiftDates({ ...base, workouts: [workout('open', { date: '2026-11-19', status: 'in-progress' })] })).toEqual(['2026-11-19', '2026-11-21'])
     // Today's lift already done: the next one is from tomorrow.
     expect(reachLiftDates({ ...base, today: '2026-11-21', workouts: [workout('c', { date: '2026-11-21' })] })).toEqual(['2026-11-24'])
+  })
+})
+
+describe('a red flag ticked while the phone ran tester mode, then the phone runs full (M-U3, glossary: red-flag state)', () => {
+  const check = richHistory.morningChecks.find((c) => c.date === RICH_TODAY) as MorningCheck
+  const template = PROGRAM.templates.find((t) => t.id === 'p1-a')
+  if (!template) throw new Error('seed')
+  const plan = (settings: Settings) => planSession({ template, week: 6, settings, history: richHistory, gym: { location: richHome, kit: settings.kit }, before: RICH_TODAY })
+  const suspended = (settings: Settings) => plan(settings).some((p) => p.prescriptions.some((x) => x.basis === 'suspended'))
+
+  it('the tester save writes nothing; once full, the stop shows and progression is suspended', () => {
+    expect(check.redFlags).toEqual(['locking'])
+    const saved = afterSave('tester', richSettings, check)
+    expect(saved).toBe(richSettings)
+    expect(suspended(saved)).toBe(false)
+
+    const full = withTodaysFlags('full', saved, richHistory.morningChecks, RICH_TODAY)
+    expect(full.redFlag).toEqual({ active: true, since: RICH_TODAY, items: ['locking'] })
+    const today = todayView({ mode: 'full', today: RICH_TODAY, settings: full, history: richHistory, program: PROGRAM })
+    expect(today.body.kind).toBe('stop')
+    expect(suspended(full)).toBe(true)
+  })
+
+  it('in tester mode, and once applied or cleared today, nothing changes', () => {
+    expect(withTodaysFlags('tester', richSettings, richHistory.morningChecks, RICH_TODAY)).toBe(richSettings)
+    const applied = afterSave('full', richSettings, check)
+    expect(withTodaysFlags('full', applied, richHistory.morningChecks, RICH_TODAY)).toBe(applied)
+    const cleared = { ...richSettings, redFlag: { active: false, items: [], clearedOn: RICH_TODAY, clearNote: 'PT saw it' } }
+    expect(withTodaysFlags('full', cleared, richHistory.morningChecks, RICH_TODAY)).toBe(cleared)
   })
 })

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
@@ -24,6 +25,7 @@ export function Week() {
   const today = useToday()
   const settings = useSettings()
   const history = useHistory()
+  const { mode } = useEngineMode()
   /** Null follows the current week, so the screen opens on it and keeps up when the week turns. */
   const [selected, setSelected] = useState<number | null>(null)
   /** The day whose session is being moved, waiting for the day it goes to. */
@@ -51,7 +53,7 @@ export function Week() {
     )
   }
 
-  const view = weekView({ today, selected, settings, history, program: PROGRAM })
+  const view = weekView({ mode, today, selected, settings, history, program: PROGRAM })
   const movingRow = moving ? (view.days.find((d) => d.day === moving) ?? null) : null
   const moveIds = history.sessionMoves.map((m) => m.id)
   const busy = pending !== null

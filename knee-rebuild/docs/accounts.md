@@ -72,6 +72,7 @@ Every value marked **(Sensitive)** is write-only in Vercel once saved. **Save ea
    - On the iPhone, open knee-rebuild.vercel.app **in Safari**. Go to Settings, Account, type the bootstrap code and tap Redeem. It should say "Signed in as Shawn, the admin."
    - Then **open the home-screen app** and do the same, because it has its own cookie jar.
    - Strava's existing connection survives in each context.
+   - **Tester mode (M-U3).** Redeem your admin code right away in Safari and in the home-screen app. Until you do, each shows the program as written (tester mode): no loads, no readings, no gate verdict, no red-flag stop, and a line under Today's date says so. Nothing logged is lost, and the next screen after the redeem is back to normal. The same applies after a key-generation bump (step 12), a revocation or a stale cookie: sign in again in each context.
 8. **Remove `AUTH_BOOTSTRAP_CODE`** from Vercel and redeploy. **This step isn't optional.**
    - The code keeps working as your own code, because its hash is stored.
    - Left in the project, it would be your permanent credential, visible to anyone with project access and to `vercel env pull`.
@@ -92,7 +93,8 @@ Every value marked **(Sensitive)** is write-only in Vercel once saved. **Save ea
     - Everyone types their code again in each context.
     - Codes still work. To shut someone out, revoke them.
 13. **Lift a redeem lockout** (someone used up the 200-per-15-minutes cap): `npm run accounts -- unblock`.
-14. **Turn accounts off:** delete `AUTH_COOKIE_KEY` and redeploy. Behaviour returns to what it was before accounts.
+14. **Turn accounts off:** first make sure Safari and the home-screen app on your phone are both signed in as admin (Settings, Account), then delete `AUTH_COOKIE_KEY` and redeploy. The server behaves as before accounts. A phone that last heard "accounts on, signed out" stays in tester mode after this, on purpose: an "accounts off" answer never overrides one that saw them on, so a preview or a mistyped variable can't hand a tester the engine (PROGRAM-QUESTIONS 237). If that happens to your phone, Export JSON, Reset, then import the file: the import brings your sets from before Nov 10, 2026, and with no account answer kept the phone runs in full.
+    - Since M-U3 a phone that has seen accounts on keeps that answer: a `{"configured":false}` never replaces it (PROGRAM-QUESTIONS 224). Your admin phone stays in full mode; a tester's phone stays in tester mode. To put a phone back to how it was before accounts, clear the site's data in that context (Safari: Settings, Safari, Advanced, Website Data), after an export.
 15. **If a secret leaks:**
     - **Cookie key:** set a new one. That signs everyone out.
     - **Pepper:** set a new one, then `recode` every account and send out the new codes.
@@ -100,6 +102,7 @@ Every value marked **(Sensitive)** is write-only in Vercel once saved. **Save ea
     - **Bootstrap code:** `recode` your account.
 
 **Previews** stay off. The `AUTH_*` variables are on Production only, so a preview behaves as before accounts. Whether Vercel's deployment protection covers previews is **unverified**: until it does, a preview is as open as it was before.
+- **Since M-U3 this is a release precondition for testers** (PROGRAM-QUESTIONS 235): a preview with accounts off runs the full engine for any phone that opens it. Before any tester installs, either verify that deployment protection covers previews, or set the `AUTH_*` variables on Preview too.
 
 ## To check on the first deploy and on the phone (unverified until then)
 

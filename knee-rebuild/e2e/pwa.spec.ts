@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 import { onboardAsShawn } from './firstRun.ts'
 import { serveDist, type StaticServer } from './staticServer.ts'
 

@@ -1,4 +1,7 @@
-import type { Ramp, SlotPlan } from '../app/session.ts'
+import { planSession, rampsInOrder, type Gym, type Ramp, type SlotPlan } from '../app/session.ts'
+import { writtenSession, type WrittenSlotPlan } from '../app/written.ts'
+import type { History } from '../db/repo.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { addDays, dateOf, isDeloadWeek, scheduledSession, weekOf } from '../rules/calendar.ts'
 import { pauseOn, pausedNote } from '../rules/downPeriod.ts'
 import type { DownPeriod, IsoDate, Program, SessionMove, SessionTemplate, Settings, Side, Workout } from '../schema/index.ts'
@@ -75,18 +78,25 @@ export interface PreviewView {
   downPeriod: string | null
 }
 
-/** What a day holds and which template it would run, from the date, today, the settings, the stored workouts and moves, and the program. */
-export function previewView(input: { date: IsoDate; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): PreviewView {
+/** Tester mode's caveat: the session as written, the same whatever is logged. */
+export const WRITTEN_CAVEAT = 'As program.md writes it. Logging changes none of it.'
+
+/**
+ * What a day holds and which template it would run, from the date, today, the settings, the stored
+ * workouts and moves, and the program. Tester mode (M-U3): no down period and the written caveat.
+ */
+export function previewView(input: { mode: EngineMode; date: IsoDate; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): PreviewView {
   const { date, today, settings, history, program } = input
   const range = previewRange(today, settings.startDate)
+  const tester = input.mode === 'tester'
   const base = {
     date,
     dateWords: dateWords(date),
     relation: relationWords(date, today),
-    caveat: caveatWords(date, today),
+    caveat: tester ? WRITTEN_CAVEAT : caveatWords(date, today),
     prev: date > range.first ? addDays(date, -1) : null,
     next: date < range.last ? addDays(date, 1) : null,
-    downPeriod: previewDownPeriodWords(date, history.downPeriods ?? []),
+    downPeriod: tester ? null : previewDownPeriodWords(date, history.downPeriods ?? []),
   }
   const scheduled = scheduledSession(date, settings.startDate, program.weeklyTemplate, history.sessionMoves)
   if (scheduled.session === null) {
@@ -186,6 +196,59 @@ export function previewSlots(
       ramp: previewRampWords(ctx.ramps?.[index], first ? (plan.substitutions.find((e) => e.id === first.exerciseId) ?? exercise) : exercise),
     }
   })
+}
+
+/** Each written slot in words (tester mode): the exercise, program.md's own cell, the deload's cut, what the gym does, and the cues. */
+export function writtenPreviewSlots(plans: readonly WrittenSlotPlan[], ctx: { gymName: string; items: readonly ItemLike[]; nameOf: (exerciseId: string) => string }): PreviewSlot[] {
+  return plans.map((plan) => {
+    const { slot, exercise } = plan
+    const members = slot.groupId ? plans.filter((p) => p.slot.groupId === slot.groupId && p.slot.id !== slot.id).map((p) => p.slot.label) : []
+    return {
+      slotId: slot.id,
+      label: slot.label,
+      name: exercise.name,
+      optional: slot.optional,
+      groupWith: members.length ? `with ${listWords(members)}` : null,
+      lines: [plan.text, ...(plan.loadNote ? [plan.loadNote] : [])],
+      notes: plan.deload ? [deloadWords(plan.deload)] : [],
+      gymLines: routeLines({ route: plan.route, swapped: false, gymName: ctx.gymName, items: ctx.items, nameOf: ctx.nameOf }),
+      cues: slot.cues,
+      cuesFor: exercise.id !== slot.exerciseId && slot.cues.length > 0 ? `Cues written for ${ctx.nameOf(slot.exerciseId)}` : null,
+      ramp: null,
+    }
+  })
+}
+
+/** "Deload week: 2 of the written 3 sets." */
+export function deloadWords(deload: { written: number; sets: number }): string {
+  return `Deload week: ${deload.sets} of the written ${deload.written} ${deload.written === 1 ? 'set' : 'sets'}.`
+}
+
+/**
+ * The slots a lift day's preview shows (Preview.tsx before M-U3): full mode plans with the engine and
+ * shows the warm-up sets as the session order would; tester mode shows the session as written.
+ */
+export function previewSlotsFor(
+  mode: EngineMode,
+  input: { template: SessionTemplate; week: number; date: IsoDate; today: IsoDate; settings: Settings; history: History; gym: Gym; items: readonly ItemLike[]; nameOf: (exerciseId: string) => string },
+): PreviewSlot[] {
+  const { template, week, date, today, settings, history, gym } = input
+  if (mode === 'tester') return writtenPreviewSlots(writtenSession({ template, week, settings, history, gym }), { gymName: gym.location.name, items: input.items, nameOf: input.nameOf })
+  const plans: SlotPlan[] = planSession({ template, week, settings, history, gym, before: date })
+  // Warm-up sets as the session order shows them (display only, PROGRAM-QUESTIONS 165); a past day logged after the fact shows none.
+  return previewSlots(plans, { injuredSide: settings.injuredSide, gymName: gym.location.name, items: input.items, nameOf: input.nameOf, ramps: rampsInOrder(plans, date < today) })
+}
+
+/** The line under a run or off day: full mode says when the miles are suggested; tester mode only that it is as written. */
+export function previewDayLine(mode: EngineMode, kind: 'run' | 'off'): string {
+  if (kind === 'off') return 'No lift today.'
+  return mode === 'tester' ? 'Log the run on the day, with what you did.' : 'The miles are suggested on the day, from the week so far and that morning’s check.'
+}
+
+/** Under "Log this session after the fact": the gym note, and in full mode how a late session is read. */
+export function logLateNote(mode: EngineMode): string {
+  if (mode === 'tester') return 'You can change the gym before the first set.'
+  return 'You can change the gym before the first set. A session logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged; the app offers it when you finish.'
 }
 
 /** Today's link to the next lift on a run or off day: "Next lift: Session B, Thursday Nov 5". */

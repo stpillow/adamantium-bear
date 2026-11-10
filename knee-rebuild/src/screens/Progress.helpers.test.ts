@@ -805,7 +805,7 @@ describe('progressView', () => {
       runs: [run('r1', '2026-11-02', 3)],
       sessionMoves: [],
     }
-    const view = progressView({ today: '2026-11-05', settings, history, program: { ...program, exercises: CATALOG } })
+    const view = progressView({ mode: 'full', today: '2026-11-05', settings, history, program: { ...program, exercises: CATALOG } })
     expect(view.clean).toMatchObject({ count: 4, unit: 'days', context: 'since the first reading, with no hold or back-off yet' })
     expect(view.exercises.map((r) => r.id)).toEqual(['bulgarian-split-squat'])
     expect(view.refs).toHaveLength(2)
@@ -1146,9 +1146,9 @@ describe('the VO2 max section (metrics phase 3)', () => {
 
   it('progressView carries the VO2 view, from readings handed in on their own, never through History', () => {
     const history = { workouts: [], setLogs: [], morningChecks: [], runs: [], sessionMoves: [] }
-    const view = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG }, vo2Readings: readings })
+    const view = progressView({ mode: 'full', today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG }, vo2Readings: readings })
     expect(view.vo2.latest).toEqual({ value: 45, when: 'from the watch, Nov 14' })
-    const bare = progressView({ today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG } })
+    const bare = progressView({ mode: 'full', today: '2026-11-15', settings, history, program: { ...program, exercises: CATALOG } })
     expect(bare.vo2).toEqual({ latest: null, trend: [], empty: 'No readings yet. Type the number from the watch when it changes.' })
   })
 })
@@ -1202,9 +1202,9 @@ describe('the KOOS section (Batch A): five subscale trends in words, scores on P
 
   it('progressView carries the KOOS view, from entries handed in on their own, never through History', () => {
     const history = { workouts: [], setLogs: [], morningChecks: [], runs: [], sessionMoves: [] }
-    const view = progressView({ today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG }, koosEntries: [latest, earlier] })
+    const view = progressView({ mode: 'full', today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG }, koosEntries: [latest, earlier] })
     expect(view.koos.rows[0]).toEqual({ name: 'Pain', words: '75 — Nov 8, unchanged from 75 on Oct 11' })
-    const bare = progressView({ today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG } })
+    const bare = progressView({ mode: 'full', today: '2026-11-08', settings, history, program: { ...program, exercises: CATALOG } })
     expect(bare.koos.rows).toEqual([])
     expect(bare.koos.due).toBe('A KOOS check is due — none entered yet.')
   })
@@ -1258,8 +1258,8 @@ describe('Morning tags (Batch D, PROGRAM-QUESTIONS 178)', () => {
   it('rides on the Progress view, read from the stored checks', () => {
     const settings: Settings = { injuredSide: 'right', startDate: '2026-11-02', dumbbellMax: 75, restTimerSeconds: 60, painPerSet: false, currentPhase: 1, phaseEnteredWeek: 1, redFlag: { active: false, items: [] }, activeLocationId: 'planet-fitness', kit: [] }
     const history = { workouts: [], setLogs: [], morningChecks: [mc('2026-11-04', ['nsaid'])], runs: [], gateTests: [], sessionMoves: [] }
-    const view = progressView({ today: '2026-11-09', settings, history, program })
-    expect(view.tags.rows.find((r) => r.tag === 'nsaid')?.line).toBe('An anti-inflammatory: tagged on 0 mornings with a session the day before. Counts show from 5.')
+    const view = progressView({ mode: 'full', today: '2026-11-09', settings, history, program })
+    expect(view.tags?.rows.find((r) => r.tag === 'nsaid')?.line).toBe('An anti-inflammatory: tagged on 0 mornings with a session the day before. Counts show from 5.')
   })
 })
 

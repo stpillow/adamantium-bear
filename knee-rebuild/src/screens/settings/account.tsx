@@ -1,13 +1,16 @@
 import { useEffect, useId, useState } from 'react'
 import { accountStatus, redeemCode, signOut, type AccountState } from '../../app/account.ts'
+import { useEngineMode } from '../../app/mode.ts'
 import { Button } from '../../components/Button.tsx'
 import { Note, Section } from '../../components/FormParts.tsx'
 import { SIGNED_OUT_LEAD, SIGNED_OUT_NOTE, SIGN_OUT_NOTE, accountView, codeProblem, redeemWords, signOutWords } from '../Account.helpers.ts'
+import { modeLine } from '../Today.helpers.ts'
 
 /**
  * Settings, Account (M-U2; PROGRAM-QUESTIONS 220): an invite code typed here signs this phone's app
  * in. Hidden on a deployment without accounts. The code is the one free-text field outside notes: a
- * one-time entry, not logging. What shows is accountView's call; the role decides nothing here.
+ * one-time entry, not logging. What shows is accountView's call; the role decides nothing here, and
+ * the engine mode it sets (src/rules/engineMode.ts, M-U3) is said under it in words.
  */
 export function AccountSection() {
   const id = useId()
@@ -16,6 +19,9 @@ export function AccountSection() {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const [said, setSaid] = useState<string | null>(null)
+  // The engine mode the kept answer gives this phone (M-U3): said under the account, in words.
+  const engine = useEngineMode()
+  const line = modeLine(engine)
 
   useEffect(() => {
     let live = true
@@ -69,6 +75,7 @@ export function AccountSection() {
     <Section label="Account" saved={false} problem={problem}>
       {said ? <p className="text-body text-on-dark">{said}</p> : null}
       {view.kind === 'note' ? <p className="text-body text-on-dark-dim">{view.line}</p> : null}
+      {line && (view.kind === 'signed-in' || view.kind === 'signed-out') ? <p className="text-body text-on-dark">{line}</p> : null}
       {view.kind === 'signed-in' ? (
         <>
           <p className="text-body text-on-dark wrap-anywhere">{view.line}</p>

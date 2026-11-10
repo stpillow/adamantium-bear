@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { backTo, navigate, navigateFrom, replaceRoute } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { canonicalZone, deviceTimeZone, supportedTimeZones } from '../app/timeZone.ts'
@@ -16,7 +17,7 @@ import { PLANET_FITNESS_LOCATION_ID, type Location } from '../schema/index.ts'
 import { forgetFirstRunDraft, firstRunDraft, keepFirstRunDraft, leaveNotice, takeNotice } from './firstRun.ts'
 import { START_CHOICES, kitAfter, nameCheck, nameCountWords, startWords } from './LocationEditor.helpers.ts'
 import { EquipmentChecklist, KitList, RackPicker } from './location/parts.tsx'
-import { SIDES, checkStartDate, errorWords, sideWords, weekLine, zoneOptions, zoneWords } from './Settings.helpers.ts'
+import { SIDES, checkStartDate, errorWords, sideNote, sideWords, weekLine, zoneOptions, zoneWords } from './Settings.helpers.ts'
 import { ImportSection, StartDatePicker } from './settings/parts.tsx'
 import {
   FIRST_RUN_STEPS,
@@ -221,6 +222,7 @@ function Step({
 type StepProps = { draft: FirstRunDraft; change: (next: FirstRunDraft) => void }
 
 function SideStep({ draft, change }: StepProps) {
+  const { mode } = useEngineMode()
   return (
     <Section label="Injured side" saved={false} problem={null}>
       <div role="radiogroup" aria-label="Injured side" className="flex flex-col gap-2">
@@ -228,7 +230,7 @@ function SideStep({ draft, change }: StepProps) {
           <Choice key={side} label={sideWords(side)} selected={draft.injuredSide === side} selectedWord="Injured" onSelect={() => change({ ...draft, injuredSide: side })} />
         ))}
       </div>
-      <Note>Unilateral slots log this side first; its reps set the healthy side’s budget. Settings can change it later.</Note>
+      <Note>{sideNote(mode)} Settings can change it later.</Note>
     </Section>
   )
 }

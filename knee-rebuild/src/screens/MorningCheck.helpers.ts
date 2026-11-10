@@ -1,8 +1,14 @@
-import type { SlotPlan } from '../app/session.ts'
+import { planSession, type Gym, type SlotPlan } from '../app/session.ts'
 import type { History } from '../db/repo.ts'
-import { addDays, dayOf, nextLiftDate, weekOf } from '../rules/calendar.ts'
-import { lateCheckFor, type LateCheckReach, type LateCheckRefusal } from '../rules/lateCheck.ts'
-import { afterMorningCheck, type LateFlagNote } from '../rules/redFlags.ts'
+import { addDays, dayOf, isDeloadWeek, nextLiftDate, sessionDateInWeek, weekOf } from '../rules/calendar.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
+import { lateCheckFor, lateCheckReach, type LateCheckReach, type LateCheckRefusal } from '../rules/lateCheck.ts'
+import { morningReading } from '../rules/reading.ts'
+import { afterMorningCheck, foldTodaysChecks, lateFlagNote, stopMessage, type LateFlagNote } from '../rules/redFlags.ts'
+import { ownFlagNote } from '../rules/written.ts'
+import type { Program } from '../schema/index.ts'
+
+type Reading = ReturnType<typeof morningReading>
 import { RETRO_DAYS } from '../rules/retro.ts'
 import { MORNING_TAGS, type Day, type IsoDate, type MorningCheck, type MorningTag, type ReadingResult, type RedFlag, type Run, type RunType, type SessionMove, type SessionTemplate, type SetSide, type Settings, type Side, type WeeklyTemplate, type Workout } from '../schema/index.ts'
 
@@ -131,6 +137,11 @@ export function tagSectionLabel(late: boolean): string {
 }
 
 export const TAG_INTRO = 'Optional. Tap any that fit; none is fine. Tags change no reading.'
+
+/** The tags' intro for the mode: tester mode reads nothing, so it says nothing about readings. */
+export function tagIntro(mode: EngineMode): string {
+  return mode === 'tester' ? 'Optional. Tap any that fit; none is fine.' : TAG_INTRO
+}
 
 /** The form prefilled from a check already saved this morning, so a second save amends it. */
 export function formFromCheck(check: MorningCheck): CheckForm {
@@ -271,16 +282,21 @@ export function lateSubjectWords(subject: CheckSubject | null, sessionDay: IsoDa
 
 export const LATE_FORM_LINE = 'Answer for that morning as best you remember. A check logged late reads like any other.'
 
+/** The late form's line for the mode. */
+export function lateFormLine(mode: EngineMode): string {
+  return mode === 'tester' ? 'Answer for that morning as best you remember.' : LATE_FORM_LINE
+}
+
 /** The late form's red-flag intro, after the program's own. */
 export const LATE_FLAG_INTRO = 'A flag on a past morning is a note, not a stop; if it is still happening, tick it on this morning’s check.'
 
-/** The words the form's comparisons take: yesterday on this morning's check, the day before on a past morning's. */
-export function formWords(late: boolean): { worse: string; painLabel: string; painNote: string } {
+/** The words the form's comparisons take: yesterday on this morning's check, the day before on a past morning's. Tester mode reads nothing, so its pain note says only what minus means. */
+export function formWords(late: boolean, mode: EngineMode): { worse: string; painLabel: string; painNote: string } {
   const before = late ? 'the day before' : 'yesterday'
   return {
     worse: `Worse than ${before}`,
     painLabel: `Pain change since ${before}`,
-    painNote: `Minus means less pain than ${before}. Up 2 or more reads back off.`,
+    painNote: mode === 'tester' ? `Minus means less pain than ${before}.` : `Minus means less pain than ${before}. Up 2 or more reads back off.`,
   }
 }
 
@@ -365,4 +381,157 @@ export function lateReachWords(reach: LateCheckReach, history: Pick<History, 'wo
   if (readings.length === 0 && lifts.length === 0) return ['No reading or plan changed: the sessions read as they already did.']
   const cap = readings.length > 0 ? ['A reading can also change the miles cap of the week after it; Week shows where each week stands.'] : []
   return [...readings, ...lifts, ...cap]
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tester mode (M-U3; PROGRAM-QUESTIONS 227, 228): the same form, nothing read, flags as an own note
+
+/** After the ticked flags, in every own note: no advice, no change, where to turn. */
+export const OWN_FLAG_ADVICE = 'This app gives no medical advice and changes nothing because of it. If it worries you, contact a clinician.'
+
+/** The flags section's intro in tester mode, in place of program.md's (which sends the reader to the ortho or PT). */
+export const TESTER_FLAG_INTRO = 'Tick any that describe this morning. This app gives no medical advice and decides nothing from these; what you tick is kept as your own note.'
+
+/**
+ * A tester's own note for flags ticked on a check: "You ticked on this morning’s check: …" for
+ * today's, "You ticked on the check for Wednesday Nov 11’s morning: …" for an earlier one.
+ */
+export function ownFlagWords(note: { date: IsoDate; items: readonly string[] }, today: IsoDate): string {
+  const items = note.items.join('; ')
+  const which = note.date === today ? 'this morning’s check' : `the check for ${dateWords(note.date)}’s morning`
+  return `You ticked on ${which}: ${items}. ${OWN_FLAG_ADVICE}`
+}
+
+/** The same note on a Week row (the row adds its own full stop). */
+export function weekOwnFlagWords(note: { date: IsoDate; items: readonly string[] }): string {
+  return `You ticked on the check for ${dateWords(note.date)}’s morning: ${note.items.join('; ')}. ${OWN_FLAG_ADVICE.replace(/\.$/, '')}`
+}
+
+/** The form's intros for the mode: the flags' intro, the late note under it, program.md's "not flags" text, and the section's label. */
+export function formIntros(mode: EngineMode, late: boolean, program: Pick<Program, 'redFlagsIntro' | 'notFlags'>): { flagSection: string; flagIntro: string; lateFlagIntro: string | null; notFlags: string | null } {
+  if (mode === 'tester') return { flagSection: 'Red-flag list, as your own note', flagIntro: TESTER_FLAG_INTRO, lateFlagIntro: null, notFlags: null }
+  return { flagSection: 'Red flags', flagIntro: program.redFlagsIntro, lateFlagIntro: late ? LATE_FLAG_INTRO : null, notFlags: program.notFlags }
+}
+
+/** The line over a form already saved this morning: full mode with its reading, tester mode in words alone. */
+export function existingCheckLine(mode: EngineMode, check: MorningCheck): { kind: 'reading'; result: ReadingResult } | { kind: 'words'; line: string } {
+  if (mode === 'tester') return { kind: 'words', line: 'Already checked in this morning. Saving again replaces it.' }
+  return { kind: 'reading', result: morningReading(check).result }
+}
+
+/** The settings after a save: full mode's red-flag rule (`settingsAfter`); tester mode writes nothing, so the same object. */
+export function afterSave(mode: EngineMode, settings: Settings, check: MorningCheck): Settings {
+  return mode === 'tester' ? settings : settingsAfter(settings, check)
+}
+
+/**
+ * The settings with today's flagged checks applied, for the shell to keep when the phone runs full
+ * (M-U3): a check saved in tester mode set no red-flag state, so a phone that later runs full (an
+ * admin signed in, a stale cookie renewed) folds today's flags in (`foldTodaysChecks`) before
+ * anything plans or shows Today. Tester mode, or nothing to fold: the same object, nothing written.
+ */
+export function withTodaysFlags(mode: EngineMode, settings: Settings, checks: readonly MorningCheck[], today: IsoDate): Settings {
+  if (mode === 'tester') return settings
+  const next = foldTodaysChecks(settings.redFlag, checks, today)
+  return next === settings.redFlag ? settings : { ...settings, redFlag: next }
+}
+
+const yesNo = (v: boolean) => (v ? 'yes' : 'no')
+const points = (n: number) => `${Math.abs(n)} ${Math.abs(n) === 1 ? 'point' : 'points'}`
+
+/** What a check holds, in words, line by line: tester mode's result. */
+export function loggedLines(check: MorningCheck, late: boolean): string[] {
+  const before = late ? 'the day before' : 'yesterday'
+  const change = check.painChangePoints === 0 ? 'no change' : check.painChangePoints > 0 ? `up ${points(check.painChangePoints)}` : `down ${points(check.painChangePoints)}`
+  return [
+    `Stiffness gone within 30 minutes: ${yesNo(check.stiffnessUnder30Min)}`,
+    `Worse than ${before}: ${yesNo(check.worseThanYesterday)}`,
+    `Visible swelling: ${yesNo(check.visibleSwelling)}`,
+    `Warmth: ${yesNo(check.warmth)}`,
+    `Pain change: ${change}`,
+    ...(check.tags && check.tags.length > 0 ? [`Tags: ${check.tags.map((t) => TAG_LABELS[t].charAt(0).toLowerCase() + TAG_LABELS[t].slice(1)).join('; ')}`] : []),
+    ...(check.notes ? [`Note: ${check.notes}`] : []),
+  ]
+}
+
+export type CheckResultView =
+  | { kind: 'full'; reading: Reading; stop: { headline: string; items: string[] } | null }
+  | { kind: 'written'; logged: string[]; ownFlag: string | null }
+
+/** This morning's result: full mode's reading and the stop (rule 9); tester mode's words and own note. */
+export function checkResultView(mode: EngineMode, saved: { check: MorningCheck; settings: Settings }, program: Pick<Program, 'redFlags'>): CheckResultView {
+  if (mode === 'tester') {
+    const note = ownFlagNote(saved.check, program.redFlags)
+    return { kind: 'written', logged: loggedLines(saved.check, false), ownFlag: note ? ownFlagWords(note, saved.check.date) : null }
+  }
+  return { kind: 'full', reading: morningReading(saved.check), stop: stopMessage(saved.settings.redFlag, program.redFlags) }
+}
+
+export type LateResultView = { kind: 'full'; reading: Reading; note: string | null } | { kind: 'written'; logged: string[]; ownFlag: string | null }
+
+/** A past morning's result: full mode's reading and its late flag note; tester mode's words and own note. */
+export function lateResultView(mode: EngineMode, check: MorningCheck, program: Pick<Program, 'redFlags'>): LateResultView {
+  if (mode === 'tester') {
+    const note = ownFlagNote(check, program.redFlags)
+    // Dated a past morning, so the note names that morning, never "this morning".
+    return { kind: 'written', logged: loggedLines(check, true), ownFlag: note ? ownFlagWords(note, '') : null }
+  }
+  const note = lateFlagNote(check, program.redFlags)
+  return { kind: 'full', reading: morningReading(check), note: note ? lateFlagWords(note) : null }
+}
+
+/** What a late check changed (`lateCheckReach`), in words; nothing in tester mode, where nothing is read. */
+export function lateChanges(mode: EngineMode, input: { check: MorningCheck; today: IsoDate; settings: Pick<Settings, 'startDate' | 'injuredSide'>; history: History; program: Pick<Program, 'weeklyTemplate' | 'templates'> }): string[] {
+  if (mode === 'tester') return []
+  const { check, today, settings, history, program } = input
+  const reach = lateCheckReach({
+    workouts: history.workouts,
+    setLogs: history.setLogs,
+    runs: history.runs,
+    before: history.morningChecks,
+    after: withCheck(history, check).morningChecks,
+    injuredSide: settings.injuredSide,
+    liftDates: reachLiftDates({ today, startDate: settings.startDate, template: program.weeklyTemplate, moves: history.sessionMoves, workouts: history.workouts }),
+  })
+  return lateReachWords(reach, history, program.templates)
+}
+
+export type NextTimeView =
+  | { kind: 'written' }
+  | { kind: 'no-session' }
+  | { kind: 'run' }
+  | { kind: 'no-template'; templateId: string }
+  | { kind: 'failed'; error: string }
+  | { kind: 'plan'; heading: string; openWorkoutId: string | null; sentences: ExerciseSentence[] }
+
+/**
+ * The "Next time" section after this morning's check: for yesterday's lift, one sentence per exercise
+ * of the next session of that letter, planned with the new history (full mode). Tester mode has no
+ * next time: nothing is worked out from the check.
+ */
+export function nextTimeView(mode: EngineMode, input: { subject: CheckSubject | null; settings: Settings; history: History; gym: Gym; program: Pick<Program, 'templates' | 'weeklyTemplate'> }): NextTimeView {
+  if (mode === 'tester') return { kind: 'written' }
+  const { subject, settings, history, gym, program } = input
+  if (!subject) return { kind: 'no-session' }
+  if (subject.kind === 'run') return { kind: 'run' }
+  const { workout } = subject
+  // After a gate advance the next session of this letter is the new phase's (nextTemplateFor).
+  const nextId = nextTemplateFor(workout.templateId, program.templates, settings.currentPhase)
+  const template = program.templates.find((t) => t.id === nextId)
+  if (!template) return { kind: 'no-template', templateId: workout.templateId }
+  const week = nextWeekFor(workout, settings.startDate)
+  // The day that session falls on, after moves: a down period covering it pauses progression there (Batch E). Planned from every record, so no `before`.
+  const pauseDate = sessionDateInWeek(settings.startDate, week, program.weeklyTemplate, history.sessionMoves, `lift:${template.letter}`)
+  let sentences: ExerciseSentence[]
+  try {
+    sentences = exerciseSentences(planSession({ template, week, settings, history, gym, ...(pauseDate ? { pauseDate } : {}) }), settings.injuredSide)
+  } catch (e) {
+    return { kind: 'failed', error: errorWords(e) }
+  }
+  return {
+    kind: 'plan',
+    heading: `Next ${sessionName(template.id, program.templates)}, week ${week}${isDeloadWeek(week) ? ', a deload week' : ''}:`,
+    openWorkoutId: workout.status === 'in-progress' ? workout.id : null,
+    sentences,
+  }
 }

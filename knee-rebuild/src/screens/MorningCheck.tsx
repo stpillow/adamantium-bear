@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { checkLink } from '../rules/morningLink.ts'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
-import { PROGRAM, planSession, type Gym } from '../app/session.ts'
+import { PROGRAM, type Gym } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../components/ReadingWord.tsx'
@@ -10,16 +11,13 @@ import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
 import { useActiveLocation, useHistory, useSettings } from '../db/hooks.ts'
 import { addLateMorningCheck, addMorningCheck, saveSettings, type History } from '../db/repo.ts'
-import { addDays, isDeloadWeek, sessionDateInWeek } from '../rules/calendar.ts'
-import { lateCheckFor, lateCheckReach, type LateCheckOffer } from '../rules/lateCheck.ts'
-import { morningReading } from '../rules/reading.ts'
-import { lateFlagNote, stopMessage } from '../rules/redFlags.ts'
+import { addDays } from '../rules/calendar.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
+import { lateCheckFor, type LateCheckOffer } from '../rules/lateCheck.ts'
 import { MORNING_TAGS, type IsoDate, type Location, type MorningCheck as CheckRecord, type Settings } from '../schema/index.ts'
 import {
-  LATE_FLAG_INTRO,
-  LATE_FORM_LINE,
-  TAG_INTRO,
   TAG_LABELS,
+  afterSave,
   buildCheck,
   buildLateCheck,
   type CheckForm,
@@ -27,22 +25,21 @@ import {
   dateWords,
   emptyForm,
   errorWords,
-  type ExerciseSentence,
-  exerciseSentences,
+  checkResultView,
+  existingCheckLine,
   formFromCheck,
+  formIntros,
   formWords,
-  lateFlagWords,
-  lateReachWords,
+  lateChanges,
+  lateFormLine,
   lateRefusalWords,
+  lateResultView,
   lateSubjectWords,
-  nextTemplateFor,
-  nextWeekFor,
+  nextTimeView,
   PAIN_CHANGE_MAX,
   PAIN_CHANGE_MIN,
-  reachLiftDates,
-  sessionName,
-  settingsAfter,
   subjectFor,
+  tagIntro,
   subjectWords,
   tagSectionLabel,
   toggleFlag,
@@ -79,6 +76,7 @@ export function MorningCheck({ date }: { date?: string } = {}) {
   const history = useHistory()
   // The next session is planned at the gym Today plans for (M4b).
   const activeLocation = useActiveLocation()
+  const { mode } = useEngineMode()
   const [saved, setSaved] = useState<Saved | null>(null)
   const [lateSaved, setLateSaved] = useState<LateSaved | null>(null)
   const [view, setView] = useState<'form' | 'result'>('form')
@@ -102,14 +100,15 @@ export function MorningCheck({ date }: { date?: string } = {}) {
 
   // The result stays first: the live history refreshes after a save, and a past morning's offer
   // then reads "already saved"; the screen must not remount to that refusal.
-  if (view === 'result' && lateSaved) return <LateResult saved={lateSaved} />
+  if (view === 'result' && lateSaved) return <LateResult mode={mode} saved={lateSaved} />
   if (view === 'result' && saved) {
-    return <Result saved={saved} location={activeLocation} onChange={() => setView('form')} />
+    return <Result mode={mode} saved={saved} location={activeLocation} onChange={() => setView('form')} />
   }
 
   if (date !== undefined && date !== today) {
     return (
       <LateCheckScreen
+        mode={mode}
         morning={date}
         today={today}
         settings={settings}
@@ -130,6 +129,7 @@ export function MorningCheck({ date }: { date?: string } = {}) {
   // that failed. The form reads `initial` once, on mount, so it keeps its state across that refresh.
   return (
     <CheckFormScreen
+      mode={mode}
       initial={existing}
       today={today}
       yesterday={yesterday}
@@ -159,6 +159,7 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function CheckFormScreen({
+  mode,
   initial,
   today,
   yesterday,
@@ -167,6 +168,7 @@ function CheckFormScreen({
   history,
   onSaved,
 }: {
+  mode: EngineMode
   initial: CheckRecord | null
   today: IsoDate
   yesterday: IsoDate
@@ -178,11 +180,12 @@ function CheckFormScreen({
   const [form, setForm] = useState<CheckForm>(() => (initial ? formFromCheck(initial) : emptyForm()))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const existingReading = initial ? morningReading(initial) : null
+  const existing = initial ? existingCheckLine(mode, initial) : null
 
   async function save() {
     const check = buildCheck({ today, link: checkLink(history.workouts, history.runs, yesterday), form, catalog: PROGRAM.redFlags })
-    const next = settingsAfter(settings, check)
+    // Tester mode writes nothing to the settings: no red-flag state, nothing suspended (PROGRAM-QUESTIONS 228).
+    const next = afterSave(mode, settings, check)
     setSaving(true)
     setError(null)
     try {
@@ -207,15 +210,17 @@ function CheckFormScreen({
 
   return (
     <Screen title={TITLE} lead={subjectWords(subject, yesterday, PROGRAM.templates)}>
-      {initial && existingReading ? (
+      {existing?.kind === 'reading' ? (
         <p className="flex flex-wrap items-center gap-2 text-small text-on-dark-dim">
           <span>Already checked in this morning:</span>
-          <ReadingWord result={existingReading.result} />
+          <ReadingWord result={existing.result} />
           <span>Saving again replaces it.</span>
         </p>
+      ) : existing?.kind === 'words' ? (
+        <p className="text-small text-on-dark-dim">{existing.line}</p>
       ) : null}
 
-      <CheckFields form={form} setForm={setForm} late={false} />
+      <CheckFields mode={mode} form={form} setForm={setForm} late={false} />
 
       {error ? (
         <p role="alert" className="text-body text-on-dark">
@@ -230,10 +235,11 @@ function CheckFormScreen({
 }
 
 /** The form's fields, shared by this morning's check and a past morning's: only the words differ. */
-function CheckFields({ form, setForm, late }: { form: CheckForm; setForm: (update: (f: CheckForm) => CheckForm) => void; late: boolean }) {
+function CheckFields({ mode, form, setForm, late }: { mode: EngineMode; form: CheckForm; setForm: (update: (f: CheckForm) => CheckForm) => void; late: boolean }) {
   const noteId = 'morning-check-note'
   const set = <K extends keyof CheckForm>(key: K) => (value: CheckForm[K]) => setForm((f) => ({ ...f, [key]: value }))
-  const words = formWords(late)
+  const words = formWords(late, mode)
+  const intros = formIntros(mode, late, PROGRAM)
   return (
     <>
       <Section label={late ? 'Knee that morning' : 'Knee this morning'}>
@@ -248,17 +254,17 @@ function CheckFields({ form, setForm, late }: { form: CheckForm; setForm: (updat
         <p className="text-small text-on-dark-muted">{words.painNote}</p>
       </Section>
 
-      <Section label="Red flags">
-        <p className="text-small text-on-dark-muted">{PROGRAM.redFlagsIntro}</p>
-        {late ? <p className="text-small text-on-dark">{LATE_FLAG_INTRO}</p> : null}
+      <Section label={intros.flagSection}>
+        <p className="text-small text-on-dark-muted">{intros.flagIntro}</p>
+        {intros.lateFlagIntro ? <p className="text-small text-on-dark">{intros.lateFlagIntro}</p> : null}
         {PROGRAM.redFlags.map((flag) => (
           <Tap key={flag.id} label={flag.text} value={form.redFlags.includes(flag.id)} onChange={() => set('redFlags')(toggleFlag(form.redFlags, flag.id))} yes="Flagged" no="No" />
         ))}
-        <p className="text-small text-on-dark-dim">{PROGRAM.notFlags}</p>
+        {intros.notFlags ? <p className="text-small text-on-dark-dim">{intros.notFlags}</p> : null}
       </Section>
 
       <Section label={tagSectionLabel(late)}>
-        <p className="text-small text-on-dark-muted">{TAG_INTRO}</p>
+        <p className="text-small text-on-dark-muted">{tagIntro(mode)}</p>
         {MORNING_TAGS.map((tag) => (
           <Tap key={tag} label={TAG_LABELS[tag]} value={form.tags.includes(tag)} onChange={() => set('tags')(toggleFlag(form.tags, tag))} yes="Tagged" no="No" />
         ))}
@@ -286,7 +292,7 @@ function CheckFields({ form, setForm, late }: { form: CheckForm; setForm: (updat
  * date and history, and refuses in words, keeping the form, when the morning has left the window or
  * taken a check since.
  */
-function LateCheckScreen({ morning, today, settings, history, onSaved }: { morning: IsoDate; today: IsoDate; settings: Settings; history: History; onSaved: (saved: LateSaved) => void }) {
+function LateCheckScreen({ mode, morning, today, settings, history, onSaved }: { mode: EngineMode; morning: IsoDate; today: IsoDate; settings: Settings; history: History; onSaved: (saved: LateSaved) => void }) {
   const sessionDay = addDays(morning, -1)
   const ask = (on: IsoDate, h: History): LateCheckOffer => lateCheckFor({ sessionDay, today: on, startDate: settings.startDate, workouts: h.workouts, runs: h.runs, checks: h.morningChecks })
   const [offer] = useState<LateCheckOffer>(() => ask(today, history))
@@ -328,22 +334,13 @@ function LateCheckScreen({ morning, today, settings, history, onSaved }: { morni
       return
     }
     setSaving(false)
-    const reach = lateCheckReach({
-      workouts: history.workouts,
-      setLogs: history.setLogs,
-      runs: history.runs,
-      before: history.morningChecks,
-      after: withCheck(history, check).morningChecks,
-      injuredSide: settings.injuredSide,
-      liftDates: reachLiftDates({ today, startDate: settings.startDate, template: PROGRAM.weeklyTemplate, moves: history.sessionMoves, workouts: history.workouts }),
-    })
-    onSaved({ check, sessionDay, changes: lateReachWords(reach, history, PROGRAM.templates) })
+    onSaved({ check, sessionDay, changes: lateChanges(mode, { check, today, settings, history, program: PROGRAM }) })
   }
 
   return (
     <Screen title={TITLE} lead={lateSubjectWords(subject, sessionDay, PROGRAM.templates)}>
-      <p className="text-body text-on-dark-dim">{LATE_FORM_LINE}</p>
-      <CheckFields form={form} setForm={setForm} late />
+      <p className="text-body text-on-dark-dim">{lateFormLine(mode)}</p>
+      <CheckFields mode={mode} form={form} setForm={setForm} late />
       {error ? (
         <p role="alert" className="text-body text-on-dark">
           {error}
@@ -361,10 +358,9 @@ function LateCheckScreen({ morning, today, settings, history, onSaved }: { morni
  * day before it; the reading and its reasons; a red flag as a note with the way to this morning's
  * check; what the check changed; and no way to change it (PROGRAM-QUESTIONS 174).
  */
-function LateResult({ saved }: { saved: LateSaved }) {
+function LateResult({ mode, saved }: { mode: EngineMode; saved: LateSaved }) {
   const { check, sessionDay, changes } = saved
-  const reading = morningReading(check)
-  const note = lateFlagNote(check, PROGRAM.redFlags)
+  const view = lateResultView(mode, check, PROGRAM)
   return (
     <Screen
       title={TITLE}
@@ -374,32 +370,38 @@ function LateResult({ saved }: { saved: LateSaved }) {
         </>
       }
     >
-      <Section label="Reading">
-        <div className="flex flex-col gap-2">
-          <ReadingWord result={reading.result} />
-          <p className="text-lead text-on-dark">{readingSentence(reading.result)}</p>
-        </div>
-        <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
-          {reading.reasons.map((reason) => (
-            <li key={reason}>Because: {reason}.</li>
-          ))}
-        </ul>
-      </Section>
+      {view.kind === 'full' ? (
+        <>
+          <Section label="Reading">
+            <div className="flex flex-col gap-2">
+              <ReadingWord result={view.reading.result} />
+              <p className="text-lead text-on-dark">{readingSentence(view.reading.result)}</p>
+            </div>
+            <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
+              {view.reading.reasons.map((reason) => (
+                <li key={reason}>Because: {reason}.</li>
+              ))}
+            </ul>
+          </Section>
 
-      {note ? (
-        <Section label="Red flag (past morning)">
-          <p className="text-body text-on-dark">{lateFlagWords(note)}</p>
-          <Button onClick={() => navigate({ name: 'morning' })}>This morning’s check</Button>
-        </Section>
-      ) : null}
+          {view.note ? (
+            <Section label="Red flag (past morning)">
+              <p className="text-body text-on-dark">{view.note}</p>
+              <Button onClick={() => navigate({ name: 'morning' })}>This morning’s check</Button>
+            </Section>
+          ) : null}
 
-      <Section label="What changed">
-        <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
-          {changes.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      </Section>
+          <Section label="What changed">
+            <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
+              {changes.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </Section>
+        </>
+      ) : (
+        <WrittenResult logged={view.logged} ownFlag={view.ownFlag} />
+      )}
 
       <p className="text-small text-on-dark-muted">A check for a past morning stays as saved.</p>
       <div className="flex flex-col gap-3">
@@ -414,10 +416,31 @@ function LateResult({ saved }: { saved: LateSaved }) {
   )
 }
 
-function Result({ saved, location, onChange }: { saved: Saved; location: Location; onChange: () => void }) {
+/** Tester mode (M-U3): what was logged, in words, and a ticked flag as the tester's own note; nothing read. */
+function WrittenResult({ logged, ownFlag }: { logged: string[]; ownFlag: string | null }) {
+  return (
+    <>
+      <Section label="What you logged">
+        <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
+          {logged.map((line) => (
+            <li key={line} className="wrap-anywhere">
+              {line}
+            </li>
+          ))}
+        </ul>
+      </Section>
+      {ownFlag ? (
+        <Section label="Your note">
+          <p className="text-body text-on-dark">{ownFlag}</p>
+        </Section>
+      ) : null}
+    </>
+  )
+}
+
+function Result({ mode, saved, location, onChange }: { mode: EngineMode; saved: Saved; location: Location; onChange: () => void }) {
   const { check, subject, settings, history } = saved
-  const reading = morningReading(check)
-  const stop = stopMessage(settings.redFlag, PROGRAM.redFlags)
+  const view = checkResultView(mode, saved, PROGRAM)
   return (
     <Screen
       title={TITLE}
@@ -427,34 +450,40 @@ function Result({ saved, location, onChange }: { saved: Saved; location: Locatio
         </>
       }
     >
-      <Section label="Reading">
-        <div className="flex flex-col gap-2">
-          <ReadingWord result={reading.result} />
-          <p className="text-lead text-on-dark">{readingSentence(reading.result)}</p>
-        </div>
-        <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
-          {reading.reasons.map((reason) => (
-            <li key={reason}>Because: {reason}.</li>
-          ))}
-        </ul>
-      </Section>
+      {view.kind === 'full' ? (
+        <>
+          <Section label="Reading">
+            <div className="flex flex-col gap-2">
+              <ReadingWord result={view.reading.result} />
+              <p className="text-lead text-on-dark">{readingSentence(view.reading.result)}</p>
+            </div>
+            <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
+              {view.reading.reasons.map((reason) => (
+                <li key={reason}>Because: {reason}.</li>
+              ))}
+            </ul>
+          </Section>
 
-      {stop ? (
-        <Section label="Red flag">
-          <p className="text-lead font-medium text-on-dark">{stop.headline}</p>
-          <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
-            {stop.items.map((item) => (
-              <li key={item}>Flagged: {item}.</li>
-            ))}
-          </ul>
-          <p className="text-body text-on-dark-dim">Progression is suspended until the red-flag state is cleared in Settings with a note.</p>
-          <Button onClick={() => navigate({ name: 'settings' })}>Open Settings</Button>
-        </Section>
-      ) : null}
+          {view.stop ? (
+            <Section label="Red flag">
+              <p className="text-lead font-medium text-on-dark">{view.stop.headline}</p>
+              <ul className="flex flex-col gap-1 text-body text-on-dark-dim">
+                {view.stop.items.map((item) => (
+                  <li key={item}>Flagged: {item}.</li>
+                ))}
+              </ul>
+              <p className="text-body text-on-dark-dim">Progression is suspended until the red-flag state is cleared in Settings with a note.</p>
+              <Button onClick={() => navigate({ name: 'settings' })}>Open Settings</Button>
+            </Section>
+          ) : null}
 
-      <Section label="Next time">
-        <NextTime subject={subject} settings={settings} history={history} gym={{ location, kit: settings.kit }} />
-      </Section>
+          <Section label="Next time">
+            <NextTime subject={subject} settings={settings} history={history} gym={{ location, kit: settings.kit }} />
+          </Section>
+        </>
+      ) : (
+        <WrittenResult logged={view.logged} ownFlag={view.ownFlag} />
+      )}
 
       <div className="flex flex-col gap-3">
         <Button variant="primary" wide onClick={() => navigate({ name: 'today' })}>
@@ -468,40 +497,29 @@ function Result({ saved, location, onChange }: { saved: Saved; location: Locatio
   )
 }
 
-/** For yesterday's lift: one sentence per exercise from the engine, planned with the new history. */
+/** For yesterday's lift: one sentence per exercise from the engine, planned with the new history (`nextTimeView`, full mode only). */
 function NextTime({ subject, settings, history, gym }: { subject: CheckSubject | null; settings: Settings; history: History; gym: Gym }) {
-  if (!subject) {
-    return <p className="text-body text-on-dark-dim">No session was logged for yesterday, so this check changes nothing on its own.</p>
+  const view = nextTimeView('full', { subject, settings, history, gym, program: PROGRAM })
+  switch (view.kind) {
+    case 'written':
+      return null
+    case 'no-session':
+      return <p className="text-body text-on-dark-dim">No session was logged for yesterday, so this check changes nothing on its own.</p>
+    case 'run':
+      return <p className="text-body text-on-dark-dim">Yesterday was a run. Its reading counts toward this week's mileage cap; the Week screen shows where the week stands.</p>
+    case 'no-template':
+      return <p className="text-body text-on-dark-dim">Yesterday's session uses a template this program does not have ({view.templateId}), so there is nothing to plan from.</p>
+    case 'failed':
+      return <p className="text-body text-on-dark-dim">The next session could not be planned ({view.error}).</p>
   }
-  if (subject.kind === 'run') {
-    return <p className="text-body text-on-dark-dim">Yesterday was a run. Its reading counts toward this week's mileage cap; the Week screen shows where the week stands.</p>
-  }
-  const { workout } = subject
-  // After a gate advance the next session of this letter is the new phase's (nextTemplateFor).
-  const nextId = nextTemplateFor(workout.templateId, PROGRAM.templates, settings.currentPhase)
-  const template = PROGRAM.templates.find((t) => t.id === nextId)
-  if (!template) {
-    return <p className="text-body text-on-dark-dim">Yesterday's session uses a template this program does not have ({workout.templateId}), so there is nothing to plan from.</p>
-  }
-  const week = nextWeekFor(workout, settings.startDate)
-  // The day that session falls on, after moves: a down period covering it pauses progression there (Batch E). Planned from every record, so no `before`.
-  const pauseDate = sessionDateInWeek(settings.startDate, week, PROGRAM.weeklyTemplate, history.sessionMoves, `lift:${template.letter}`)
-  let sentences: ExerciseSentence[]
-  try {
-    sentences = exerciseSentences(planSession({ template, week, settings, history, gym, ...(pauseDate ? { pauseDate } : {}) }), settings.injuredSide)
-  } catch (e) {
-    return <p className="text-body text-on-dark-dim">The next session could not be planned ({errorWords(e)}).</p>
-  }
+  const { openWorkoutId, sentences } = view
   return (
     <>
-      <p className="text-body text-on-dark">
-        Next {sessionName(template.id, PROGRAM.templates)}, week {week}
-        {isDeloadWeek(week) ? ', a deload week' : ''}:
-      </p>
-      {workout.status === 'in-progress' ? (
+      <p className="text-body text-on-dark">{view.heading}</p>
+      {openWorkoutId !== null ? (
         <div className="flex flex-col gap-3">
           <p className="text-body text-on-dark-dim">Yesterday's session was never finished, so its sets do not count yet. Finish or abandon it in the runner; the next plan will read them.</p>
-          <Button onClick={() => navigate({ name: 'session', workoutId: workout.id })}>Open yesterday's session</Button>
+          <Button onClick={() => navigate({ name: 'session', workoutId: openWorkoutId })}>Open yesterday's session</Button>
         </div>
       ) : null}
       {sentences.length === 0 ? (

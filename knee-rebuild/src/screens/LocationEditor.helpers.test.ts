@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { phaseWeekFor } from '../app/session.ts'
 import { homeLocation } from '../db/migrations.ts'
+import { weekOf } from '../rules/calendar.ts'
 import { newDownPeriod } from '../rules/downPeriod.ts'
 import { program } from '../program/program.ts'
 import { availableEquipment, equipmentChecklist, usedEquipment } from '../rules/equipment.ts'
@@ -274,20 +275,33 @@ describe('Something else here?', () => {
 
 describe('What this changes', () => {
   it("reads today's week of the phase, from week 1 before the start", () => {
-    expect(coverageWeek(settings(), '2026-10-30', [])).toBe(1)
-    expect(coverageWeek(settings(), '2026-11-18', [])).toBe(3)
-    expect(coverageWeek(settings({ currentPhase: 2, phaseEnteredWeek: 5 }), '2026-12-16', [])).toBe(3)
+    expect(coverageWeek(settings(), '2026-10-30', [], 'full')).toBe(1)
+    expect(coverageWeek(settings(), '2026-11-18', [], 'full')).toBe(3)
+    expect(coverageWeek(settings({ currentPhase: 2, phaseEnteredWeek: 5 }), '2026-12-16', [], 'full')).toBe(3)
   })
 
   it('reads the band a down period holds, as Today and the plan read it (PROGRAM-QUESTIONS 188)', () => {
     // Phase 3 entered in week 8; a period Sat Jan 2 to Fri Jan 8, 2027: Tue Jan 5 is the calendar's phase week 3, held at 2.
     const phaseThree = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
     const period = newDownPeriod({ today: '2027-01-02', days: 7, declaredAt: '2027-01-02T13:00:00.000Z' })
-    expect(coverageWeek(phaseThree, '2027-01-05', [period])).toBe(2)
-    expect(coverageWeek(phaseThree, '2027-01-05', [])).toBe(3)
+    expect(coverageWeek(phaseThree, '2027-01-05', [period], 'full')).toBe(2)
+    expect(coverageWeek(phaseThree, '2027-01-05', [], 'full')).toBe(3)
     const history = { downPeriods: [period] }
     for (const [date, week] of [['2027-01-01', 9], ['2027-01-05', 10], ['2027-01-09', 10], ['2027-01-12', 11], ['2027-01-19', 12]] as const) {
-      expect(coverageWeek(phaseThree, date, [period]), date).toBe(phaseWeekFor(week, phaseThree, history, date))
+      expect(coverageWeek(phaseThree, date, [period], 'full'), date).toBe(phaseWeekFor(week, phaseThree, history, date))
+    }
+  })
+
+  it('reads the calendar’s week in tester mode: a stored period holds no band and the engine is not asked (M-U3, PROGRAM-QUESTIONS 231)', () => {
+    // Phase 3 entered in week 4, a period Dec 5 to 8, 2026; Sat Dec 12 is the calendar's phase week 3, held at 2 in full mode.
+    const phaseThree = settings({ currentPhase: 3, phaseEnteredWeek: 4 })
+    const period = newDownPeriod({ today: '2026-12-05', days: 4, declaredAt: '2026-12-05T13:00:00.000Z' })
+    expect(coverageWeek(phaseThree, '2026-12-12', [period], 'full')).toBe(2)
+    expect(coverageWeek(phaseThree, '2026-12-12', [period], 'tester')).toBe(3)
+    expect(coverageWeek(phaseThree, '2026-12-12', [], 'tester')).toBe(3)
+    // The week Today's written session and the Program screen read for a tester.
+    for (const date of ['2026-11-04', '2026-12-06', '2026-12-12', '2027-01-05']) {
+      expect(coverageWeek(phaseThree, date, [period], 'tester'), date).toBe(phaseWeekFor(weekOf(date, phaseThree.startDate), phaseThree, { downPeriods: [period] }))
     }
   })
 

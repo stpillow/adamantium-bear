@@ -1,9 +1,9 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAclRsiEntries, getAddedSlots, getDownPeriods, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getTimeZoneSetting, getVo2Readings, loadHistory, onboardingFacts, type History } from './repo.ts'
+import { getAclRsiEntries, getAddedSlots, getDownPeriods, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getTimeZoneSetting, getVo2Readings, loadHistory, onboardingFacts, preAccountsFacts, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
 import { onboardingState, type OnboardingState } from '../rules/onboarding.ts'
-import type { AclRsiEntry, AddedSlot, DownPeriod, HrSettings, KoosEntry, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, AddedSlot, DownPeriod, HrSettings, IsoDate, KoosEntry, Location, MorningCheck, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
 export function useSettings(): Settings | null | undefined {
@@ -36,6 +36,19 @@ export function useWorkout(id: string | null): Workout | null | undefined {
 
 export function useSetsFor(workoutId: string | null): SetLog[] | undefined {
   return useLiveQuery(async () => (workoutId ? db.setLogs.where('workoutId').equals(workoutId).toArray() : []), [workoutId])
+}
+
+/**
+ * Whether the phone holds writes from before accounts (M-U3, `preAccountsFacts`), live so an import
+ * is caught. Undefined while loading: the shell waits on it, so the engine mode never flashes.
+ */
+export function usePreAccountsLog(): boolean | undefined {
+  return useLiveQuery(() => preAccountsFacts(), [])
+}
+
+/** The morning checks dated `date` (one, or an imported row under another id beside it). Undefined while loading. */
+export function useMorningChecksOn(date: IsoDate): MorningCheck[] | undefined {
+  return useLiveQuery(() => db.morningChecks.where('date').equals(date).toArray(), [date])
 }
 
 /** The whole history, re-read whenever any table changes. */

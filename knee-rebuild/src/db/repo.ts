@@ -20,6 +20,7 @@ import { cleanWindow } from '../rules/fitWindow.ts'
 import { overrideProblems } from '../rules/overrides.ts'
 import { declareProblem, endProblem, endedEarly, extendProblem, extended, newDownPeriod, resumeProblem, resumed } from '../rules/downPeriod.ts'
 import { onboardingState, type OnboardingState, type StoredFacts } from '../rules/onboarding.ts'
+import { preAccountsLog } from '../rules/engineMode.ts'
 import {
   AclRsiEntry,
   AddedSlot,
@@ -123,6 +124,23 @@ export async function saveSettings(settings: Settings): Promise<void> {
   await db.settings.put(settingsRow(settings))
 }
 
+/**
+ * The settings rewritten by `fold`, given the checks dated `today`, read and written in one
+ * transaction so a screen's save in between is never undone; nothing written when `fold` answers the
+ * settings object it was given. True when it wrote. The shell keeps a full-mode red-flag state with it
+ * (M-U3: a check saved in tester mode set none; MorningCheck.helpers `withTodaysFlags`).
+ */
+export async function foldSettings(today: IsoDate, fold: (settings: Settings, todaysChecks: MorningCheck[]) => Settings): Promise<boolean> {
+  return db.transaction('rw', db.settings, db.morningChecks, async () => {
+    const settings = await getSettings()
+    if (!settings) return false
+    const next = fold(settings, await db.morningChecks.where('date').equals(today).toArray())
+    if (next === settings) return false
+    await saveSettings(next)
+    return true
+  })
+}
+
 /** Records when this phone last wrote a backup, in the stamp's own row. Inside a transaction on settings, or alone. */
 export async function saveExportStamp(at: IsoDateTime): Promise<void> {
   const row: ExportStampRow = { id: EXPORT_STAMP_ID, at: IsoDateTime.parse(at) }
@@ -201,6 +219,20 @@ export async function onboardingFacts(): Promise<StoredFacts> {
     let rows = 0
     for (const table of db.tables) if (table.name !== 'timeZoneSettings') rows += await table.count()
     return { settingsRow, otherRows: rows - (settingsRow ? 1 : 0) }
+  })
+}
+
+/**
+ * Whether this phone holds writes from before accounts existed (M-U3, PROGRAM-QUESTIONS 224): the
+ * sets' write stamps and the sessions' start stamps, read in one transaction and judged by
+ * src/rules/engineMode.ts `preAccountsLog`. Only the engine mode reads it, and only while the phone
+ * has kept no account answer.
+ */
+export async function preAccountsFacts(): Promise<boolean> {
+  return db.transaction('r', [db.setLogs, db.workouts], async () => {
+    const setLogs = (await db.setLogs.toArray()).map((s) => ({ loggedAt: s.loggedAt }))
+    const workouts = (await db.workouts.toArray()).map((w) => ({ date: w.date, startedAt: w.startedAt }))
+    return preAccountsLog({ setLogs, workouts })
   })
 }
 

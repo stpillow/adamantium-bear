@@ -1,13 +1,24 @@
 import { DUMBBELLS, missingHere, type Available, type SlotRoute } from '../rules/equipment.ts'
 import { HELD_LOAD_INCREMENT_LB, RANGE_LADDER_DEG, type Prescription } from '../rules/prescription.ts'
 import type { WarmUpParts } from '../rules/warmUp.ts'
-import type { Ramp, RampSet } from '../app/session.ts'
-import type { Draft } from '../rules/prefill.ts'
-import { stepKey } from '../rules/runOrder.ts'
-import type { SwapOffer } from '../rules/runnerGym.ts'
+import { planSession, sessionBandWeek, sessionExtensions, slotRamp, warmUpFor, windowFit, withAdded, withExtensions, type Gym, type Ramp, type RampSet, type SlotPlan } from '../app/session.ts'
+import { writtenFit, writtenSession, type WrittenSlotPlan } from '../app/written.ts'
+import type { History } from '../db/repo.ts'
+import { exerciseById } from '../program/program.ts'
+import { effectiveSlot } from '../rules/effectiveSlot.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
+import { isExtraSlotId } from '../rules/extensions.ts'
+import type { Fit } from '../rules/fitWindow.ts'
+import { needsLoadPick, prefill, type Draft } from '../rules/prefill.ts'
+import { progressionNeedsRpe } from '../rules/prescription.ts'
+import { sessionSteps, stepKey, type Step } from '../rules/runOrder.ts'
+import { cardHoldsOff, type SwapOffer } from '../rules/runnerGym.ts'
+import { healthySideTargets } from '../rules/unilateral.ts'
+import { writtenDraft, writtenLoadMissing } from '../rules/written.ts'
 import { RACK_PRESETS } from './LocationEditor.helpers.ts'
-import type { Equipment, EquipmentId, Exercise, IsoDate, LoadUnit, MorningCheck, RepUnit, Requirement, Run, SessionTemplate, SetLog, SetSide, Side, Slot, StopReason, Workout } from '../schema/index.ts'
+import type { Equipment, EquipmentId, Exercise, IsoDate, LoadUnit, MorningCheck, RepUnit, Requirement, Run, SessionTemplate, SetLog, SetSide, Settings, Side, Slot, StopReason, Workout } from '../schema/index.ts'
 import { addDays } from '../rules/calendar.ts'
+import { sessionPhaseWeek } from '../rules/compliance.ts'
 import { checkFor } from '../rules/history.ts'
 import { lateCheckFor } from '../rules/lateCheck.ts'
 import { dateWords, lateOfferLabel } from './MorningCheck.helpers.ts'
@@ -725,9 +736,11 @@ export function notLoggedLabels(
  * abduction, ankle strap"), not logged first, then not finished; or, with none open, that every
  * required set (every other one, when the not-here line names some) is logged.
  */
-export function notLoggedWords(open: { notLogged: readonly string[]; notFinished: readonly string[] }, notHereSaid: boolean): string {
+export function notLoggedWords(open: { notLogged: readonly string[]; notFinished: readonly string[] }, notHereSaid: boolean, mode: EngineMode = 'full'): string {
+  // Tester mode (M-U3) has no prescription to keep: the open slots are only named.
+  const keep = mode === 'tester' ? '' : ' They keep last session’s prescription.'
   const parts = [
-    open.notLogged.length > 0 ? `Not logged: ${open.notLogged.join('; ')}. They keep last session’s prescription.` : '',
+    open.notLogged.length > 0 ? `Not logged: ${open.notLogged.join('; ')}.${keep}` : '',
     open.notFinished.length > 0 ? `Not finished: ${open.notFinished.join('; ')}.` : '',
   ].filter(Boolean)
   if (parts.length > 0) return parts.join(' ')
@@ -745,12 +758,14 @@ export type SummaryCheckAction = { kind: 'morning'; label: string } | { kind: 'l
  * hold at best for good. A session's own pain can already read back off, so the words say "at best".
  */
 export function summaryCheckLine(input: {
+  mode: EngineMode
   workout: Pick<Workout, 'id' | 'date'>
   today: IsoDate
   startDate: IsoDate
   history: { workouts: readonly Workout[]; runs: readonly Run[]; morningChecks: readonly MorningCheck[] }
 }): { text: string; action: SummaryCheckAction } {
   const { workout, today, startDate, history } = input
+  if (input.mode === 'tester') return writtenCheckLine(input)
   if (workout.date >= today) {
     return { text: 'These are the session readings. Tomorrow’s morning check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold.', action: null }
   }
@@ -767,4 +782,292 @@ export function summaryCheckLine(input: {
     }
   }
   return { text: 'These are the session readings. No morning check from the next morning completes them, so each reads hold at best.', action: null }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Both modes (M-U3; PROGRAM-QUESTIONS 226, 227): the runner's plan and its card, through helpers
+// that take the mode. Full mode is the engine's exactly (src/screens/fullMode.snapshot.test.ts);
+// tester mode is the session as written and never calls a prescription, reading or ramp.
+
+/** The tester's Summary line about the next morning's check: where it is, never what it completes. */
+function writtenCheckLine(input: { workout: Pick<Workout, 'id' | 'date'>; today: IsoDate; startDate: IsoDate; history: { workouts: readonly Workout[]; runs: readonly Run[]; morningChecks: readonly MorningCheck[] } }): { text: string; action: SummaryCheckAction } {
+  const { workout, today, startDate, history } = input
+  if (workout.date >= today) return { text: 'Tomorrow morning’s check is on the Morning check screen.', action: null }
+  const covering = checkFor({ kind: 'workout', id: workout.id, date: workout.date }, history.morningChecks)
+  if (covering) return { text: `The morning check from ${dateWords(covering.date)} is logged.`, action: null }
+  if (addDays(workout.date, 1) === today) return { text: 'This morning’s check is on the Morning check screen.', action: { kind: 'morning', label: 'Morning check' } }
+  const offer = lateCheckFor({ sessionDay: workout.date, today, startDate, workouts: history.workouts, runs: history.runs, checks: history.morningChecks })
+  if (offer.ok) return { text: `The check for the next morning, ${dateWords(offer.morning)}, can still be logged.`, action: { kind: 'late', morning: offer.morning, label: lateOfferLabel(offer.morning) } }
+  return { text: 'No morning check from the next morning was logged.', action: null }
+}
+
+/** One slot as the runner runs it: the engine's plan (full) or the session as written (tester). */
+export type RunnerSlot = { mode: 'full'; plan: SlotPlan } | { mode: 'tester'; plan: WrittenSlotPlan }
+
+/** The exercise a slot runs now: the prescription's (a rack move or a back-off changes it), else the plan's. */
+export function runsExerciseId(rs: RunnerSlot): string {
+  return rs.mode === 'full' ? (rs.plan.prescriptions[0]?.exerciseId ?? rs.plan.exercise.id) : rs.plan.exercise.id
+}
+
+/** Each side the slot logs and its sets, injured side first. */
+export function sideSets(rs: RunnerSlot): { side: SetSide; sets: number }[] {
+  return rs.mode === 'full' ? rs.plan.prescriptions.map((p) => ({ side: p.side, sets: p.sets })) : rs.plan.sides.map((s) => ({ side: s.side, sets: s.sets }))
+}
+
+/** What a set on a side is stored as: its exercise, what it counts, and whether the rack capped it (full mode only; a tester's set never carries the mark). */
+export function setTarget(rs: RunnerSlot, side: SetSide): { exerciseId: string; repUnit: RepUnit; rackCapped: boolean } | null {
+  if (rs.mode === 'tester') return { exerciseId: rs.plan.exercise.id, repUnit: rs.plan.repUnit, rackCapped: false }
+  const prescription = rs.plan.prescriptions.find((p) => p.side === side) ?? rs.plan.prescriptions[0]
+  return prescription ? { exerciseId: prescription.exerciseId, repUnit: prescription.repUnit, rackCapped: prescription.rackCapped === true } : null
+}
+
+/** What the slot counts, for the session's minutes (`timedSets`). */
+export function slotRepUnit(rs: RunnerSlot): RepUnit | undefined {
+  return rs.mode === 'full' ? rs.plan.prescriptions[0]?.repUnit : rs.plan.repUnit
+}
+
+export interface RunnerPlan {
+  /** Every slot the minutes choose from (extras included in full mode), unswapped. */
+  everySlot: RunnerSlot[]
+  fit: Fit
+  /** What the minutes keep, before any swap. */
+  unswapped: RunnerSlot[]
+  /** The exercise each kept slot runs without a swap. */
+  engineBySlot: Map<string, string>
+  /** The session's swaps, as they stand on their slots' lists. */
+  chosen: Record<string, string | undefined>
+  /** The slots that run, with the swaps. */
+  plans: RunnerSlot[]
+  steps: Step[]
+  /** The session's own slots, not extras. */
+  ownCount: number
+}
+
+/**
+ * The runner's plan for a workout at its gym (SessionRunner.tsx before M-U3): full mode plans with
+ * the engine, the extra-time pool, the warm-up sets in the window; tester mode plans the session as
+ * written and fits the window over the written sets.
+ */
+export function runnerPlan(
+  mode: EngineMode,
+  input: { template: SessionTemplate; workout: Workout; settings: Settings; history: History; gym: Gym; stored: Record<string, string | null>; minutes: number | null; sets: readonly SetLog[]; late: boolean },
+): RunnerPlan {
+  const { template, workout, settings, history, gym, sets } = input
+  const logged = new Set(sets.map((s) => s.slotId))
+  const warm = warmUpFor(workout.phase, gym)
+  const picks = (unswapped: readonly RunnerSlot[], engineBySlot: Map<string, string>) =>
+    picksOnList(
+      withoutEnginePicks(mergeSwaps(swapsFromSets(unswapped.map((rs) => ({ slot: rs.plan.slot, prescriptions: rs.mode === 'full' ? rs.plan.prescriptions : [{ exerciseId: rs.plan.exercise.id }] })), sets), input.stored), engineBySlot),
+      unswapped.map((rs) => rs.plan),
+    )
+  if (mode === 'tester') {
+    const base = { template, week: workout.week, settings, history, gym }
+    const every = writtenSession(base)
+    const fit = writtenFit(every, settings.restTimerSeconds, input.minutes, { warmUpMinutes: warm.total, logged })
+    const unswapped: RunnerSlot[] = every.filter((p) => fit.keep.includes(p.slot.id)).map((plan) => ({ mode: 'tester', plan }))
+    const engineBySlot = new Map(unswapped.map((rs) => [rs.plan.slot.id, rs.plan.exercise.id]))
+    const chosen = picks(unswapped, engineBySlot)
+    const plans: RunnerSlot[] = writtenSession({ ...base, chosenExercise: chosen })
+      .filter((p) => fit.keep.includes(p.slot.id))
+      .map((plan) => ({ mode: 'tester', plan }))
+    return { everySlot: every.map((plan) => ({ mode: 'tester', plan })), fit, unswapped, engineBySlot, chosen, plans, steps: stepsOf(plans), ownCount: every.length }
+  }
+  const planInput = { template, week: workout.week, settings, history, gym, before: workout.date }
+  // The pool for extra time, worked out from the same inputs each time: which of it runs is the minutes' call (`windowFit`).
+  const extend = sessionExtensions(template, history, settings, workout.week, workout.date)
+  const every = planSession({ ...planInput, extend })
+  // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym comes off the top; a late entry shows, and so counts, no warm-up sets.
+  const fit = windowFit(every, settings.restTimerSeconds, input.minutes, { warmUpMinutes: warm.total, ramps: !input.late, logged })
+  const unswapped: RunnerSlot[] = every.filter((p) => fit.keep.includes(p.slot.id)).map((plan) => ({ mode: 'full', plan }))
+  const engineBySlot = new Map(unswapped.map((rs) => [rs.plan.slot.id, rs.plan.exercise.id]))
+  // Only picks on their slot's list as it runs now: a Program edit mid-session can take one off, and the engine then runs the slot's history.
+  const chosen = picks(unswapped, engineBySlot)
+  const plans: RunnerSlot[] = planSession({ ...planInput, chosenExercise: chosen, extend })
+    .filter((p) => fit.keep.includes(p.slot.id))
+    .map((plan) => ({ mode: 'full', plan }))
+  return { everySlot: every.map((plan) => ({ mode: 'full', plan })), fit, unswapped, engineBySlot, chosen, plans, steps: stepsOf(plans), ownCount: every.filter((p) => !isExtraSlotId(p.slot.id)).length }
+}
+
+function stepsOf(plans: readonly RunnerSlot[]): Step[] {
+  return sessionSteps(plans.map((rs) => ({ slotId: rs.plan.slot.id, ...(rs.plan.slot.groupId ? { groupId: rs.plan.slot.groupId } : {}), optional: rs.plan.slot.optional, sides: sideSets(rs) })))
+}
+
+/**
+ * The exercise the plan runs that is off the card (`cardHoldsOff`: past the rack, or backed off),
+ * read off the unswapped plan, so Swap can say why a tap on it keeps the card. Never in tester mode:
+ * nothing is backed off and nothing is rack-moved there.
+ */
+export function holdsOffFor(unswapped: RunnerSlot | undefined, engineId: string | undefined, rackLb: number): HoldsOff | null {
+  if (!unswapped || !engineId || unswapped.mode === 'tester') return null
+  const why = cardHoldsOff(engineId, unswapped.plan.prescriptions, false)
+  return why ? { exerciseId: engineId, why, cardName: exerciseById(unswapped.plan.prescriptions[0]?.exerciseId ?? engineId).name, rackLb } : null
+}
+
+/**
+ * The key the runner gives the open card: the edited set, else the open step, else the slot viewed,
+ * with the exercise, and the mode. The card reads its draft once (a new step remounts it, so a draft
+ * never leaks into the next set); a mode flip plans the session again (PROGRAM-QUESTIONS 233), so it
+ * remounts the card too: a full-mode draft's computed load never reaches tester mode, nor a written
+ * draft a full-mode model.
+ */
+export function activeCardKey(input: { mode: EngineMode; editingId: string | null; stepKey: string | null; slotId: string; exerciseId: string | null }): string {
+  const at = input.editingId !== null ? `edit:${input.editingId}` : (input.stepKey ?? `view:${input.slotId}`)
+  return `${input.mode}:${at}:${input.exerciseId ?? ''}`
+}
+
+/** The red-flag line at the top of the runner: full mode while the state is on; never in tester mode. */
+export function redFlagRunnerLine(mode: EngineMode, settings: Pick<Settings, 'redFlag'>): string | null {
+  if (mode === 'tester' || !settings.redFlag.active) return null
+  return 'Red-flag state: progression is suspended; loads repeat the last session.'
+}
+
+/** The deload badge's words for the mode. */
+export function deloadBadge(mode: EngineMode): string {
+  return mode === 'tester' ? 'Deload week: fewer sets, as written' : 'Deload week: fewer sets, same loads'
+}
+
+/** The template a finished session's Summary names its slots from: with the extra-time slots in full mode, the session's own and added ones in tester mode. */
+export function summaryTemplateFor(mode: EngineMode, template: SessionTemplate, history: History, settings: Settings, workout: Pick<Workout, 'week' | 'date'>): SessionTemplate {
+  if (mode === 'tester') return withAdded(template, history)
+  return withExtensions(template, history, sessionExtensions(template, history, settings, workout.week, workout.date))
+}
+
+/** The phase week a stored session's Summary counts its sets in: held by a down period in full mode (`sessionBandWeek`), the calendar's in tester mode. */
+export function summaryPhaseWeek(mode: EngineMode, workout: Pick<Workout, 'phase' | 'week' | 'date'>, settings: Settings, history: Pick<History, 'downPeriods'>): number | null {
+  return mode === 'tester' ? sessionPhaseWeek(workout, settings) : sessionBandWeek(workout, settings, history)
+}
+
+/** What the card shows and how its set opens: the engine's prescription in full mode, program.md's written cell in tester mode. */
+export interface CardModel {
+  /** The exercise on the card: the set being corrected's, else the one the slot runs. */
+  exercise: Exercise
+  /** The slot as it applies to that exercise. */
+  slot: Slot
+  repUnit: RepUnit
+  /** Sets for a side with no entry in the side list. */
+  sets: number
+  header: {
+    /** "3 × 10–12 · RPE 6→7 · 90 lb" (full) or "3 × 10–12, RPE 6→7" as program.md writes it (tester). */
+    text: string
+    note: string | null
+    moved: string | null
+    writtenFor: string | null
+    deload: string | null
+    loadNote: string | null
+  }
+  /** The set's opening values; null with no step and nothing being corrected. */
+  draft: Draft | null
+  needsRpe: boolean
+  showRpe: boolean
+  budgetLine: string | null
+  ramp: string | null
+  /** The bar's words and the line under the load while no load is in. */
+  loadBar: string
+  loadLine: string
+  /** The line under the pain picker while it is unrated. */
+  painLine: string
+  /** Full mode's prescription for the side, for its load check; absent in tester mode. */
+  prescription?: SlotPlan['prescriptions'][number]
+}
+
+/**
+ * The card for a slot (ActiveCard.tsx and SessionRunner.tsx before M-U3). Full mode: the
+ * prescription in words, its note, the engine's move, the healthy side's budget, the warm-up sets
+ * and the prefill. Tester mode: program.md's cell, the deload's cut, the load guidance, what was
+ * written for the slot when another exercise runs, and a draft the tester types into.
+ */
+export function cardModel(
+  mode: EngineMode,
+  input: {
+    rs: RunnerSlot
+    step: Step | null
+    editing: SetLog | null
+    /** This slot's sets this session. */
+    slotSets: readonly SetLog[]
+    /** Every set this session, for whether the exercise is warm already. */
+    sessionSets: readonly SetLog[]
+    /** Every set ever logged, for the last RPE (full mode). */
+    allSets: readonly SetLog[]
+    injuredSide: Side
+    painPerSet: boolean
+    swapped: boolean
+    late: boolean
+  },
+): CardModel | null {
+  const { rs, step, editing, slotSets, injuredSide } = input
+  if (rs.mode === 'tester') {
+    const plan = rs.plan
+    const exercise = exerciseById(editing?.exerciseId ?? plan.exercise.id)
+    const slot = effectiveSlot(plan.slot, exercise)
+    const own = plan.slot.exerciseId
+    return {
+      exercise,
+      slot,
+      repUnit: slot.repUnit,
+      sets: plan.sides[0]?.sets ?? plan.slot.sets,
+      header: {
+        text: plan.text,
+        note: null,
+        moved: null,
+        writtenFor: exercise.id !== own ? `Written for ${exerciseById(own).name}; ${exercise.name} runs here instead.` : null,
+        deload: plan.deload ? `Deload week: ${plan.deload.sets} of the written ${plan.deload.written} ${plan.deload.written === 1 ? 'set' : 'sets'}.` : null,
+        loadNote: plan.loadNote,
+      },
+      draft: editing ? draftFromSet(editing) : step ? writtenDraft({ slot, exercise, side: step.side, slotSets, painPerSet: input.painPerSet }) : null,
+      needsRpe: false,
+      showRpe: slot.rpeTarget !== undefined,
+      budgetLine: null,
+      ramp: null,
+      loadBar: 'Type the load first',
+      loadLine: 'Type the load you’re using; the app proposes none.',
+      painLine: 'Rate the pain to log this set.',
+    }
+  }
+  // Fail safe: a full plan never opens the engine's card in tester mode.
+  if (mode === 'tester') return null
+  const plan = rs.plan
+  const prescription = plan.prescriptions.find((p) => p.side === (editing?.side ?? step?.side)) ?? plan.prescriptions[0]
+  if (!prescription) return null
+  const exercise = exerciseById(editing?.exerciseId ?? prescription.exerciseId)
+  // The slot as it applies to the exercise on the card: after a swap, unit, targets and rule follow it.
+  const slot = effectiveSlot(plan.slot, exercise)
+  const repUnit = prescription.exerciseId === exercise.id ? prescription.repUnit : slot.repUnit
+  const runsId = plan.prescriptions[0]?.exerciseId ?? plan.exercise.id
+  const budget = healthySideTargets(slotSets.filter((s) => s.side === injuredSide && s.exerciseId === runsId))
+  const healthy = step !== null && step.side !== 'both' && step.side !== injuredSide
+  const needsRpe = progressionNeedsRpe(slot)
+  return {
+    exercise,
+    slot,
+    repUnit,
+    sets: prescription.sets,
+    header: {
+      text: prescriptionWords(prescription, slot, exercise),
+      note: prescription.note ? prescription.note : null,
+      moved: movedByEngine(plan.slot.exerciseId, prescription.exerciseId, plan.route, input.swapped, prescription.rackMoved === true) ? `Moved to ${exercise.name} by the engine.` : null,
+      writtenFor: null,
+      deload: null,
+      loadNote: null,
+    },
+    draft: editing
+      ? draftFromSet(editing)
+      : step
+        ? prefill({ prescription, slot, setNumber: step.setNumber, slotSets, budget: healthy ? budget : null, historyRpe: lastRpeFor(runsId, input.allSets), painPerSet: input.painPerSet })
+        : null,
+    needsRpe,
+    showRpe: slot.rpeTarget !== undefined || needsRpe,
+    budgetLine: healthy && step ? (budget[step.setNumber - 1] !== undefined ? `Budget ${budget[step.setNumber - 1]}: the injured side did that on set ${step.setNumber}.` : 'Budget: the injured side goes first; its reps set this side’s target.') : null,
+    // The active slot's warm-up sets (display only, PROGRAM-QUESTIONS 165): none for a late entry, none once a set of that exercise is logged this session.
+    ramp: rampWords(slotRamp(plan, { late: input.late, alreadyWarm: input.sessionSets.some((s) => s.exerciseId === runsId) }), exerciseById(runsId)),
+    loadBar: 'Pick a load first',
+    loadLine: 'First time on this exercise: pick a load that lands at the target RPE.',
+    painLine: 'Rate the pain to log: unrated pain would read hold, and two holds back the load off.',
+    prescription,
+  }
+}
+
+/** Whether the set waits for a load: full mode's rule (`needsLoadPick`), tester mode's (`writtenLoadMissing`). */
+export function loadBlocked(mode: EngineMode, model: CardModel, draft: Pick<Draft, 'load'>): boolean {
+  if (mode === 'full') return model.prescription !== undefined && needsLoadPick(model.prescription, showsLoad(model.exercise), model.exercise.loadDirection, draft)
+  return writtenLoadMissing(showsLoad(model.exercise), model.exercise.loadDirection, draft)
 }

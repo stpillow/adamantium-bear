@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
@@ -8,11 +9,11 @@ import { Stepper } from '../components/Stepper.tsx'
 import { Tap } from '../components/Tap.tsx'
 import { useAclRsiEntries, useHistory, useLocations, useSettings } from '../db/hooks.ts'
 import { addGateTest, saveSettings, type History } from '../db/repo.ts'
-import { advancePhase } from '../rules/progress.ts'
 import type { AclRsiEntry, GateItem, IsoDate, Location, Settings } from '../schema/index.ts'
 import { gateEvidenceLines, rationaleView } from './Evidence.helpers.ts'
 import {
   advanceErrorSentence,
+  advanceSettings,
   advancedWords,
   bestWords,
   buildTest,
@@ -84,6 +85,7 @@ export function Gates() {
 }
 
 function GateScreen({ today, settings, history, locations, aclRsiEntries }: { today: IsoDate; settings: Settings; history: History; locations: readonly Location[]; aclRsiEntries: readonly AclRsiEntry[] }) {
+  const { mode } = useEngineMode()
   /** Symmetry forms being typed, by gate item id; an item with no draft shows its opening form. */
   const [drafts, setDrafts] = useState<Record<string, SymmetryForm>>({})
   /** The write in flight, so only the control that made it says "Saving…". */
@@ -123,7 +125,7 @@ function GateScreen({ today, settings, history, locations, aclRsiEntries }: { to
     </p>
   )
 
-  const view = gatesView({ today, settings, history, program: PROGRAM, locations, aclRsiEntries })
+  const view = gatesView({ mode, today, settings, history, program: PROGRAM, locations, aclRsiEntries })
   const takenIds = history.gateTests.map((t) => t.id)
   const setError = (key: string, text: string | null) => setErrors((all) => (text === null ? withoutKey(all, key) : { ...all, [key]: text }))
 
@@ -140,6 +142,40 @@ function GateScreen({ today, settings, history, locations, aclRsiEntries }: { to
   }
 
   const { gate } = view
+
+  if (view.kind === 'criteria') {
+    return (
+      <Screen title={TITLE} lead={view.gate.title}>
+        <p className="text-body text-on-dark">{view.lead}</p>
+        <section aria-label="Criteria" className={SECTION}>
+          <h2 className={HEADING}>Criteria, as written</h2>
+          <ol className="flex flex-col">
+            {view.items.map((item) => (
+              <li key={item.id} className="flex flex-col gap-3 border-t border-on-dark-faint py-4">
+                <p className="text-body text-on-dark">{item.text}</p>
+                <WhyThisTest itemId={item.id} />
+              </li>
+            ))}
+          </ol>
+          {gateEvidenceLines(view.items.map((i) => i.id)).map((line) => (
+            <p key={line} className="text-small text-on-dark-muted">
+              {line}
+            </p>
+          ))}
+        </section>
+        <section aria-label="Questionnaires" className={SECTION}>
+          <h2 className={HEADING}>Questionnaires</h2>
+          <p className="text-small text-on-dark-muted">{view.questionnaires}</p>
+          <Button wide onClick={() => navigate({ name: 'koos' })}>
+            Open the KOOS questionnaire
+          </Button>
+          <Button wide onClick={() => navigate({ name: 'acl-rsi' })}>
+            Open the ACL-RSI questionnaire
+          </Button>
+        </section>
+      </Screen>
+    )
+  }
 
   async function tick(item: GateItem, value: boolean) {
     if (pending) return
@@ -197,7 +233,7 @@ function GateScreen({ today, settings, history, locations, aclRsiEntries }: { to
     try {
       // advancePhase refuses a gate that doesn't pass or doesn't lead to the next phase; the refusal is shown in words.
       // The week is phaseEntryWeek's, through the view: next week once this week's lifts have begun (PROGRAM-QUESTIONS 113).
-      const next = advancePhase(settings, body.gate, body.result.passes, body.entryWeek)
+      const next = advanceSettings(body, settings)
       await saveSettings(next)
       closedBy.current = 'advanced'
       setConfirming(false)

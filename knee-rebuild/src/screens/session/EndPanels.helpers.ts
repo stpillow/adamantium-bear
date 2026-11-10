@@ -1,3 +1,4 @@
+import type { EngineMode } from '../../rules/engineMode.ts'
 import { minutesPreset, trainingLoadOf, workoutRpe, type LoggedWork, type MinutesPreset } from '../../rules/trainingLoad.ts'
 import type { Workout } from '../../schema/index.ts'
 import { trainingLoadNumber } from '../Progress.helpers.ts'
@@ -65,4 +66,20 @@ export function sessionEffortLine(workout: Pick<Workout, 'sessionRpe' | 'duratio
 /** The Summary offers Add effort and minutes while the session's RPE or its minutes is not stored. */
 export function needsEffortOrMinutes(workout: Pick<Workout, 'sessionRpe' | 'durationMinutes'>): boolean {
   return workout.sessionRpe === undefined || workout.durationMinutes === undefined
+}
+
+/** Finish with nothing logged: the session is discarded. Full mode says what that leaves out of the engine; tester mode says only that it is discarded (M-U3). */
+export function discardWords(mode: EngineMode): string {
+  return mode === 'tester'
+    ? 'Finishing now discards this session: a session with no sets didn’t happen. Today will offer Start again.'
+    : 'Finishing now discards this session: a session with no sets didn’t happen, so it reads nothing and caps nothing. Today will offer Start again.'
+}
+
+/** End without finishing: what is kept, in the mode's words. */
+export function endWords(mode: EngineMode, loggedCount: number): string {
+  if (loggedCount === 0) {
+    return mode === 'tester' ? 'Nothing was logged, so the session is discarded. Today will offer Start again.' : 'Nothing was logged, so the session is discarded: it reads nothing and caps nothing. Today will offer Start again.'
+  }
+  const kept = `Keeps the ${loggedCount} ${loggedCount === 1 ? 'set' : 'sets'} logged`
+  return mode === 'tester' ? `${kept}. Start on Today reopens this same session.` : `${kept}; they still count toward the next prescriptions. Start on Today reopens this same session.`
 }

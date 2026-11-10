@@ -1,4 +1,5 @@
 import type { History } from '../db/repo.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { evaluateGate, inWriteOrder, type GateContext, type GateItemResult, type GateResult } from '../rules/gates.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { onTimeChecks } from '../rules/lateCheck.ts'
@@ -6,7 +7,7 @@ import { weekOf } from '../rules/calendar.ts'
 import { locationOrHome } from '../rules/locations.ts'
 import { withAddedSlots } from '../rules/addedSlots.ts'
 import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
-import { advanceWaitsFor, awaitingMorningCheck, loadTestPrefill, phaseEntryWeek, type LoadTestPrefill, type LoadTestSession } from '../rules/progress.ts'
+import { advancePhase, advanceWaitsFor, awaitingMorningCheck, loadTestPrefill, phaseEntryWeek, type LoadTestPrefill, type LoadTestSession } from '../rules/progress.ts'
 import { lateFlagNotes, progressionSuspended, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
 import { activeDownPeriod, lastPausedDay } from '../rules/downPeriod.ts'
 import { phaseLogsBothSides, phaseRunsExercise } from '../rules/session.ts'
@@ -665,6 +666,8 @@ export type ItemView =
 
 export type GatesView =
   | { kind: 'no-gate'; line: string }
+  /** Tester mode (M-U3, PROGRAM-QUESTIONS 229): the gate's criteria as written; nothing evaluated, nothing to enter, no Advance. */
+  | { kind: 'criteria'; gate: Gate; lead: string; items: GateItem[]; questionnaires: string }
   | {
       kind: 'gate'
       gate: Gate
@@ -793,6 +796,22 @@ function itemView(r: GateItemResult, gate: Gate, today: IsoDate, history: Histor
  * NO score and never will: the koos guard bars this file from src/rules/koos.ts, so a dipping
  * subscale cannot read as an extra gate requirement — scores live on Progress alone.
  */
+/** Tester mode: the lead over the criteria. */
+export function criteriaLead(gate: Pick<Gate, 'fromPhase'>): string {
+  return `The program’s criteria for leaving Phase ${gate.fromPhase}, as written. This app doesn’t check them on a tester account, and the phase stays where it is.`
+}
+
+/** Tester mode: the questionnaires stay a tap away, and nothing on this screen uses them. */
+export const QUESTIONNAIRES_LINE = 'KOOS and ACL-RSI can be filled in any time. Your answers are kept, and nothing on this screen uses them.'
+
+/**
+ * The settings Yes, advance writes (`advancePhase`): only from the full view, whose result the rule
+ * checks again. Tester mode's view can't reach it: there is no 'gate' view to pass.
+ */
+export function advanceSettings(view: Extract<GatesView, { kind: 'gate' }>, settings: Settings): Settings {
+  return advancePhase(settings, view.gate, view.result.passes, view.entryWeek)
+}
+
 export const KOOS_OFFER = 'Attempting a gate? A KOOS check goes with it: fill the questionnaire in when you test. Scores show on Progress, never here.'
 
 /**
@@ -801,11 +820,13 @@ export const KOOS_OFFER = 'Attempting a gate? A KOOS check goes with it: fill th
  * `aclRsiEntries` rides through to the gate rule (gateContext); the screen hands them in from
  * useAclRsiEntries, never through History.
  */
-export function gatesView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; locations?: readonly Location[]; aclRsiEntries: readonly AclRsiEntry[] }): GatesView {
+export function gatesView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; locations?: readonly Location[]; aclRsiEntries: readonly AclRsiEntry[] }): GatesView {
   const { today, settings, history, program } = input
   const gyms: Gyms = { locations: input.locations ?? [], activeId: settings.activeLocationId }
   const gate = currentGate(program.gates, settings.currentPhase)
   if (!gate) return { kind: 'no-gate', line: noGateWords(program.gates, settings.currentPhase) }
+  // Tester mode: the criteria as program.md writes them. No gate context, no evaluation, no stored test's pass or fail, no stop, no Advance.
+  if (input.mode === 'tester') return { kind: 'criteria', gate, lead: criteriaLead(gate), items: gate.items, questionnaires: QUESTIONNAIRES_LINE }
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const result = evaluateGate(gate, gateContext({ today, settings, history, aclRsiEntries: input.aclRsiEntries }))
   const entryWeek = phaseEntryWeek({ today, startDate: settings.startDate, template: program.weeklyTemplate, moves: history.sessionMoves, workouts: history.workouts })

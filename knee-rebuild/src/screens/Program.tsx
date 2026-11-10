@@ -1,9 +1,10 @@
 import { useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { useToday } from '../app/today.ts'
 import { Screen } from '../components/Screen.tsx'
 import { useAddedSlots, useDownPeriods, useProgramOverrides, useSettings } from '../db/hooks.ts'
 import { EVIDENCE_LEAD, phasePatterns } from './Evidence.helpers.ts'
-import { REFERENCE_LEAD, VIEW_CHOICES, phaseScreen, type ProgramView } from './Program.helpers.ts'
+import { REFERENCE_LEAD, VIEW_CHOICES, phaseScreen, programControls, type ProgramView } from './Program.helpers.ts'
 import { Evidence } from './program/Evidence.tsx'
 import { PhaseSessions } from './program/PhaseSessions.tsx'
 import { Choice } from './program/parts.tsx'
@@ -23,6 +24,7 @@ export function Program() {
   const added = useAddedSlots()
   const downPeriods = useDownPeriods()
   const today = useToday()
+  const { mode } = useEngineMode()
   const [view, setView] = useState<ProgramView>('phase')
 
   if (settings === undefined || overrides === undefined || added === undefined || downPeriods === undefined) {
@@ -40,7 +42,8 @@ export function Program() {
     )
   }
 
-  const screen = phaseScreen(settings, today, overrides, downPeriods)
+  const screen = phaseScreen(settings, today, overrides, downPeriods, mode)
+  const { canEdit } = programControls(mode)
   return (
     <Screen title="Program" lead={view === 'phase' ? screen.lead : view === 'reference' ? REFERENCE_LEAD : EVIDENCE_LEAD}>
       {/* Three choices don't fit one row at 390 px: Evidence takes the second row, full width. */}
@@ -51,7 +54,7 @@ export function Program() {
       </div>
       {/* This phase stays mounted behind the reference, so an open editor and what it holds are there on the way back. */}
       <div hidden={view !== 'phase'}>
-        <PhaseSessions screen={screen} overrides={overrides} added={added} today={today} />
+        <PhaseSessions screen={screen} overrides={overrides} added={added} today={today} canEdit={canEdit} />
       </div>
       {view === 'reference' ? <Reference /> : null}
       {view === 'evidence' ? <Evidence phase={settings.currentPhase} patterns={phasePatterns(settings)} /> : null}

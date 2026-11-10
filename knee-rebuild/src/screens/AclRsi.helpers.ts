@@ -1,4 +1,5 @@
 import { type DraftStore } from './Koos.helpers.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { ACL_RSI_ITEM_FIELDS, aclRsiReplacesToday, aclRsiScore, aclRsiSeries } from '../rules/aclRsi.ts'
 import type { AclRsiEntry, IsoDate } from '../schema/index.ts'
 import { shortDateWords } from './Today.helpers.ts'
@@ -46,6 +47,18 @@ export const ACL_RSI_ITEMS: readonly AclRsiItemWords[] = [
 /** What the top of the form says. */
 export const ACL_RSI_LEAD =
   'Twelve questions about how ready the knee feels for sport, each answered 0 to 10 on the anchors under it — the anchors flip on some questions, so 10 always reads readier. Gate 3 reads the latest entry against its 76 line.'
+
+/** The lead for the mode: in tester mode no gate reads the entries (M-U3), so the lead doesn't say one does. */
+export function aclRsiLead(mode: EngineMode): string {
+  return mode === 'tester'
+    ? 'Twelve questions about how ready the knee feels for sport, each answered 0 to 10 on the anchors under it — the anchors flip on some questions, so 10 is always the readier answer.'
+    : ACL_RSI_LEAD
+}
+
+/** The line after a save, in the mode's words. */
+export function aclRsiSavedLine(mode: EngineMode): string {
+  return mode === 'tester' ? 'Saved.' : 'Saved. The Gates screen reads the latest entry against its 76 line.'
+}
 
 /** "0 = Extremely likely · 10 = Not likely at all": the anchors under one question, never color. */
 export function anchorWords(item: Pick<AclRsiItemWords, 'low' | 'high'>): string {

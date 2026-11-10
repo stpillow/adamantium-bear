@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountStatus, readAnswer, redeemCode, signOut, signOutSteps, type AccountIo } from './account.ts'
+import { accountStatus, keptAccount, keptRaw, parseKept, readAnswer, redeemCode, replacesKept, signOut, signOutSteps, subscribeAccount, type AccountIo } from './account.ts'
 
 type Route = (url: string, init?: RequestInit) => Response | Promise<Response>
 const jsonRes = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -191,6 +191,74 @@ describe('signing out', () => {
   it('no network: not signed out, and the kept answer stays', async () => {
     const { io, store } = phone({}, { stored: KEPT })
     expect(await signOut(io)).toEqual({ ok: false })
+    expect(JSON.parse(store.get('knee-rebuild:account') ?? 'null')).toEqual(SIGNED_IN)
+  })
+})
+
+describe('the kept answer and its listeners (M-U3: it sets the engine mode)', () => {
+  it('keptRaw and keptAccount read what is stored, and survive a storage that throws', () => {
+    const { io } = phone({}, { stored: KEPT })
+    expect(keptRaw(io)).toBe(KEPT['knee-rebuild:account'])
+    expect(keptAccount(io)).toEqual(SIGNED_IN)
+    const broken = phone({}, { storageThrows: true })
+    expect(keptRaw(broken.io)).toBeNull()
+    expect(keptAccount(broken.io)).toBeNull()
+    expect(keptRaw({ storage: () => null })).toBeNull()
+    expect(parseKept('{not json')).toBeNull()
+    expect(parseKept('')).toBeNull()
+  })
+
+  it('a listener hears accountStatus, redeemCode and signOut keep an answer', async () => {
+    let heard = 0
+    const stop = subscribeAccount(() => {
+      heard += 1
+    })
+    try {
+      await accountStatus(phone({ [ME]: () => jsonRes(200, SIGNED_IN) }).io)
+      expect(heard).toBe(1)
+      await redeemCode('X', phone({ '/api/auth?action=redeem': () => jsonRes(200, { ...SIGNED_IN, role: 'admin' }) }).io)
+      expect(heard).toBe(2)
+      await signOut(phone({ '/api/strava?action=status': () => jsonRes(200, { configured: false, connected: false }), '/api/auth?action=sign-out': () => jsonRes(200, { ok: true }) }).io)
+      expect(heard).toBe(3)
+    } finally {
+      stop()
+    }
+  })
+
+  it('no notice for a problem answer, an HTML page, offline, or a storage that refuses the write', async () => {
+    let heard = 0
+    const stop = subscribeAccount(() => {
+      heard += 1
+    })
+    try {
+      await accountStatus(phone({ [ME]: () => jsonRes(503, { configured: true, signedIn: false, problem: 'unavailable' }) }).io)
+      await accountStatus(phone({ [ME]: () => html() }).io)
+      await accountStatus(phone({ [ME]: () => jsonRes(200, SIGNED_IN) }, { online: false }).io)
+      await accountStatus(phone({ [ME]: () => jsonRes(200, SIGNED_IN) }, { storageThrows: true }).io)
+      expect(heard).toBe(0)
+    } finally {
+      stop()
+    }
+  })
+
+  it('unsubscribe stops the notices', async () => {
+    let heard = 0
+    const stop = subscribeAccount(() => {
+      heard += 1
+    })
+    stop()
+    await accountStatus(phone({ [ME]: () => jsonRes(200, SIGNED_IN) }).io)
+    expect(heard).toBe(0)
+  })
+
+  it('a configured:false answer never replaces a kept configured:true one: a tester stays a tester', async () => {
+    expect(replacesKept(SIGNED_IN as never, { configured: false, signedIn: false })).toBe(false)
+    expect(replacesKept({ configured: true, signedIn: false }, { configured: false, signedIn: false })).toBe(false)
+    expect(replacesKept(null, { configured: false, signedIn: false })).toBe(true)
+    expect(replacesKept({ configured: false, signedIn: false }, { configured: true, signedIn: false })).toBe(true)
+    const { io, store } = phone({ [ME]: () => jsonRes(200, { configured: false }) }, { stored: KEPT })
+    const state = await accountStatus(io)
+    expect(state.answer).toEqual({ configured: false, signedIn: false })
     expect(JSON.parse(store.get('knee-rebuild:account') ?? 'null')).toEqual(SIGNED_IN)
   })
 })

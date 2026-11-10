@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { canonicalZone, deviceTimeZone, supportedTimeZones, useTimeZone } from '../app/timeZone.ts'
@@ -32,8 +33,9 @@ import {
   hrSavePatch,
   hrSetButtonWords,
   hrUnsetWords,
-  PHASE_NOTE,
+  phaseNote,
   RESET_CONFIRM,
+  sideNote,
   REST_MAX,
   REST_MIN,
   REST_STEP,
@@ -113,6 +115,7 @@ export function Settings() {
 }
 
 function SettingsForm({ stored }: { stored: SettingsRecord }) {
+  const { mode } = useEngineMode()
   const today = useToday()
   const timeZone = useTimeZone()
   const zoneSetting = useTimeZoneSetting()
@@ -356,7 +359,7 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
             />
           ))}
         </div>
-        <Note>Unilateral slots log this side first; its reps set the healthy side’s budget.</Note>
+        <Note>{sideNote(mode)}</Note>
       </Section>
 
       <StartDateSection
@@ -426,7 +429,7 @@ function SettingsForm({ stored }: { stored: SettingsRecord }) {
       <Section label="Phase" saved={false} problem={null}>
         <p className="text-body text-on-dark">{phase.title}</p>
         <p className="text-body text-on-dark-dim">{phase.entered}</p>
-        <Note>{PHASE_NOTE}</Note>
+        <Note>{phaseNote(mode)}</Note>
         <Button wide onClick={() => navigate({ name: 'gates' })}>
           Gates
         </Button>
@@ -723,10 +726,13 @@ function RedFlagSection({
   held: string | null
   onClear: (note: string) => string | null
 }) {
-  const view = redFlagView(state, PROGRAM.redFlags)
+  const { mode } = useEngineMode()
+  const view = redFlagView(mode, state, PROGRAM.redFlags)
   const noteId = useId()
   const [note, setNote] = useState('')
   const [refusal, setRefusal] = useState<string | null>(null)
+  // Tester mode (M-U3): no red-flag state, so no section.
+  if (view === null) return null
   return (
     <Section label="Red flag" saved={saved} problem={problem} held={held}>
       {view.active ? (

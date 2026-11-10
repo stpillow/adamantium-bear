@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
+import type { Settings as SettingsRecord } from './schema/index.ts'
 import { useRegisterSW } from 'virtual:pwa-register/react'
+import { accountStatus } from './app/account.ts'
+import { EngineModeContext, useEngineMode, useEngineModeSource } from './app/mode.ts'
 import { replaceRoute, routeHash, useRoute } from './app/router.ts'
 import { TimeZoneContext } from './app/timeZone.ts'
+import { useToday } from './app/today.ts'
 import { Button } from './components/Button.tsx'
 import { storageFailedWords } from './components/ErrorBoundary.helpers.ts'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { TabBar } from './components/TabBar.tsx'
-import { useActiveLocation, useOnboardingState, useSettings, useTimeZoneSetting } from './db/hooks.ts'
-import { getTimeZoneSetting, launch, requestPersistentStorage } from './db/repo.ts'
+import { useActiveLocation, useMorningChecksOn, useOnboardingState, usePreAccountsLog, useSettings, useTimeZoneSetting } from './db/hooks.ts'
+import { foldSettings, getTimeZoneSetting, launch, requestPersistentStorage } from './db/repo.ts'
 import { program } from './program/program.ts'
 import { todayIn } from './rules/calendar.ts'
 import { needsFirstRun } from './rules/onboarding.ts'
@@ -17,6 +21,7 @@ import { Koos } from './screens/Koos.tsx'
 import { LocationEditor } from './screens/LocationEditor.tsx'
 import { Locations } from './screens/Locations.tsx'
 import { MorningCheck } from './screens/MorningCheck.tsx'
+import { withTodaysFlags } from './screens/MorningCheck.helpers.ts'
 import { More } from './screens/More.tsx'
 import { NextUpdate } from './screens/NextUpdate.tsx'
 import { Strava } from './screens/Strava.tsx'
@@ -70,8 +75,20 @@ function Shell({ updateReady }: { updateReady: boolean }) {
   const zoneSetting = useTimeZoneSetting()
   const settings = useSettings()
   const activeLocation = useActiveLocation()
+  const preAccounts = usePreAccountsLog()
+  // The engine mode (M-U3): from the account answer this context last kept, and before any answer, whether the phone holds pre-accounts writes.
+  const engine = useEngineModeSource(preAccounts === true)
   const [seedError, setSeedError] = useState<string | null>(null)
   const firstRun = state !== undefined && needsFirstRun(state)
+
+  useEffect(() => {
+    // The account check at launch and whenever the phone comes back online (PROGRAM-QUESTIONS 225): own origin only,
+    // never offline; its kept answer sets the engine mode on the next render. Nothing waits on it.
+    void accountStatus()
+    const online = () => void accountStatus()
+    window.addEventListener('online', online)
+    return () => window.removeEventListener('online', online)
+  }, [])
 
   useEffect(() => {
     // Once, at launch: a set-up phone gets its home gym if it has none yet (one from before gyms), dated
@@ -111,14 +128,16 @@ function Shell({ updateReady }: { updateReady: boolean }) {
       <p className="text-body text-on-dark-dim">Opening storage…</p>
     </main>
   )
-  if (state === undefined || zoneSetting === undefined) return opening
+  if (state === undefined || zoneSetting === undefined || preAccounts === undefined) return opening
   if (firstRun) {
     if (route.name !== 'welcome') return opening
     return (
       // No tab bar: first run is the only way on from here.
-      <ErrorBoundary screen="welcome" resetKey={routeHash(route)}>
-        <Welcome step={route.step} storedZone={zoneSetting.stored === 'ok' ? zoneSetting.zone : null} />
-      </ErrorBoundary>
+      <EngineModeContext.Provider value={engine}>
+        <ErrorBoundary screen="welcome" resetKey={routeHash(route)}>
+          <Welcome step={route.step} storedZone={zoneSetting.stored === 'ok' ? zoneSetting.zone : null} />
+        </ErrorBoundary>
+      </EngineModeContext.Provider>
     )
   }
   // Every screen plans at a gym: wait for the home gym too, which launch writes on a phone from before gyms.
@@ -126,6 +145,8 @@ function Shell({ updateReady }: { updateReady: boolean }) {
 
   return (
     <TimeZoneContext.Provider value={zoneSetting.zone}>
+      <EngineModeContext.Provider value={engine}>
+      <TodaysFlags settings={settings} />
       {/* A throw inside a screen shows its name and a way out, not a blank app; the update prompt and the tab bar stay outside it. */}
       <ErrorBoundary screen={route.name} resetKey={routeHash(route)}>
         {(() => {
@@ -170,6 +191,27 @@ function Shell({ updateReady }: { updateReady: boolean }) {
         })()}
       </ErrorBoundary>
       {route.name === 'session' ? null : <TabBar route={route} />}
+      </EngineModeContext.Provider>
     </TimeZoneContext.Provider>
   )
+}
+
+/**
+ * Keeps the red-flag state true to today's checks while the phone runs full (M-U3; glossary: any
+ * ticked red flag on a morning check for today). A check saved while the phone ran tester mode (signed
+ * out after accounts went on, a stale cookie, before a tester became admin) wrote no state; once the
+ * mode is full, today's flags are folded in and kept (`withTodaysFlags`), so Today's stop, the
+ * planner's suspension, Gates and the runner all read it from the stored settings, as they always
+ * have. A clear made today, with its note, stands (PROGRAM-QUESTIONS 236). Tester mode writes nothing.
+ * A failed write is tried again on the next change of the settings or today's checks.
+ */
+function TodaysFlags({ settings }: { settings: SettingsRecord }) {
+  const { mode } = useEngineMode()
+  const today = useToday()
+  const checks = useMorningChecksOn(today)
+  useEffect(() => {
+    if (checks === undefined || withTodaysFlags(mode, settings, checks, today) === settings) return
+    foldSettings(today, (stored, todays) => withTodaysFlags(mode, stored, todays, today)).catch(() => undefined)
+  }, [mode, settings, checks, today])
+  return null
 }

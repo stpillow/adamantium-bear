@@ -66,8 +66,10 @@ const MENTIONS: readonly string[] = [
   '/src/screens/LocationEditor.tsx',
   '/src/screens/Preview.tsx',
   '/src/screens/RunLogger.helpers.ts',
-  '/src/screens/MorningCheck.tsx',
-  '/src/screens/SessionRunner.tsx',
+  // NextTime's pause day (Batch E) moved here with M-U3's mode-taking helpers.
+  '/src/screens/MorningCheck.helpers.ts',
+  // The Summary's phase week (`sessionBandWeek`) moved into the mode-taking helper with M-U3.
+  '/src/screens/SessionRunner.helpers.ts',
   '/src/screens/Settings.helpers.ts',
   // The import section, shared by Settings and first run since M-U1: a standing period stays through an import.
   '/src/screens/settings/parts.tsx',

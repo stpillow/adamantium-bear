@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Page, type Route } from './fixtures.ts'
 import { onboardAsShawn } from './firstRun.ts'
 
 /*
@@ -74,6 +74,9 @@ test('signed out: a typed code is checked, redeemed as JSON, and the name and ro
   await account.getByRole('button', { name: 'Redeem' }).click()
   await expect(account.getByText('Signed in as Alex, a tester.')).toBeVisible()
   expect(posts).toEqual([{ action: 'redeem', body: '{"code":"7k3m-q9x2-t4hb-8rd7"}', type: 'application/json' }])
+  // A tester lands in tester mode (M-U3): said under the account, and the red-flag section is gone.
+  await expect(account.getByText('Tester account: this app shows the program as written and works out nothing from your logs.')).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Red flag' })).toHaveCount(0)
 
   // Again on the next visit: the server says so.
   await page.reload()
@@ -82,6 +85,8 @@ test('signed out: a typed code is checked, redeemed as JSON, and the name and ro
   await page.getByRole('region', { name: 'Account' }).getByRole('button', { name: 'Sign out' }).click()
   await expect(page.getByRole('region', { name: 'Account' }).getByText('Signed out on this phone.')).toBeVisible()
   await expect(page.getByRole('region', { name: 'Account' }).getByText('Have an invite code?')).toBeVisible()
+  // Signed out, still tester mode: a signed-out phone never gets the engine.
+  await expect(page.getByRole('region', { name: 'Account' }).getByText(/^Signed out: this app shows the program as written/)).toBeVisible()
   expect(posts.map((p) => p.action)).toEqual(['redeem', 'sign-out'])
 })
 

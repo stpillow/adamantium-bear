@@ -1,6 +1,6 @@
 # Multi-user accounts, admin controls and releases: the alpha plan
 
-Decided with Shawn on Nov 8, 2026, from a four-sweep research study (auth, data architecture, release mechanics, obligations) and its critic pass. M-U1 (first-run setup and the time zone setting) and M-U2 (invite-code accounts, Nov 9; docs/accounts.md) are built; the rest is not. The study's full option tables live in the workflow record; this document records what was chosen and why, the corrections the critic forced, and the build spec. Where the study recommended differently than Shawn chose, the deviation is recorded, not hidden.
+Decided with Shawn on Nov 8, 2026, from a four-sweep research study (auth, data architecture, release mechanics, obligations) and its critic pass. M-U1 (first-run setup and the time zone setting), M-U2 (invite-code accounts, Nov 9; docs/accounts.md) and M-U3 (tester mode, Nov 10) are built; the rest is not. The study's full option tables live in the workflow record; this document records what was chosen and why, the corrections the critic forced, and the build spec. Where the study recommended differently than Shawn chose, the deviation is recorded, not hidden.
 
 A standing gate above everything else: **no tester install ships before Shawn has put section 5's questions in front of a qualified professional.** The research is input to that conversation, not a substitute for it.
 
@@ -39,6 +39,7 @@ A per-account role, enforced in the rules layer, not hidden in the UI:
 - Off for testers: engine prescriptions (slots show the program's written prescription text, never computed loads), clean/hold/back-off readings on their data, gate evaluation, red-flag takeover (flags they tick surface as their own note), and the morning check's "what changes next" line.
 - Shawn's account: everything, unchanged.
 - The guard for it is a rules-layer test in the trainingLoad.guard shape: no prescription or reading path reachable under the tester role.
+- The mode is derived from the kept account answer (PROGRAM-QUESTIONS 224); `src/rules/engineMode.guard.test.ts` is the guard, and `src/screens/fullMode.snapshot.test.ts` pins Shawn's full mode byte for byte.
 
 ## 4. Releases and stability
 
@@ -67,7 +68,7 @@ A per-account role, enforced in the rules layer, not hidden in the UI:
 
 1. **M-U1 Onboarding and de-hardcoding** — the wizard, timezone setting, seed-assumption sweep. Gating for everything; useful even solo. — built (Nov 9; PLAN.md's M-U1 block, PROGRAM-QUESTIONS 203 to 212).
 2. **M-U2 Accounts** — Neon, `api/auth.ts`, invite codes, roles, session cookie; the app works logged-out exactly as today until a code is entered. — built (Nov 9; PLAN.md's M-U2 block, PROGRAM-QUESTIONS 213 to 222, docs/accounts.md). "Logged-out as today" holds while accounts are off; once on, Strava needs a session.
-3. **M-U3 Tester mode** — the role enforcement and its guard tests.
+3. **M-U3 Tester mode** — the role enforcement and its guard tests. — built (Nov 10; PLAN.md's M-U3 block, PROGRAM-QUESTIONS 223 to 235). Release precondition added: previews protected, or the `AUTH_*` variables on Preview too, before any tester installs (235).
 4. **M-U4 Sync** — `/api/sync`, catch-up exchange, deletion on request, the privacy note.
 5. **M-U5 Admin screen** — invites, tester list, revocation, opt-in debug share.
 6. **M-U6 Release hardening** — GitHub Actions gate, release-notes convention, the waiver/privacy-note copy for Shawn's review.

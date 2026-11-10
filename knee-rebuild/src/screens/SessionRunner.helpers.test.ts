@@ -12,6 +12,7 @@ import type { Prescription } from '../rules/prescription.ts'
 import { asksForRack, notHereSlots, swapOffer } from '../rules/runnerGym.ts'
 import { DEFAULT_KIT, Settings, type Exercise, type RepUnit, type SetLog, type Slot } from '../schema/index.ts'
 import {
+  activeCardKey,
   buildSet,
   countField,
   countLabel,
@@ -589,7 +590,7 @@ describe('timedSets: the logged sets as the minutes stepper reads them', () => {
 describe('summaryCheckLine: the morning check that completes a summary’s readings (Batch D, PROGRAM-QUESTIONS 174)', () => {
   const w = (id: string, date: string, status: Workout['status'] = 'finished'): Workout => ({ id, date, templateId: 'p1-a', phase: 1, week: 3, isDeload: false, status })
   const mc = (date: string, over: Partial<MorningCheck> = {}): MorningCheck => ({ id: `mc-${date}`, date, appliesTo: null, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [], ...over })
-  const line = (workout: Workout, today: string, morningChecks: MorningCheck[] = []) => summaryCheckLine({ workout, today, startDate: '2026-11-02', history: { workouts: [workout], runs: [], morningChecks } })
+  const line = (workout: Workout, today: string, morningChecks: MorningCheck[] = []) => summaryCheckLine({ mode: 'full', workout, today, startDate: '2026-11-02', history: { workouts: [workout], runs: [], morningChecks } })
   it('a session dated today keeps the sentence it always had', () => {
     expect(line(w('a', '2026-11-20'), '2026-11-20')).toEqual({ text: 'These are the session readings. Tomorrow’s morning check completes them, and the Morning check screen then says what changes next time; until it is done, each reads hold.', action: null })
   })
@@ -607,5 +608,18 @@ describe('summaryCheckLine: the morning check that completes a summary’s readi
       action: { kind: 'late', morning: '2026-11-18', label: 'Log the morning check for Wednesday Nov 18' },
     })
     expect(line(w('a', '2026-11-03'), '2026-11-20')).toEqual({ text: 'These are the session readings. No morning check from the next morning completes them, so each reads hold at best.', action: null })
+  })
+})
+
+describe('activeCardKey', () => {
+  const base = { editingId: null, stepKey: 'p1a-1:both:1', slotId: 'p1a-1', exerciseId: 'leg-press' }
+  it('is the step, the edited set or the viewed slot, with the exercise', () => {
+    expect(activeCardKey({ ...base, mode: 'full' })).toBe('full:p1a-1:both:1:leg-press')
+    expect(activeCardKey({ ...base, mode: 'full', editingId: 'w1:p1a-1:both:2' })).toBe('full:edit:w1:p1a-1:both:2:leg-press')
+    expect(activeCardKey({ ...base, mode: 'full', stepKey: null, exerciseId: null })).toBe('full:view:p1a-1:')
+  })
+  it('changes with the mode, so a flip remounts the card with the new mode’s draft (M-U3, PROGRAM-QUESTIONS 233)', () => {
+    expect(activeCardKey({ ...base, mode: 'tester' })).not.toBe(activeCardKey({ ...base, mode: 'full' }))
+    expect(activeCardKey({ ...base, mode: 'tester', editingId: 'x' })).not.toBe(activeCardKey({ ...base, mode: 'full', editingId: 'x' }))
   })
 })
