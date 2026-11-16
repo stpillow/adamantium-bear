@@ -41,6 +41,16 @@ describe('planSession with added exercises', () => {
     expect(plan(bare)).toEqual(own)
   })
 
+  it('an accessory added in Phase 1 runs with the catalog’s own cues and substitutions, and the seed’s slots are untouched (PROGRAM-QUESTIONS 169)', () => {
+    const own = plan(historyOf())
+    const plans = plan(historyOf({ addedSlots: [added({ exerciseId: 'farmers-hold', repsMin: 30, repsMax: 45 })] }))
+    expect(plans.slice(0, own.length)).toEqual(own)
+    const mine = plans.at(-1)
+    const hold = program.exercises.find((e) => e.id === 'farmers-hold')
+    expect(mine?.slot).toMatchObject({ label: '+1', exerciseId: 'farmers-hold', repUnit: 'seconds', progressionRule: 'double-progression', cues: hold?.accessory?.cues, substitutionIds: ['side-plank'] })
+    expect(mine?.prescriptions[0]).toMatchObject({ sets: 3, repUnit: 'seconds' })
+  })
+
   it('a deload week takes fewer sets of an added exercise, as it does of every slot', () => {
     const deload = plan(historyOf({ addedSlots: [added({ sets: 3 })] }), 4)
     expect(deload.at(-1)?.prescriptions[0]?.sets).toBe(2)
@@ -66,6 +76,23 @@ describe('extra time, through the real program', () => {
     expect(pool.at(-1)?.label).toMatch(/^\+U/)
   })
 
+  it('after the other sessions’ 14, the +U part: program.md’s seven upper-body slots as before, then the 16 upper accessories, then the 4 core (PROGRAM-QUESTIONS 170)', () => {
+    const others = pool.filter((s) => !s.label.startsWith('+U'))
+    const upper = pool.filter((s) => s.label.startsWith('+U'))
+    expect(others).toHaveLength(14)
+    expect(pool.slice(0, 14)).toEqual(others)
+    expect(upper.map((s) => s.label)).toEqual(Array.from({ length: 27 }, (_, i) => `+U${i + 1}`))
+    const byId = new Map(program.exercises.map((e) => [e.id, e]))
+    // +U1 to +U7: program.md's own pulls and pushes, exactly as before Batch C.
+    expect(upper.slice(0, 7).map((s) => s.exerciseId)).toEqual(['single-arm-cable-pulldown', 'chest-press-machine', 'smith-bench-press', 'chest-supported-db-row', 'single-arm-cable-row', 'face-pull', 'rear-delt-machine'])
+    expect(upper.slice(0, 7).every((s) => byId.get(s.exerciseId)?.accessory === undefined && s.sets === 3 && s.repsMin === 8 && s.repsMax === 12 && s.cues.length === 0)).toBe(true)
+    // +U8 to +U23: the upper tier; +U24 to +U27: core, each with the catalog's own cues.
+    expect(upper.slice(7, 23).map((s) => byId.get(s.exerciseId)?.accessory?.tier)).toEqual(Array.from({ length: 16 }, () => 'upper'))
+    expect(upper.slice(23).map((s) => s.exerciseId)).toEqual(['cable-crunch', 'hanging-knee-raise', 'farmers-hold', 'ab-rollout'])
+    for (const s of upper.slice(7)) expect(s.cues, s.exerciseId).toEqual(byId.get(s.exerciseId)?.accessory?.cues)
+    expect(upper.find((s) => s.exerciseId === 'farmers-hold')).toMatchObject({ repUnit: 'seconds', prescriptionText: '3 × 30–45 s' })
+  })
+
   it('plans them as ordinary slots after the session’s own, with a prescription, and changes nothing before them', () => {
     const own = planSession({ template, week, settings, history: historyOf(), gym: home })
     const plans = withPool(historyOf())
@@ -75,15 +102,17 @@ describe('extra time, through the real program', () => {
   })
 
   it('windowFit adds some for 90 minutes, leaves the session whole for 20 and takes none of them', () => {
+    // Door to door (PROGRAM-QUESTIONS 166): Phase 1's 10-minute warm-up comes off the top.
+    const door = { warmUpMinutes: 10, ramps: true }
     const plans = withPool(historyOf())
-    const long = windowFit(plans, 60, 90)
+    const long = windowFit(plans, 60, 90, door)
     expect(long.added.length).toBeGreaterThan(0)
     expect(long.added.length).toBeLessThanOrEqual(6)
     expect(long.dropped).toEqual([])
     expect(long.keptMinutes).toBeLessThanOrEqual(90)
-    const short = windowFit(plans, 60, 20)
+    const short = windowFit(plans, 60, 20, door)
     expect(short.added).toEqual([])
     expect(short.dropped.length).toBeGreaterThan(0)
-    expect(windowFit(plans, 60, null).added).toEqual([])
+    expect(windowFit(plans, 60, null, door).added).toEqual([])
   })
 })

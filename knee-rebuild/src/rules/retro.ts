@@ -5,7 +5,9 @@ import { addDays, dateOf, daysBetween, isDeloadWeek, weekOf } from './calendar.t
  * Logging after the fact (Shawn, Nov 6): a run or a strength session done on an earlier day, entered
  * later. Readings are recomputed from the whole log, so a late entry is read like any other: a session
  * with no morning check the day after reads hold (unknown is hold), and it can change a reading or a
- * week's mileage cap already shown (PROGRAM-QUESTIONS 141). The window keeps that bounded.
+ * week's mileage cap already shown (PROGRAM-QUESTIONS 141). The window keeps that bounded. Since
+ * Batch D (Shawn's Nov 8 decision 12) that morning's check can be logged late too, inside the same
+ * window (lateCheck.ts; PROGRAM-QUESTIONS 174), so such a session reads hold only until it is.
  */
 
 /** How far back a late entry can go. */
@@ -26,10 +28,12 @@ export function retroDates(today: IsoDate, startDate: IsoDate, fromWeek: number 
 }
 
 /**
- * A late session's start stamp: noon in New York on its date (17:00 UTC; 16:00 in summer time reads
- * the same day). Stamped so a day's sessions sort the same every time, and so the runner can tell a
- * session entered late from one started live and left open (`isLateEntry`), without a new field on the
- * strict Workout schema.
+ * A late session's start stamp: a fixed 17:00 UTC marker on its date (noon in New York in winter),
+ * whatever the user's time zone (PROGRAM-QUESTIONS 212). Stamped so a day's sessions sort the same
+ * every time, and so the runner can tell a session entered late from one started live and left open
+ * (`isLateEntry`, which compares the string), without a new field on the strict Workout schema. Its
+ * value never changes, since stored rows match on it; east of UTC+7 it falls on the next local day,
+ * so there it sorts after every session started live that day (the "latest workout" pickers).
  */
 export function lateStartedAt(date: IsoDate): string {
   return `${date}T17:00:00.000Z`

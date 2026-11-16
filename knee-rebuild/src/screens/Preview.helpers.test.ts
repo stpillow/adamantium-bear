@@ -4,7 +4,7 @@ import { homeLocation } from '../db/migrations.ts'
 import type { History } from '../db/repo.ts'
 import { exerciseById } from '../program/program.ts'
 import { DEFAULT_KIT, Settings, type Workout } from '../schema/index.ts'
-import { caveatWords, nextLiftWords, previewRange, previewSlots, previewView, relationWords } from './Preview.helpers.ts'
+import { caveatWords, nextLiftWords, previewRampWords, previewDownPeriodWords, previewRange, previewSlots, previewView, relationWords } from './Preview.helpers.ts'
 
 const settings = Settings.parse({ injuredSide: 'right', startDate: '2026-11-02', dumbbellMax: 80, restTimerSeconds: 60, painPerSet: false, currentPhase: 1, phaseEnteredWeek: 1 })
 const empty: History = { workouts: [], setLogs: [], morningChecks: [], runs: [], gateTests: [], sessionMoves: [] }
@@ -13,7 +13,7 @@ const nameOf = (id: string) => exerciseById(id).name
 
 describe('previewView', () => {
   it('a lift day ahead: the current phase’s template, its week, and why the numbers can still change', () => {
-    const v = previewView({ date: '2026-11-05', today: '2026-11-03', settings, history: empty, program: PROGRAM })
+    const v = previewView({ mode: 'full', date: '2026-11-05', today: '2026-11-03', settings, history: empty, program: PROGRAM })
     expect(v).toMatchObject({ dateWords: 'Thursday, November 5', relation: 'In 2 days', week: 1, deload: false, prev: '2026-11-04', next: '2026-11-06' })
     expect(v.phaseLine).toMatch(/^Phase 1 · /)
     expect(v.body).toMatchObject({ kind: 'lift', label: 'Session B', letter: 'B', week: 1, logged: null, missingWords: null })
@@ -22,24 +22,24 @@ describe('previewView', () => {
   })
   it('follows a session moved onto another day', () => {
     const history = { workouts: [], sessionMoves: [{ id: 'move-000001', week: 1, dayA: 'tue' as const, dayB: 'wed' as const }] }
-    expect(previewView({ date: '2026-11-04', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'lift', letter: 'A' })
-    expect(previewView({ date: '2026-11-03', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
+    expect(previewView({ mode: 'full', date: '2026-11-04', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'lift', letter: 'A' })
+    expect(previewView({ mode: 'full', date: '2026-11-03', today: '2026-11-02', settings, history, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
   })
   it('a day with the session logged points at it; a deload week says so', () => {
     const done: Workout = { id: '2026-11-03-p1-a', date: '2026-11-03', templateId: 'p1-a', phase: 1, week: 1, isDeload: false, status: 'finished' }
-    expect(previewView({ date: '2026-11-03', today: '2026-11-05', settings, history: { workouts: [done], sessionMoves: [] }, program: PROGRAM }).body).toMatchObject({ kind: 'lift', logged: { workoutId: '2026-11-03-p1-a', status: 'finished' } })
-    expect(previewView({ date: '2026-11-24', today: '2026-11-03', settings, history: empty, program: PROGRAM })).toMatchObject({ week: 4, deload: true })
+    expect(previewView({ mode: 'full', date: '2026-11-03', today: '2026-11-05', settings, history: { workouts: [done], sessionMoves: [] }, program: PROGRAM }).body).toMatchObject({ kind: 'lift', logged: { workoutId: '2026-11-03-p1-a', status: 'finished' } })
+    expect(previewView({ mode: 'full', date: '2026-11-24', today: '2026-11-03', settings, history: empty, program: PROGRAM })).toMatchObject({ week: 4, deload: true })
   })
   it('run and off days, and the days before week 1', () => {
-    expect(previewView({ date: '2026-11-02', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
-    expect(previewView({ date: '2026-11-08', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'off' })
-    const before = previewView({ date: '2026-10-30', today: '2026-10-30', settings, history: empty, program: PROGRAM })
+    expect(previewView({ mode: 'full', date: '2026-11-02', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'run' })
+    expect(previewView({ mode: 'full', date: '2026-11-08', today: '2026-11-02', settings, history: empty, program: PROGRAM }).body).toMatchObject({ kind: 'off' })
+    const before = previewView({ mode: 'full', date: '2026-10-30', today: '2026-10-30', settings, history: empty, program: PROGRAM })
     expect(before).toMatchObject({ prev: null, next: '2026-11-02', body: { kind: 'before-start', line: 'Week 1 starts Monday Nov 2.' } })
   })
   it('steps from the first day to the last Sunday of week 12, or the week after this one past it', () => {
     expect(previewRange('2026-11-03', '2026-11-02')).toEqual({ first: '2026-11-02', last: '2027-01-24' })
-    expect(previewView({ date: '2026-11-02', today: '2026-11-03', settings, history: empty, program: PROGRAM }).prev).toBeNull()
-    expect(previewView({ date: '2027-01-24', today: '2026-11-03', settings, history: empty, program: PROGRAM }).next).toBeNull()
+    expect(previewView({ mode: 'full', date: '2026-11-02', today: '2026-11-03', settings, history: empty, program: PROGRAM }).prev).toBeNull()
+    expect(previewView({ mode: 'full', date: '2027-01-24', today: '2026-11-03', settings, history: empty, program: PROGRAM }).next).toBeNull()
     expect(previewRange('2027-01-27', '2026-11-02').last).toBe('2027-02-07')
   })
 })
@@ -93,5 +93,28 @@ describe('previewSlots, on the live seed', () => {
     const moved = awaySlots.find((s) => s.gymLines.some((l) => l.startsWith('Not at Marriott Downtown')))
     expect(moved).toBeDefined()
     expect(moved?.cuesFor).toMatch(/^Cues written for /)
+  })
+  it('says the warm-up sets before a big lift, from the ramps it is given, and none without them (PROGRAM-QUESTIONS 165)', () => {
+    expect(slots.every((s) => s.ramp === null)).toBe(true)
+    const ramps = plans.map((_, i) => (i === 0 ? { kind: 'sets' as const, workingLoad: 180, sets: [{ load: 90, reps: 8, light: null }, { load: 135, reps: 5, light: null }] } : { kind: 'none' as const, why: 'not-eligible' as const }))
+    const withRamps = previewSlots(plans, { injuredSide: 'right', gymName: 'Planet Fitness', items: PROGRAM.equipment, nameOf, ramps })
+    expect(withRamps[0]?.ramp).toBe('Warm-up sets: 90 lb × 8, then 135 lb × 5 (not logged).')
+    expect(withRamps.slice(1).every((s) => s.ramp === null)).toBe(true)
+  })
+  it('one warm-up set in the singular, the empty bar in words', () => {
+    expect(previewRampWords({ kind: 'sets', workingLoad: 10, sets: [{ load: 0, reps: 8, light: 'empty-bar' }] }, exerciseById('smith-box-squat'))).toBe('Warm-up set: empty bar × 8 (not logged).')
+    expect(previewRampWords({ kind: 'none', why: 'too-light', workingLoad: 5 }, exerciseById('db-bench-press'))).toBeNull()
+    expect(previewRampWords(undefined, exerciseById('db-bench-press'))).toBeNull()
+  })
+})
+
+describe('a down period on the Preview (Batch E)', () => {
+  const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T13:00:00.000Z' }
+  it('says when a period covers the day, until its last paused day', () => {
+    expect(previewDownPeriodWords('2026-11-17', [P1])).toBe('A down period covers this day: progression paused until Friday Nov 20.')
+    expect(previewDownPeriodWords('2026-11-17', [{ ...P1, endedOn: '2026-11-17' }])).toBe('A down period covers this day: progression paused until Tuesday Nov 17.')
+    expect(previewDownPeriodWords('2026-11-21', [P1])).toBeNull()
+    expect(previewView({ mode: 'full', date: '2026-11-17', today: '2026-11-16', settings, history: { ...empty, downPeriods: [P1] }, program: PROGRAM }).downPeriod).toBe('A down period covers this day: progression paused until Friday Nov 20.')
+    expect(previewView({ mode: 'full', date: '2026-11-17', today: '2026-11-16', settings, history: empty, program: PROGRAM }).downPeriod).toBeNull()
   })
 })

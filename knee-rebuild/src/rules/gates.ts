@@ -1,9 +1,11 @@
-import type { Gate, GateItem, GateTest, IsoDate, MorningCheck, Run, SetLog, Workout } from '../schema/index.ts'
+import type { AclRsiEntry, Gate, GateItem, GateTest, IsoDate, MorningCheck, Run, SetLog, Workout } from '../schema/index.ts'
+import { aclRsiScore, latestAclRsiEntry } from './aclRsi.ts'
 import { addDays } from './calendar.ts'
-import type { SubjectReading } from './history.ts'
+import { checkFor, type SubjectReading } from './history.ts'
+import { isLateCheck } from './lateCheck.ts'
 import { isSwap } from './mileage.ts'
-import { morningCheckApplies, morningReading } from './reading.ts'
-import { bestOfTrials, meetsSymmetry, symmetryPercent } from './unilateral.ts'
+import { morningReading } from './reading.ts'
+import { bestOfTrials, fastestOfTrials, meetsSymmetry, meetsTimedSymmetry, symmetryPercent, timedSymmetryPercent } from './unilateral.ts'
 
 export interface GateContext {
   today: IsoDate
@@ -17,6 +19,11 @@ export interface GateContext {
   setLogs: readonly SetLog[]
   /** Which catalog exercises count as the single-leg calf raise. */
   calfRaiseExerciseIds: readonly string[]
+  /**
+   * The stored ACL-RSI entries (Batch A): handed over explicitly, never through History, so the
+   * gates rule stays the questionnaire's one rule-level reader (src/rules/aclRsi.guard.test.ts).
+   */
+  aclRsiEntries: readonly AclRsiEntry[]
 }
 
 export interface GateItemResult {
@@ -83,11 +90,42 @@ function symmetry(item: GateItem, gate: Gate, ctx: GateContext): GateItemResult 
   const test = item.testItem ? latestTest(ctx.gateTests, gate.number, item.testItem, false) : undefined
   const threshold = item.threshold ?? 0.9
   if (!test) return { item, pass: false, detail: 'no test entered yet' }
+  if (item.timed) return timedSymmetry(item, test, threshold)
   const injured = test.trialsInjured?.length ? bestOfTrials(test.trialsInjured) : test.valueInjured
   const other = test.trialsOther?.length ? bestOfTrials(test.trialsOther) : test.valueOther
   const pct = symmetryPercent(injured, other)
   const pass = meetsSymmetry(injured, other, threshold)
   return { item, pass, detail: pct === null ? 'cannot compute: the other side is 0' : `${pct}% (${injured} vs ${other}) against a ${threshold * 100}% line, tested ${test.date}` }
+}
+
+/**
+ * A timed hop (Batch A, PROGRAM-QUESTIONS 157): seconds, lower is better, so best = the FASTEST
+ * positive trial and the line reads other ÷ injured — a slower injured side reads under 100%.
+ * A hop he couldn't do has no time: 0 and non-positive values are ignored (`fastestOfTrials`),
+ * and a side with no usable time fails in words rather than dividing by 0. The stored `value*`
+ * fields stand in only when a test somehow carries no trials, and only when positive.
+ */
+function timedSymmetry(item: GateItem, test: GateTest, threshold: number): GateItemResult {
+  const injured = test.trialsInjured?.length ? fastestOfTrials(test.trialsInjured) : test.valueInjured > 0 ? test.valueInjured : null
+  const other = test.trialsOther?.length ? fastestOfTrials(test.trialsOther) : test.valueOther > 0 ? test.valueOther : null
+  if (injured === null) return { item, pass: false, detail: `no usable time on the injured side, tested ${test.date}` }
+  if (other === null) return { item, pass: false, detail: `no usable time on the other side, tested ${test.date}` }
+  const pct = timedSymmetryPercent(injured, other)
+  const pass = meetsTimedSymmetry(injured, other, threshold)
+  return { item, pass, detail: `${pct}% (other ${other} s over injured ${injured} s) against a ${threshold * 100}% line, tested ${test.date}` }
+}
+
+/**
+ * The ACL-RSI item (Batch A, PROGRAM-QUESTIONS 156): the latest stored questionnaire entry's
+ * score against the item's line (76, the strict published threshold), read the way the hop items
+ * read their latest tests. No entry fails in words; nothing is ever estimated.
+ */
+function aclRsi(item: GateItem, ctx: GateContext): GateItemResult {
+  const entry = latestAclRsiEntry(ctx.aclRsiEntries)
+  const line = item.minScore ?? 76
+  if (!entry) return { item, pass: false, detail: 'no questionnaire entered yet' }
+  const score = aclRsiScore(entry)
+  return { item, pass: score >= line, detail: `scored ${score} on ${entry.date}; the line is ${line}` }
 }
 
 function calfRaises(item: GateItem, ctx: GateContext): GateItemResult {
@@ -104,12 +142,22 @@ function calfRaises(item: GateItem, ctx: GateContext): GateItemResult {
   return { item, pass: false, detail: `${minReps}+ reps logged on ${left ? 'left only' : right ? 'right only' : 'neither side'} in the last ${window} days` }
 }
 
+/**
+ * No swelling across the window days. A check logged late, for a past morning (Batch D), can fail the item
+ * (late swelling is still swelling) but never makes it pass: until Shawn answers, only checks saved
+ * the morning they describe count as the window's checks (PROGRAM-QUESTIONS 176, the conservative
+ * reading).
+ */
 function noSwelling(item: GateItem, ctx: GateContext, needsPlyo: boolean): GateItemResult {
   const window = item.windowDays ?? DEFAULT_WINDOW_DAYS
-  const checks = ctx.morningChecks.filter((c) => inWindow(c.date, ctx.today, window))
-  const swollen = checks.filter((c) => c.visibleSwelling)
-  if (checks.length === 0) return { item, pass: false, detail: `no morning checks in the last ${window} days` }
+  const all = ctx.morningChecks.filter((c) => inWindow(c.date, ctx.today, window))
+  const checks = all.filter((c) => !isLateCheck(c))
+  const swollen = all.filter((c) => c.visibleSwelling)
   if (swollen.length > 0) return { item, pass: false, detail: `swelling flagged on ${swollen.map((c) => c.date).join(', ')}` }
+  if (checks.length === 0) {
+    const late = all.length > 0 ? `; ${all.length === 1 ? 'the one there was logged late, which doesn’t count toward a pass' : `the ${all.length} there were logged late, which don’t count toward a pass`}` : ''
+    return { item, pass: false, detail: `no morning checks in the last ${window} days${late}` }
+  }
   if (needsPlyo) {
     const plyo = ctx.workouts.filter((w) => w.status === 'finished' && w.phase === 3 && /-(a|c)$/.test(w.templateId) && inWindow(w.date, ctx.today, window))
     if (plyo.length === 0) return { item, pass: false, detail: `no Phase 3 A or C session in the last ${window} days` }
@@ -118,17 +166,22 @@ function noSwelling(item: GateItem, ctx: GateContext, needsPlyo: boolean): GateI
   return { item, pass: true, detail: `${checks.length} morning checks in the last ${window} days, no swelling` }
 }
 
+/**
+ * A run of the item's miles with pain 3 or under and a clean morning after, read through the check
+ * the run's reading uses (checkFor). A clean check logged late, for a past morning (Batch D), doesn't
+ * satisfy the item until Shawn answers (PROGRAM-QUESTIONS 176, the conservative reading).
+ */
 function runNoReaction(item: GateItem, ctx: GateContext): GateItemResult {
   const minMiles = item.minMiles ?? 4
   const qualifying = ctx.runs.filter((r) => !isSwap(r) && r.miles >= minMiles)
-  const clean = qualifying.find((run) => {
-    const subject = { kind: 'run' as const, id: run.id, date: run.date }
-    const check = ctx.morningChecks.find((c) => c.appliesTo?.kind === 'run' && c.appliesTo.id === run.id) ?? ctx.morningChecks.find((c) => morningCheckApplies(c, subject))
-    return check !== undefined && morningReading(check).result === 'clean' && run.maxPain <= 3
-  })
+  const cleanAfter = qualifying
+    .map((run) => ({ run, check: checkFor({ kind: 'run', id: run.id, date: run.date }, ctx.morningChecks) }))
+    .filter(({ run, check }) => check !== undefined && morningReading(check).result === 'clean' && run.maxPain <= 3)
+  const clean = cleanAfter.find(({ check }) => check !== undefined && !isLateCheck(check))?.run
   if (clean) return { item, pass: true, detail: `${clean.miles} miles on ${clean.date} with a clean morning after` }
   if (qualifying.length === 0) return { item, pass: false, detail: `no run of ${minMiles} miles or more yet` }
-  return { item, pass: false, detail: `${qualifying.length} runs of ${minMiles}+ miles, none with a clean morning check after` }
+  const late = cleanAfter.length > 0 ? `; ${cleanAfter.length === 1 ? 'one has a clean check logged late' : `${cleanAfter.length} have clean checks logged late`}, which doesn’t count toward a pass` : ''
+  return { item, pass: false, detail: `${qualifying.length} runs of ${minMiles}+ miles, none with a clean morning check after${late}` }
 }
 
 function manual(item: GateItem, gate: Gate, ctx: GateContext): GateItemResult {
@@ -153,6 +206,8 @@ export function evaluateGate(gate: Gate, ctx: GateContext): GateResult {
         return noSwelling(item, ctx, true)
       case 'run-no-reaction':
         return runNoReaction(item, ctx)
+      case 'acl-rsi':
+        return aclRsi(item, ctx)
       case 'manual':
         return manual(item, gate, ctx)
     }

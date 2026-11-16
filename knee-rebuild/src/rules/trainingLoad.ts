@@ -7,9 +7,10 @@ import { isLateEntry } from './retro.ts'
 /*
  * Training load (metrics phase 1, docs/metrics-and-photos-plan.md): how hard a session was times how
  * long it took, RPE × minutes, for every lift and run, and the warning when the last 7 days run well
- * above or below the weeks before. It is a warning only. Nothing here feeds a prescription, a reading,
+ * above or below the longer rate. It is a warning only. Nothing here feeds a prescription, a reading,
  * a cap or a gate: the guard (trainingLoad.guard.test.ts) holds every other rule module away from it
- * and from the fields it reads. "Load" on Progress already means weight lifted, so this is always
+ * and from the fields it reads. Since Batch B the warning is EWMA-based (PROGRAM-QUESTIONS 162) and
+ * still feeds nothing. "Load" on Progress already means weight lifted, so this is always
  * "training load". Computed, never stored (PROGRAM-QUESTIONS 143 to 149).
  *
  * Metrics phase 2 adds the HR load (Banister TRIMP, PROGRAM-QUESTIONS 151): shown BESIDE the sRPE
@@ -229,80 +230,186 @@ export interface WindowTrainingLoad {
   notCounted: TrainingLoadEntry[]
 }
 
-/** The training load from `from` to `to`, both days included, and the entries in it that aren't counted. */
+/**
+ * The training load from `from` to `to`, both days included, and the entries in it that aren't
+ * counted. Since the warning moved to EWMA (Batch B) it no longer makes the ratio: `acuteChronic`
+ * reads it only for the 'none' gate and to say which span an uncounted session or deload falls in.
+ */
 export function windowTrainingLoad(entries: readonly TrainingLoadEntry[], from: IsoDate, to: IsoDate): WindowTrainingLoad {
   const inside = entries.filter((e) => e.date >= from && e.date <= to)
   const counted = inside.filter((e) => e.load !== null)
   return { load: counted.reduce((sum, e) => sum + (e.load ?? 0), 0), counted: counted.length, notCounted: inside.filter((e) => e.load === null) }
 }
 
-/** Above this many times the average week reads high; below ACUTE_LOW reads low. Compared on the exact ratio. */
+/** Above this many times the longer rate reads high; below ACUTE_LOW reads low. Compared on the exact ratio. */
 export const ACUTE_HIGH = 1.5
 export const ACUTE_LOW = 0.8
-/** The history the comparison needs: the 28 days before the last 7, which end yesterday. */
+/**
+ * The warm-up: the comparison stays quiet until the first session or run is this many days back.
+ * An EWMA computes from day one, but its first weeks swing on a handful of days (PROGRAM-QUESTIONS
+ * 162b), so the quiet start is kept as a product gate, the same 35 days the rolling windows needed.
+ * It is also the far end of the spans the skew words name: days 8 to 35 back.
+ */
 export const HISTORY_DAYS = 35
 
+/**
+ * The smoothing (Batch B, PROGRAM-QUESTIONS 162a): exponentially weighted moving averages of the
+ * daily training load, acute over about 7 days and chronic over about 28. λ = 2 / (N + 1), the
+ * form the EWMA acute:chronic literature uses (Williams et al. 2017, Br J Sports Med 51:209), chosen
+ * over 1 − e^(−1/N), which differs by under 2% at these N: λ = 2/8 = 0.25 acute, 2/29 ≈ 0.069 chronic.
+ */
+export const ACUTE_SPAN_DAYS = 7
+export const CHRONIC_SPAN_DAYS = 28
+export const ACUTE_LAMBDA = 2 / (ACUTE_SPAN_DAYS + 1)
+export const CHRONIC_LAMBDA = 2 / (CHRONIC_SPAN_DAYS + 1)
+
 export type Band = 'high' | 'low' | 'steady' | 'too-early' | 'none'
+
+/** The band of a ratio, strictly: above 1.5 high, below 0.8 low, else steady (1.5 and 0.8 themselves are steady). */
+export function bandFor(ratio: number): 'high' | 'low' | 'steady' {
+  return ratio > ACUTE_HIGH ? 'high' : ratio < ACUTE_LOW ? 'low' : 'steady'
+}
+
+/**
+ * The counted training load of each day from `from` to `to`, both included, zero-filled: a day with
+ * nothing counted adds nothing. Uncounted entries are left out here, never read as 0 load in their
+ * own right; `windowTrainingLoad` lists them for the skew words. Empty when `to` is before `from`.
+ * Only the warning reads this; the weekly chart's sums (`weeklyTrainingLoads`) never do.
+ */
+export function dailyTrainingLoads(entries: readonly TrainingLoadEntry[], from: IsoDate, to: IsoDate): number[] {
+  if (to < from) return []
+  const days = Array.from({ length: daysBetween(from, to) + 1 }, () => 0)
+  for (const e of entries) {
+    if (e.load === null || e.date < from || e.date > to) continue
+    const i = daysBetween(from, e.date)
+    days[i] = (days[i] ?? 0) + e.load
+  }
+  return days
+}
+
+/**
+ * The EWMA of a daily series at its last day: seeded at 0 the day before the first, then
+ * ewma_t = λ · load_t + (1 − λ) · ewma_(t−1), divided by the bias correction 1 − (1 − λ)^t so the zero
+ * seed doesn't read as days of rest (constant training reads its own level from the first day;
+ * PROGRAM-QUESTIONS 162b). 0 for an empty series.
+ */
+export function smoothedLoad(series: readonly number[], lambda: number): number {
+  if (series.length === 0) return 0
+  let value = 0
+  for (const load of series) value = lambda * load + (1 - lambda) * value
+  return value / (1 - (1 - lambda) ** series.length)
+}
 
 /** Something that moves the ratio, and which way: uncounted sessions or a deload week, in either of the two spans. */
 export interface Skew {
   why: 'not-counted' | 'deload'
   window: 'acute' | 'chronic'
-  /** Which way it makes the ratio read against what was really done. */
-  reads: 'lower' | 'higher'
+  /**
+   * Which way it makes the shown ratio read against what was really done, from the EWMA weights of
+   * the days it covers (`skewReads`): 'either' when those days fall on both sides of the ratio.
+   */
+  reads: 'lower' | 'higher' | 'either'
+}
+
+/**
+ * How much more a day's load moves the acute EWMA than the chronic one: w_a / w_c for a day
+ * `daysBack` days before today (1 is yesterday) in a series `length` days long, each weight
+ * λ(1 − λ)^(daysBack − 1) over its bias correction 1 − (1 − λ)^length. About 3.6 yesterday, 1.53
+ * five days back, 1.23 six, 0.99 seven, 0.80 eight (PROGRAM-QUESTIONS 162d).
+ */
+export function weightRatio(daysBack: number, length: number): number {
+  const lag = daysBack - 1
+  const acute = (ACUTE_LAMBDA * (1 - ACUTE_LAMBDA) ** lag) / (1 - (1 - ACUTE_LAMBDA) ** length)
+  const chronic = (CHRONIC_LAMBDA * (1 - CHRONIC_LAMBDA) ** lag) / (1 - (1 - CHRONIC_LAMBDA) ** length)
+  return acute / chronic
+}
+
+/**
+ * Which way load missing from these days makes the shown ratio read. Adding load L on a day moves
+ * the ratio R = A / C to (A + w_a·L) / (C + w_c·L), which is above R exactly when w_a / w_c is above
+ * R. So a day whose weight ratio is above R, counted, would raise the ratio: the shown one reads
+ * lower; below R it reads higher. Days on both sides: 'either' (which wins depends on loads nobody
+ * knows). Null when every day sits exactly on R and so moves nothing.
+ */
+export function skewReads(daysBack: readonly number[], length: number, ratio: number): Skew['reads'] | null {
+  const above = daysBack.some((d) => weightRatio(d, length) > ratio)
+  const below = daysBack.some((d) => weightRatio(d, length) < ratio)
+  if (above && below) return 'either'
+  if (above) return 'lower'
+  if (below) return 'higher'
+  return null
 }
 
 export interface AcuteChronic {
   band: Band
-  /** The 7 days through yesterday. */
+  /**
+   * The spans the skew words name (EWMA has no windows): the last 7 days through yesterday and the
+   * 28 days before them. Which way a skew in either reads comes from the days' EWMA weights against
+   * the ratio, not from the span (`skewReads`). The 'none' gate also reads the 28 days before
+   * (PROGRAM-QUESTIONS 162).
+   */
   acuteFrom: IsoDate
   acuteTo: IsoDate
-  /** The 28 days before them. */
   chronicFrom: IsoDate
   chronicTo: IsoDate
+  /** A week at the recent rate: 7 × the acute EWMA of the daily load through yesterday. */
   acute: number
-  /** The 28 days' training load over 4: the average week. Null while too early. */
+  /** A week at the longer rate: 7 × the chronic EWMA through yesterday. Null while too early. */
   chronicWeek: number | null
+  /** acute / chronicWeek, which is the EWMA ratio itself (the 7s cancel). Null unless high, low or steady. */
   ratio: number | null
   /** While too early with something logged: the first day the comparison runs. */
   startsOn: IsoDate | null
   notCountedAcute: TrainingLoadEntry[]
   notCountedChronic: TrainingLoadEntry[]
-  /** Only with a ratio (high, low or steady): acute window first, uncounted before deload. */
+  /** Only with a ratio (high, low or steady): acute span first, uncounted before deload. */
   skews: Skew[]
 }
 
-const touchesDeload = (from: IsoDate, to: IsoDate, startDate: IsoDate) =>
-  Array.from({ length: daysBetween(from, to) + 1 }, (_, i) => addDays(from, i)).some((d) => isDeloadWeek(weekOf(d, startDate)))
+const deloadDays = (from: IsoDate, to: IsoDate, startDate: IsoDate) =>
+  Array.from({ length: daysBetween(from, to) + 1 }, (_, i) => addDays(from, i)).filter((d) => isDeloadWeek(weekOf(d, startDate)))
 
 /**
- * The last 7 days' training load against the average week of the 28 days before. The 7 days end
- * yesterday, so the morning reads the same before and after today's session. Too early until the
- * first session is 35 days back (`startsOn` says when); 'none' when the 28 days before hold no
- * training load to compare against. Above 1.5 high, below 0.8 low, else steady.
+ * The warning (Batch B: EWMA, PROGRAM-QUESTIONS 162): the daily training load from the first entry
+ * through yesterday, smoothed twice (acute λ 0.25, chronic λ 2/29), each printed as a week at that
+ * rate. It ends yesterday, so the morning reads the same before and after today's session. Too early
+ * until the first session is 35 days back (`startsOn` says when); 'none' when the 28 days before the
+ * last 7 hold no counted load (the rolling windows' meaning, kept so a return from a layoff never
+ * divides by the faint tail of months-old training). Above 1.5 high, below 0.8 low, else steady.
  */
 export function acuteChronic(entries: readonly TrainingLoadEntry[], today: IsoDate, startDate: IsoDate): AcuteChronic {
-  const acuteFrom = addDays(today, -7)
+  const acuteFrom = addDays(today, -ACUTE_SPAN_DAYS)
   const acuteTo = addDays(today, -1)
   const chronicFrom = addDays(today, -HISTORY_DAYS)
-  const chronicTo = addDays(today, -8)
-  const acute = windowTrainingLoad(entries, acuteFrom, acuteTo)
-  const chronic = windowTrainingLoad(entries, chronicFrom, chronicTo)
-  const base = { acuteFrom, acuteTo, chronicFrom, chronicTo, acute: acute.load, notCountedAcute: acute.notCounted, notCountedChronic: chronic.notCounted }
+  const chronicTo = addDays(today, -ACUTE_SPAN_DAYS - 1)
+  const acuteSpan = windowTrainingLoad(entries, acuteFrom, acuteTo)
+  const chronicSpan = windowTrainingLoad(entries, chronicFrom, chronicTo)
   const firstDate = entries.reduce<IsoDate | null>((first, e) => (first === null || e.date < first ? e.date : first), null)
+  const series = firstDate === null ? [] : dailyTrainingLoads(entries, firstDate, acuteTo)
+  const acuteRate = smoothedLoad(series, ACUTE_LAMBDA)
+  const chronicRate = smoothedLoad(series, CHRONIC_LAMBDA)
+  const base = { acuteFrom, acuteTo, chronicFrom, chronicTo, acute: 7 * acuteRate, notCountedAcute: acuteSpan.notCounted, notCountedChronic: chronicSpan.notCounted }
   if (firstDate === null || firstDate > chronicFrom) {
     return { ...base, band: 'too-early', chronicWeek: null, ratio: null, startsOn: firstDate === null ? null : addDays(firstDate, HISTORY_DAYS), skews: [] }
   }
-  const chronicWeek = chronic.load / 4
-  if (chronicWeek === 0) return { ...base, band: 'none', chronicWeek, ratio: null, startsOn: null, skews: [] }
-  const ratio = acute.load / chronicWeek
-  const band: Band = ratio > ACUTE_HIGH ? 'high' : ratio < ACUTE_LOW ? 'low' : 'steady'
+  const chronicWeek = 7 * chronicRate
+  if (chronicSpan.load === 0 || chronicRate === 0) return { ...base, band: 'none', chronicWeek, ratio: null, startsOn: null, skews: [] }
+  const ratio = acuteRate / chronicRate
   const skews: Skew[] = []
-  if (acute.notCounted.length > 0) skews.push({ why: 'not-counted', window: 'acute', reads: 'lower' })
-  if (touchesDeload(acuteFrom, acuteTo, startDate)) skews.push({ why: 'deload', window: 'acute', reads: 'lower' })
-  if (chronic.notCounted.length > 0) skews.push({ why: 'not-counted', window: 'chronic', reads: 'higher' })
-  if (touchesDeload(chronicFrom, chronicTo, startDate)) skews.push({ why: 'deload', window: 'chronic', reads: 'higher' })
-  return { ...base, band, chronicWeek, ratio, startsOn: null, skews }
+  const skew = (why: Skew['why'], window: Skew['window'], days: readonly IsoDate[]) => {
+    if (days.length === 0) return
+    const reads = skewReads(
+      days.map((d) => daysBetween(d, today)),
+      series.length,
+      ratio,
+    )
+    if (reads !== null) skews.push({ why, window, reads })
+  }
+  skew('not-counted', 'acute', acuteSpan.notCounted.map((e) => e.date))
+  skew('deload', 'acute', deloadDays(acuteFrom, acuteTo, startDate))
+  skew('not-counted', 'chronic', chronicSpan.notCounted.map((e) => e.date))
+  skew('deload', 'chronic', deloadDays(chronicFrom, chronicTo, startDate))
+  return { ...base, band: bandFor(ratio), chronicWeek, ratio, startsOn: null, skews }
 }
 
 export interface TrainingLoadWeek {

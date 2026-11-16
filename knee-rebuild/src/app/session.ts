@@ -1,6 +1,8 @@
 import { exerciseById, program, templateFor } from '../program/program.ts'
-import { availableEquipment, type Available, type SlotRoute } from '../rules/equipment.ts'
+import { availableEquipment, WARM_UP_BIKE, type Available, type SlotRoute } from '../rules/equipment.ts'
 import { attachChecks, recordsBefore, type WorkoutRecord } from '../rules/history.ts'
+import { sessionPhaseWeek } from '../rules/compliance.ts'
+import { bandWeek, pauseOn } from '../rules/downPeriod.ts'
 import { isAddedSlotId, withAddedSlots } from '../rules/addedSlots.ts'
 import { extensionPool, isExtraSlotId } from '../rules/extensions.ts'
 import { fitToWindow, type Fit, type WindowSlot } from '../rules/fitWindow.ts'
@@ -8,9 +10,14 @@ import { applyOverrides, overridesBySlot } from '../rules/overrides.ts'
 import { prescribe, type GymHere, type Prescription } from '../rules/prescription.ts'
 import { phaseWeekOf, slotsForPhaseWeek } from '../rules/session.ts'
 import { slotAtGym } from '../rules/slotExercise.ts'
+import { warmUpParts, type WarmUpParts } from '../rules/warmUp.ts'
+import { rampFor, rampReps, type Ramp } from '../rules/warmUpRamp.ts'
 import { kneeMorning, wholeKneeFor } from '../rules/wholeKnee.ts'
-import type { EquipmentId, Exercise, IsoDate, Location, SessionLetter, SessionTemplate, Settings, Slot } from '../schema/index.ts'
+import type { EquipmentId, Exercise, IsoDate, Location, SessionLetter, SessionTemplate, Settings, Slot, Workout } from '../schema/index.ts'
 import type { History } from '../db/repo.ts'
+
+/** A slot's warm-up sets, or why there are none (src/rules/warmUpRamp.ts): screens take the type from here, never from the rule (warmUpRamp.guard.test.ts). */
+export type { Ramp, RampSet } from '../rules/warmUpRamp.ts'
 
 export interface SlotPlan {
   slot: Slot
@@ -74,11 +81,20 @@ export function planSession(input: {
   extend?: readonly Slot[]
   /** Plan only from sessions dated before this day: the session being run, and any earlier attempt that day, never plan it. */
   before?: IsoDate
+  /**
+   * The day the session is planned for, when it isn't `before` (the Morning check's "next time" plans
+   * from every record but for a later day): a down period covering it pauses progression and holds
+   * the phase-week bands (src/rules/downPeriod.ts). Defaults to `before`; with neither, no pause.
+   */
+  pauseDate?: IsoDate
 }): SlotPlan[] {
   const { template, week, settings, history } = input
   const all: WorkoutRecord[] = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const records = input.before ? recordsBefore(all, input.before) : all
-  const phaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  // A down period pauses by the day planned (Batch E, PROGRAM-QUESTIONS 181 to 188): a late-logged past day pauses as that day.
+  const planDay = input.pauseDate ?? input.before
+  const pause = planDay ? pauseOn(planDay, history.downPeriods ?? []) : null
+  const phaseWeek = phaseWeekFor(week, settings, history, planDay)
   const morning = kneeMorning(history.morningChecks, history.workouts, input.before)
   const gym = gymHere(input.gym)
   const overrides = overridesBySlot(history.programOverrides ?? [])
@@ -90,7 +106,7 @@ export function planSession(input: {
     const substitutions = slot.substitutionIds.map(exerciseById)
     // A swap chosen for this session beats the gym and the slot's history; the gym routes forward from the history (slotExercise.ts).
     const { exercise, readings, lastSets, placement, route } = slotAtGym(
-      { slot, own, substitutions, records, injuredSide: settings.injuredSide },
+      { slot, own, substitutions, records, injuredSide: settings.injuredSide, ...(pause ? { pause } : {}) },
       input.chosenExercise?.[slot.id],
       gym.available,
     )
@@ -107,6 +123,7 @@ export function planSession(input: {
       dumbbellMax: gym.dumbbellMaxLb,
       redFlagActive: settings.redFlag.active,
       gym,
+      ...(pause ? { pause } : {}),
       ...(placement ? { placement } : {}),
       ...(wholeKnee ? { wholeKnee } : {}),
     })
@@ -118,8 +135,8 @@ export function planSession(input: {
  * What can be added to this session for extra time: the phase's other sessions' exercises, then
  * upper-body work (`extensionPool`). Worked out from the same inputs each time, never stored.
  */
-export function sessionExtensions(template: SessionTemplate, history: Pick<History, 'addedSlots'>, settings: Settings, week: number): Slot[] {
-  const phaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+export function sessionExtensions(template: SessionTemplate, history: Pick<History, 'addedSlots' | 'downPeriods'>, settings: Settings, week: number, date?: IsoDate): Slot[] {
+  const phaseWeek = phaseWeekFor(week, settings, history, date)
   return extensionPool({ template: withAdded(template, history), templates: program.templates, phaseWeek, catalog: CATALOG })
 }
 
@@ -129,24 +146,91 @@ export function withExtensions(template: SessionTemplate, history: Pick<History,
   return { ...own, slots: [...own.slots, ...extensions] }
 }
 
+/** The lift warm-up's minutes at a gym (`warmUpParts`): the bike's where it has an upright bike, and the knee circuit's for the phase. */
+export function warmUpFor(phase: number, gym: Gym): WarmUpParts {
+  return warmUpParts(program.warmUp.lift, phase, availableAt(gym).has(WARM_UP_BIKE))
+}
+
+/**
+ * A slot's warm-up sets as the plan stands (`rampFor`, display only): from the exercise and load its
+ * prescription runs today, so a swap, a rack move, a back-off or a deload ramps from what is actually
+ * on the bar. Never part of `SlotPlan`: no prescription, log or rule reads it.
+ */
+export function slotRamp(plan: SlotPlan, opts: { late: boolean; alreadyWarm: boolean }): Ramp {
+  const prescription = plan.prescriptions[0]
+  const exercise = prescription ? (CATALOG.get(prescription.exerciseId) ?? plan.exercise) : plan.exercise
+  return rampFor({ exercise, slot: plan.slot, prescription, late: opts.late, alreadyWarm: opts.alreadyWarm, rule: program.warmUp.lift.ramp })
+}
+
+/** The exercise a plan runs today: the prescription's (a rack move changes it), else the plan's. */
+function runsExercise(plan: SlotPlan): string {
+  return plan.prescriptions[0]?.exerciseId ?? plan.exercise.id
+}
+
+/**
+ * Each plan's warm-up sets as the session order would show them: an exercise is warm once an
+ * earlier slot in the plan runs it, so only its first slot ramps (keyed on the exercise each slot
+ * runs, so a rack-moved slot and an extra of the same machine aren't both counted). The time window
+ * and the read-only Preview use it; the runner goes by what is logged instead (`slotRamp`).
+ */
+export function rampsInOrder(plans: readonly SlotPlan[], late: boolean): Ramp[] {
+  const seen = new Set<string>()
+  return plans.map((plan) => {
+    const id = runsExercise(plan)
+    const ramp = slotRamp(plan, { late, alreadyWarm: seen.has(id) })
+    seen.add(id)
+    return ramp
+  })
+}
+
 /**
  * Which of a session's slots fit the minutes Shawn has (`fitToWindow`): the plan's sets, reps and
- * the Settings rest, in session order. A slot with a set already logged is never dropped. Null
- * minutes is the full session.
+ * the Settings rest, in session order, door to door: the warm-up's minutes come off the top, and the
+ * warm-up sets of the slots that show them are counted (`ramps`: false for a session entered after
+ * the fact, which shows none). A slot with a set already logged is never dropped. Null minutes is
+ * the full session.
  */
-export function windowFit(plans: readonly SlotPlan[], restSeconds: number, minutes: number | null, loggedSlots: ReadonlySet<string> = new Set()): Fit {
-  const slots: WindowSlot[] = plans.map((p) => ({
-    slotId: p.slot.id,
-    ...(p.slot.groupId ? { groupId: p.slot.groupId } : {}),
-    added: isAddedSlotId(p.slot.id),
-    extra: isExtraSlotId(p.slot.id),
-    // An extra the gym can't run as it stands (a machine that isn't here) is never added for time.
-    eligible: p.route.kind === 'own',
-    optional: p.slot.optional,
-    logged: loggedSlots.has(p.slot.id),
-    sides: p.prescriptions.map((x) => ({ sets: x.sets, repsTarget: x.repsTarget, repUnit: x.repUnit })),
-  }))
-  return fitToWindow(slots, minutes, restSeconds)
+export function windowFit(
+  plans: readonly SlotPlan[],
+  restSeconds: number,
+  minutes: number | null,
+  opts: { warmUpMinutes: number; ramps: boolean; logged?: ReadonlySet<string> },
+): Fit {
+  const logged = opts.logged ?? new Set<string>()
+  const ramps = rampsInOrder(plans, !opts.ramps)
+  const slots: WindowSlot[] = plans.map((p, i) => {
+    const reps = rampReps(ramps[i] ?? { kind: 'none', why: 'not-eligible' })
+    return {
+      slotId: p.slot.id,
+      ...(p.slot.groupId ? { groupId: p.slot.groupId } : {}),
+      added: isAddedSlotId(p.slot.id),
+      extra: isExtraSlotId(p.slot.id),
+      // An extra the gym can't run as it stands (a machine that isn't here) is never added for time.
+      eligible: p.route.kind === 'own',
+      optional: p.slot.optional,
+      logged: logged.has(p.slot.id),
+      sides: p.prescriptions.map((x) => ({ sets: x.sets, repsTarget: x.repsTarget, repUnit: x.repUnit })),
+      ...(reps.length > 0 ? { rampReps: reps } : {}),
+    }
+  })
+  return fitToWindow(slots, minutes, restSeconds, opts.warmUpMinutes)
+}
+
+/**
+ * The week of its phase a day's slots are read in: the calendar's, held at the band a down period
+ * began in while one covers `date` (`bandWeek`, PROGRAM-QUESTIONS 188); with no date, the calendar's.
+ */
+export function phaseWeekFor(week: number, settings: Pick<Settings, 'phaseEnteredWeek' | 'startDate'>, history: Pick<History, 'downPeriods'>, date?: IsoDate): number {
+  const calendar = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  if (date === undefined) return calendar
+  return bandWeek({ date, phaseWeek: calendar, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods: history.downPeriods ?? [] })
+}
+
+/** The phase week a stored session's Summary reads its slots in (`sessionPhaseWeek`), held the same way when a down period covered its day. */
+export function sessionBandWeek(workout: Pick<Workout, 'phase' | 'week' | 'date'>, settings: Settings, history: Pick<History, 'downPeriods'>): number | null {
+  const calendar = sessionPhaseWeek(workout, settings)
+  if (calendar === null) return null
+  return bandWeek({ date: workout.date, phaseWeek: calendar, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods: history.downPeriods ?? [] })
 }
 
 /** The template for a session letter in the phase the app is currently in. */

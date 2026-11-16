@@ -1,10 +1,12 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { program } from '../program/program.ts'
-import { PLANET_FITNESS_LOCATION_ID, type Location } from '../schema/index.ts'
+import { PLANET_FITNESS_LOCATION_ID, type Location, type MorningCheck, type Settings } from '../schema/index.ts'
 import { db } from './db.ts'
 import {
+  addMorningCheck,
   addExtra,
+  foldSettings,
   addLocation,
   archiveLocation,
   clearMarkOff,
@@ -14,10 +16,13 @@ import {
   getLocation,
   getLocations,
   getSettings,
+  getTimeZoneSetting,
   markOff,
+  preAccountsFacts,
   putWorkout,
   removeExtra,
   renameLocation,
+  saveTimeZone,
   setActiveLocation,
   setDumbbellMax,
   setKit,
@@ -162,5 +167,61 @@ describe('a session’s gym', () => {
     await archiveLocation(gym.id)
     await expect(setWorkoutLocation(workout.id, gym.id)).rejects.toThrow()
     expect((await db.workouts.get(workout.id))?.locationId).toBe(PLANET_FITNESS_LOCATION_ID)
+  })
+})
+
+describe('the time zone (M-U1, PROGRAM-QUESTIONS 203, 204)', () => {
+  it('no row is New York; a saved zone reads back; a second save replaces it', async () => {
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'none' })
+    await saveTimeZone('America/Los_Angeles')
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/Los_Angeles', stored: 'ok' })
+    await saveTimeZone('UTC')
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'UTC', stored: 'ok' })
+    expect(await db.timeZoneSettings.count()).toBe(1)
+  })
+  it('refuses a zone this phone doesn’t know, and writes nothing', async () => {
+    await saveTimeZone('Asia/Tokyo')
+    await expect(saveTimeZone('Not/AZone')).rejects.toThrow('Not/AZone isn’t a time zone this phone knows')
+    await expect(saveTimeZone('')).rejects.toThrow()
+    expect((await getTimeZoneSetting()).zone).toBe('Asia/Tokyo')
+  })
+  it('a stored row that doesn’t read, or names a zone this phone doesn’t know, counts in New York and says so; it never throws', async () => {
+    await db.timeZoneSettings.put({ id: 'time-zone', zone: 'Mars/Olympus_Mons' })
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'unreadable' })
+    await db.timeZoneSettings.put({ id: 'time-zone', zone: 7 } as never)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'unreadable' })
+  })
+  it('lives beside the settings row, never on it', async () => {
+    await saveTimeZone('Europe/London')
+    expect(Object.keys((await db.settings.get('settings')) ?? {})).not.toContain('zone')
+    expect(Object.keys((await db.settings.get('settings')) ?? {})).not.toContain('timeZone')
+  })
+})
+
+describe('preAccountsFacts (M-U3): writes from before accounts', () => {
+  it('an empty log has none; a set stamped before Nov 10, 2026 counts; a late entry’s marker never does', async () => {
+    expect(await preAccountsFacts()).toBe(false)
+    await putWorkout({ id: 'w-late', date: '2026-11-03', templateId: 'p1-a', phase: 1, week: 1, isDeload: false, startedAt: '2026-11-03T17:00:00.000Z', status: 'finished' })
+    expect(await preAccountsFacts()).toBe(false)
+    await upsertSet({ id: '', workoutId: 'w-late', slotId: 'p1a-1', exerciseId: 'leg-press', setNumber: 1, side: 'both', load: 90, loadUnit: 'lb', reps: 10, stopped: false, loggedAt: '2026-11-12T22:00:00.000Z' })
+    expect(await preAccountsFacts()).toBe(false)
+    await putWorkout({ id: 'w-live', date: '2026-11-05', templateId: 'p1-b', phase: 1, week: 1, isDeload: false, startedAt: '2026-11-05T22:00:00.000Z', status: 'finished' })
+    expect(await preAccountsFacts()).toBe(true)
+  })
+})
+
+describe('foldSettings (M-U3): today’s checks folded into the settings in one transaction', () => {
+  const check = (date: string, redFlags: string[]) => ({ id: `mc-${date}`, date, appliesTo: null, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags })
+  const flag = (settings: Settings, checks: MorningCheck[]): Settings =>
+    checks.some((c) => c.redFlags.length > 0) && !settings.redFlag.active ? { ...settings, redFlag: { active: true, since: '2026-11-04', items: ['locking'] } } : settings
+
+  it('hands the fold only today’s checks, writes its answer, and writes nothing when it answers the same object', async () => {
+    await addMorningCheck(check('2026-11-03', ['locking']))
+    expect(await foldSettings('2026-11-04', flag)).toBe(false)
+    expect((await getSettings())?.redFlag.active).toBe(false)
+    await addMorningCheck(check('2026-11-04', ['locking']))
+    expect(await foldSettings('2026-11-04', flag)).toBe(true)
+    expect((await getSettings())?.redFlag).toEqual({ active: true, since: '2026-11-04', items: ['locking'] })
+    expect(await foldSettings('2026-11-04', flag)).toBe(false)
   })
 })

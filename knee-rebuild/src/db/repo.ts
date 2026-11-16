@@ -18,10 +18,16 @@ import {
 import { addedSlotProblem, phaseExerciseIds } from '../rules/addedSlots.ts'
 import { cleanWindow } from '../rules/fitWindow.ts'
 import { overrideProblems } from '../rules/overrides.ts'
+import { declareProblem, endProblem, endedEarly, extendProblem, extended, newDownPeriod, resumeProblem, resumed } from '../rules/downPeriod.ts'
+import { onboardingState, type OnboardingState, type StoredFacts } from '../rules/onboarding.ts'
+import { preAccountsLog } from '../rules/engineMode.ts'
 import {
+  AclRsiEntry,
   AddedSlot,
+  DownPeriod,
   GateTest,
   HrSettings,
+  KoosEntry,
   Location,
   MorningCheck,
   ProgramOverride,
@@ -29,14 +35,20 @@ import {
   SessionMove,
   SetLog,
   Settings,
+  TimeZoneSetting,
   Vo2Reading,
   Workout,
+  DEFAULT_TIME_ZONE,
+  KnownTimeZone,
   PLANET_FITNESS_LOCATION_ID,
+  TIME_ZONE_ID,
   IsoDateTime,
+  isKnownTimeZone,
   type EquipmentId,
   type IsoDate,
   type Program,
   type SetSide,
+  type Side,
 } from '../schema/index.ts'
 
 /**
@@ -48,7 +60,11 @@ export const SETTINGS_ID = 'settings' as const
 /** The key of the export stamp's row in the settings table (`ExportStampRow`). */
 export const EXPORT_STAMP_ID = 'last-export' as const
 
-/** Settings for a fresh install: the program's own start date and injured side, Shawn's answers to section 9. */
+/**
+ * The seed from before M-U1: program.json's injured side and start date, Shawn's rack and his
+ * answers to section 9. Test fixtures only since M-U1 (src/db/seed.guard.test.ts): a phone with no
+ * settings row answers first run (`onboard`) instead, so no install is seeded with Shawn's values.
+ */
 export function defaultSettings(program: Pick<Program, 'startDate' | 'injuredSide'>): Settings {
   return Settings.parse({
     injuredSide: program.injuredSide,
@@ -108,6 +124,23 @@ export async function saveSettings(settings: Settings): Promise<void> {
   await db.settings.put(settingsRow(settings))
 }
 
+/**
+ * The settings rewritten by `fold`, given the checks dated `today`, read and written in one
+ * transaction so a screen's save in between is never undone; nothing written when `fold` answers the
+ * settings object it was given. True when it wrote. The shell keeps a full-mode red-flag state with it
+ * (M-U3: a check saved in tester mode set none; MorningCheck.helpers `withTodaysFlags`).
+ */
+export async function foldSettings(today: IsoDate, fold: (settings: Settings, todaysChecks: MorningCheck[]) => Settings): Promise<boolean> {
+  return db.transaction('rw', db.settings, db.morningChecks, async () => {
+    const settings = await getSettings()
+    if (!settings) return false
+    const next = fold(settings, await db.morningChecks.where('date').equals(today).toArray())
+    if (next === settings) return false
+    await saveSettings(next)
+    return true
+  })
+}
+
 /** Records when this phone last wrote a backup, in the stamp's own row. Inside a transaction on settings, or alone. */
 export async function saveExportStamp(at: IsoDateTime): Promise<void> {
   const row: ExportStampRow = { id: EXPORT_STAMP_ID, at: IsoDateTime.parse(at) }
@@ -155,6 +188,108 @@ export async function saveHrSettings(row: HrSettings): Promise<void> {
   await db.hrSettings.put(HrSettings.parse(row))
 }
 
+/**
+ * The zone dates are counted in (M-U1, PROGRAM-QUESTIONS 203, 204), and how it was found: `ok` a
+ * stored row this phone knows; `none` no row, so America/New_York (every phone set up before M-U1,
+ * Shawn's included); `unreadable` a row that doesn't parse or names a zone this phone's time zone
+ * data doesn't know, so America/New_York too, and Settings says so. Never throws on a bad row.
+ */
+export async function getTimeZoneSetting(): Promise<{ zone: string; stored: 'none' | 'ok' | 'unreadable' }> {
+  const row = await db.timeZoneSettings.get(TIME_ZONE_ID)
+  if (row === undefined) return { zone: DEFAULT_TIME_ZONE, stored: 'none' }
+  const parsed = TimeZoneSetting.safeParse(row)
+  if (!parsed.success || !isKnownTimeZone(parsed.data.zone)) return { zone: DEFAULT_TIME_ZONE, stored: 'unreadable' }
+  return { zone: parsed.data.zone, stored: 'ok' }
+}
+
+/** Saves the zone (Settings' Time zone), parsed first like every write: a zone this phone doesn't know is refused, and nothing is written. */
+export async function saveTimeZone(zone: string): Promise<void> {
+  const parsed = KnownTimeZone.safeParse(zone)
+  if (!parsed.success) throw new Error(`${zone} isn’t a time zone this phone knows`)
+  await db.timeZoneSettings.put(TimeZoneSetting.parse({ id: TIME_ZONE_ID, zone: parsed.data }))
+}
+
+/**
+ * What decides whether this phone is set up (src/rules/onboarding.ts), read in one transaction: the
+ * settings row as stored (present, not parsed), and every other row but the time zone's.
+ */
+export async function onboardingFacts(): Promise<StoredFacts> {
+  return db.transaction('r', db.tables, async () => {
+    const settingsRow = (await db.settings.get(SETTINGS_ID)) !== undefined
+    let rows = 0
+    for (const table of db.tables) if (table.name !== 'timeZoneSettings') rows += await table.count()
+    return { settingsRow, otherRows: rows - (settingsRow ? 1 : 0) }
+  })
+}
+
+/**
+ * Whether this phone holds writes from before accounts existed (M-U3, PROGRAM-QUESTIONS 224): the
+ * sets' write stamps and the sessions' start stamps, read in one transaction and judged by
+ * src/rules/engineMode.ts `preAccountsLog`. Only the engine mode reads it, and only while the phone
+ * has kept no account answer.
+ */
+export async function preAccountsFacts(): Promise<boolean> {
+  return db.transaction('r', [db.setLogs, db.workouts], async () => {
+    const setLogs = (await db.setLogs.toArray()).map((s) => ({ loggedAt: s.loggedAt }))
+    const workouts = (await db.workouts.toArray()).map((w) => ({ date: w.date, startedAt: w.startedAt }))
+    return preAccountsLog({ setLogs, workouts })
+  })
+}
+
+/**
+ * At launch (M-U1): a phone that is set up gets its home gym if it has none yet (a phone that ran
+ * version 2, before gyms), as before; any other phone is left as it is, for first run. Returns
+ * what the phone is. Nothing Shawn-specific is ever seeded on a phone without a settings row.
+ */
+export async function launch(lists: HomeLists, createdOn: IsoDate): Promise<OnboardingState> {
+  const state = onboardingState(await onboardingFacts())
+  if (state === 'onboarded') await ensureLocations(lists, createdOn)
+  return state
+}
+
+/** The frozen `Settings.dumbbellMax` when first run's home rack is None: positive, as every build's schema needs, and read by nothing while the home gym is stored (PROGRAM-QUESTIONS 209). */
+export const FROZEN_RACK_PLACEHOLDER_LB = 5
+/** The rest timer a set-up phone starts on (PROMPT section 9's answer; Settings changes it). */
+export const DEFAULT_REST_SECONDS = 60
+
+/** First run's answers (src/screens/Welcome.tsx). */
+export interface FirstRunAnswers {
+  injuredSide: Side
+  startDate: IsoDate
+  /** The home gym as first run built it (`newLocation`, then the checklist's marks); its id is the home gym's whatever it says. */
+  home: Location
+  kit: EquipmentId[]
+  timeZone: string
+}
+
+/**
+ * Sets the phone up from first run's answers (M-U1), in one transaction, and only on a phone that
+ * isn't set up yet (re-checked inside it, so a second tap or a second tab changes nothing): the
+ * home gym (kept as it is when one is stored already), the time zone, then the settings row last.
+ * Every row is parsed first; a refusal writes nothing. Returns whether a stored home gym was kept.
+ */
+export async function onboard(answers: FirstRunAnswers): Promise<{ keptHome: boolean }> {
+  const zone = KnownTimeZone.parse(answers.timeZone)
+  const home = Location.parse({ ...answers.home, id: PLANET_FITNESS_LOCATION_ID, archived: false })
+  const settings = Settings.parse({
+    injuredSide: answers.injuredSide,
+    startDate: answers.startDate,
+    dumbbellMax: home.dumbbellMaxLb > 0 ? home.dumbbellMaxLb : FROZEN_RACK_PLACEHOLDER_LB,
+    restTimerSeconds: DEFAULT_REST_SECONDS,
+    painPerSet: false,
+    kit: answers.kit,
+    activeLocationId: PLANET_FITNESS_LOCATION_ID,
+  })
+  return db.transaction('rw', db.tables, async () => {
+    if (onboardingState(await onboardingFacts()) === 'onboarded') throw new Error('This phone is already set up; nothing was changed.')
+    const keptHome = (await db.locations.get(PLANET_FITNESS_LOCATION_ID)) !== undefined
+    if (!keptHome) await db.locations.put(home)
+    await db.timeZoneSettings.put(TimeZoneSetting.parse({ id: TIME_ZONE_ID, zone }))
+    await db.settings.put(settingsRow(settings))
+    return { keptHome }
+  })
+}
+
 /** Every VO2 max reading as stored, parsed (metrics phase 3). NOT part of `loadHistory`: no rule reads it (PROGRAM-QUESTIONS 155). */
 export async function getVo2Readings(): Promise<Vo2Reading[]> {
   return (await db.vo2Readings.toArray()).map((row) => Vo2Reading.parse(row))
@@ -170,7 +305,37 @@ export async function deleteVo2Reading(date: IsoDate): Promise<void> {
   await db.vo2Readings.delete(date)
 }
 
-/** Seed on first run: create the settings row if it is missing, and return it. */
+/** Every KOOS entry as stored, parsed (Batch A). NOT part of `loadHistory`: no rule reads it (PROGRAM-QUESTIONS 158). */
+export async function getKoosEntries(): Promise<KoosEntry[]> {
+  return (await db.koosEntries.toArray()).map((row) => KoosEntry.parse(row))
+}
+
+/** Saves a KOOS entry, parsed first like every write. The date is the primary key, so a same-day save replaces that day's entry. */
+export async function saveKoosEntry(row: KoosEntry): Promise<void> {
+  await db.koosEntries.put(KoosEntry.parse(row))
+}
+
+/** Deletes the KOOS entry on this date; an entry is re-enterable, so there is no undo to keep. */
+export async function deleteKoosEntry(date: IsoDate): Promise<void> {
+  await db.koosEntries.delete(date)
+}
+
+/** Every ACL-RSI entry as stored, parsed (Batch A). NOT part of `loadHistory`: the gates rule reads them through GateContext alone (PROGRAM-QUESTIONS 159). */
+export async function getAclRsiEntries(): Promise<AclRsiEntry[]> {
+  return (await db.aclRsiEntries.toArray()).map((row) => AclRsiEntry.parse(row))
+}
+
+/** Saves an ACL-RSI entry, parsed first like every write. The date is the primary key, so a same-day save replaces that day's entry. */
+export async function saveAclRsiEntry(row: AclRsiEntry): Promise<void> {
+  await db.aclRsiEntries.put(AclRsiEntry.parse(row))
+}
+
+/** Deletes the ACL-RSI entry on this date; an entry is re-enterable, so there is no undo to keep. */
+export async function deleteAclRsiEntry(date: IsoDate): Promise<void> {
+  await db.aclRsiEntries.delete(date)
+}
+
+/** Creates the settings row if it is missing, and returns it. Test fixtures only since M-U1 (src/db/seed.guard.test.ts); first run writes the row (`onboard`). */
 export async function ensureSettings(defaults: Settings): Promise<Settings> {
   const existing = await getSettings()
   if (existing) return existing
@@ -191,9 +356,10 @@ async function writeHome(lists: HomeLists, createdOn: IsoDate): Promise<Location
 }
 
 /**
- * Seed at launch, after ensureSettings (design section 2): write the home gym, Planet Fitness,
- * when no row for it exists yet, and return it. On a phone that ran version 2 this is how the
- * dumbbell max it had set reaches the gym; nothing else changes. A row already there is left as it is.
+ * At launch on a set-up phone (`launch`), and after an import: write the home gym when no row for
+ * it exists yet, and return it. Only a phone that ran version 2 (before gyms) or a file written
+ * then has none: this is how the dumbbell max it had set reaches the gym, as `homeLocation` (the
+ * pre-M-U1 home gym, PROGRAM-QUESTIONS 211). First run writes its own. A row already there is left as it is.
  */
 export async function ensureLocations(lists: HomeLists, createdOn: IsoDate): Promise<Location> {
   return db.transaction('rw', db.settings, db.locations, async () => {
@@ -276,12 +442,12 @@ export async function setDumbbellMax(locationId: string, lb: number): Promise<Lo
 }
 
 /**
- * Archives a gym (no delete: workouts point at it). Archiving the active gym makes Planet Fitness
- * active in the same transaction, and the result says so for the screen. Planet Fitness itself is
+ * Archives a gym (no delete: workouts point at it). Archiving the active gym makes the home gym
+ * active in the same transaction, and the result says so for the screen. The home gym itself is
  * never archived.
  */
 export async function archiveLocation(id: string): Promise<{ activeMovedHome: boolean }> {
-  if (!canArchive(id)) throw new Error('Planet Fitness is the home gym and is never archived')
+  if (!canArchive(id)) throw new Error('The home gym is never archived.')
   return db.transaction('rw', db.settings, db.locations, async () => {
     const settings = await getSettings()
     if (!settings) throw new Error('no settings row')
@@ -373,8 +539,73 @@ export async function deleteSet(id: string): Promise<void> {
   await db.setLogs.delete(id)
 }
 
+/** This morning's check: one per morning, its id the date, so a second save the same morning replaces it. */
 export async function addMorningCheck(check: MorningCheck): Promise<void> {
   await db.morningChecks.put(MorningCheck.parse(check))
+}
+
+/**
+ * A check for a past morning (Batch D): never overwrites. Refused in words, writing nothing, when any
+ * check is already dated that morning (looked up by date, so an imported row under another id
+ * counts) or the id is taken; otherwise added (PROGRAM-QUESTIONS 174).
+ */
+export async function addLateMorningCheck(check: MorningCheck): Promise<void> {
+  const row = MorningCheck.parse(check)
+  await db.transaction('rw', db.morningChecks, async () => {
+    const existing = await db.morningChecks.where('date').equals(row.date).count()
+    if (existing > 0) throw new Error(`a morning check for ${row.date} is already saved; it stays as it is`)
+    await db.morningChecks.add(row)
+  })
+}
+
+/** Every declared down period, in start order. */
+export async function getDownPeriods(): Promise<DownPeriod[]> {
+  return db.downPeriods.orderBy('start').toArray()
+}
+
+/**
+ * Declares a down period starting `today` for `days` days (Batch E, PROGRAM-QUESTIONS 185). The rule
+ * is asked again inside one transaction against the stored rows, and a refusal throws its sentence,
+ * writing nothing; the row is added, never put, so nothing is replaced.
+ */
+export async function declareDownPeriod(input: { today: IsoDate; days: number; declaredAt: IsoDateTime; note?: string }): Promise<DownPeriod> {
+  return db.transaction('rw', db.downPeriods, async () => {
+    const problem = declareProblem(await db.downPeriods.toArray(), input.today, input.days)
+    if (problem) throw new Error(problem)
+    const row = DownPeriod.parse(newDownPeriod(input))
+    if (await db.downPeriods.get(row.id)) throw new Error('A down period that starts today is already stored.')
+    await db.downPeriods.add(row)
+    return row
+  })
+}
+
+/** Runs the standing period to `newEnd`, up to 14 days from its start; refused in words, writing nothing. */
+export async function extendDownPeriod(id: string, newEnd: IsoDate, today: IsoDate): Promise<DownPeriod> {
+  return changeDownPeriod(id, (rows, p) => extendProblem(rows, id, newEnd, today) ?? extended(p, newEnd))
+}
+
+/** Ends the standing period today (today still counts); refused in words, writing nothing. */
+export async function endDownPeriod(id: string, today: IsoDate): Promise<DownPeriod> {
+  return changeDownPeriod(id, (rows, p) => endProblem(rows, id, today) ?? endedEarly(p, today))
+}
+
+/** Takes back an end tapped today by mistake; refused in words, writing nothing. */
+export async function resumeDownPeriod(id: string, today: IsoDate): Promise<DownPeriod> {
+  return changeDownPeriod(id, (rows, p) => resumeProblem(rows, id, today) ?? resumed(p))
+}
+
+/** One stored period, changed by `next` (a refusal's sentence, or the new row) inside one transaction. */
+async function changeDownPeriod(id: string, next: (rows: DownPeriod[], period: DownPeriod) => string | DownPeriod): Promise<DownPeriod> {
+  return db.transaction('rw', db.downPeriods, async () => {
+    const rows = await db.downPeriods.toArray()
+    const period = rows.find((p) => p.id === id)
+    if (!period) throw new Error('That down period isn’t stored any more.')
+    const result = next(rows, period)
+    if (typeof result === 'string') throw new Error(result)
+    const row = DownPeriod.parse(result)
+    await db.downPeriods.put(row)
+    return row
+  })
 }
 
 export async function addRun(run: Run): Promise<void> {
@@ -470,11 +701,16 @@ export interface History {
   programOverrides?: ProgramOverride[]
   /** The exercises Shawn added to a session (Dexie version 5), which `planSession` lays after a template's own slots. Optional for the same reason. */
   addedSlots?: AddedSlot[]
+  /**
+   * The declared down periods (Batch E, Dexie version 11): progression pauses on the days they cover
+   * (src/rules/downPeriod.ts). Optional for the same reason: a fixture without it has none.
+   */
+  downPeriods?: DownPeriod[]
 }
 
 /** Everything the engine reads, in one go. The tables are small: one person, twelve weeks. */
 export async function loadHistory(): Promise<History> {
-  const [workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots] = await Promise.all([
+  const [workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots, downPeriods] = await Promise.all([
     db.workouts.toArray(),
     db.setLogs.toArray(),
     db.morningChecks.toArray(),
@@ -483,26 +719,23 @@ export async function loadHistory(): Promise<History> {
     db.sessionMoves.toArray(),
     db.programOverrides.toArray(),
     db.addedSlots.toArray(),
+    db.downPeriods.toArray(),
   ])
-  return { workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots }
+  return { workouts, setLogs, morningChecks, runs, gateTests, sessionMoves, programOverrides, addedSlots, downPeriods }
 }
 
 /** The prefix the Session runner stores a workout's swaps under in local storage. */
 export const SWAP_KEY_PREFIX = 'knee-rebuild:swaps:'
 
 /**
- * Wipes every table, settings and gyms included, and seeds them again through the launch path:
- * `defaults` as the settings row, then the home gym from them (ensureLocations' `homeLocation`).
- * One transaction, so a seed that fails its parse erases nothing. Every table means the Program
- * screen's edits too, and the settings table holds `defaults` alone, so the export stamp's row
- * goes and no `lastExportedAt` survives (M6). The Settings screen asks twice before calling this.
+ * Wipes every table (M-U1): settings, gyms, the export stamp, the time zone and every log, and
+ * writes nothing in their place, so the app asks first run's questions again (PROGRAM-QUESTIONS
+ * 210). One transaction, so a failed clear erases nothing. The Settings screen asks twice before
+ * calling this. The runner's stored swaps go too.
  */
-export async function resetAll(defaults: Settings, lists: HomeLists, createdOn: IsoDate): Promise<void> {
-  const row = settingsRow(defaults)
+export async function resetAll(): Promise<void> {
   await db.transaction('rw', db.tables, async () => {
     for (const table of db.tables) await table.clear()
-    await db.settings.put(row)
-    await writeHome(lists, createdOn)
   })
   forgetSwaps()
 }

@@ -8,10 +8,12 @@ import { PLANET_FITNESS_LOCATION_ID, type EquipmentId, type IsoDate, type Locati
 export const HOME_ADDITIONS: readonly EquipmentId[] = ['seated-leg-press', 'leg-press-45', 'rower']
 
 /**
- * The home gym every install starts with (design section 2): Planet Fitness, started from its
- * list, with Shawn's additions and the dumbbell max he set before gyms existed. Pure, so
- * ensureLocations, resetAll and the M6 import all write the same row. `listVersion` is the seed's
- * `equipmentListVersion`, so items the program's list adds later read as new to this gym.
+ * The home gym as installs before M-U1 got it (design section 2): Planet Fitness, started from its
+ * list, with Shawn's additions and the dumbbell max set before gyms existed. Since M-U1 first run
+ * writes each phone's own home gym; this row is written only for a set-up phone that has none (one
+ * that ran version 2, before gyms) and for an imported file from before gyms, through
+ * `ensureLocations` (PROGRAM-QUESTIONS 211), and is a test fixture. Pure. `listVersion` is the
+ * seed's `equipmentListVersion`, so items the program's list adds later read as new to this gym.
  */
 export function homeLocation(dumbbellMax: number, planetFitness: readonly EquipmentId[], createdOn: IsoDate, listVersion: number): Location {
   return {

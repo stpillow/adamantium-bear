@@ -1,30 +1,38 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
-import { PROGRAM, availableAt, planSession, sessionExtensions, windowFit } from '../app/session.ts'
+import { PROGRAM, availableAt } from '../app/session.ts'
+import { useTimeZone } from '../app/timeZone.ts'
 import { useToday } from '../app/today.ts'
+import { takeNotice } from './firstRun.ts'
 import { Button } from '../components/Button.tsx'
 import { ReadingWord, readingSentence } from '../components/ReadingWord.tsx'
+import { Stepper } from '../components/Stepper.tsx'
 import { TimeWindow } from '../components/TimeWindow.tsx'
-import { isExtraSlotId } from '../rules/extensions.ts'
 import { Screen } from '../components/Screen.tsx'
-import { useActiveLocation, useHistory, useLocations, useSettings } from '../db/hooks.ts'
-import { clearMarkOff, putWorkout, reopenWorkout, setActiveLocation, writeWindow, type History } from '../db/repo.ts'
-import { addDays, nextLiftDate, scheduledSession } from '../rules/calendar.ts'
+import { useActiveLocation, useHistory, useKoosEntries, useLocations, useSettings } from '../db/hooks.ts'
+import { clearMarkOff, declareDownPeriod, endDownPeriod, extendDownPeriod, putWorkout, reopenWorkout, resumeDownPeriod, setActiveLocation, writeWindow, type History } from '../db/repo.ts'
+import { addDays, nextLiftDate, scheduledSession, todayIn } from '../rules/calendar.ts'
 import { gymToOffer, lastLoggedGym, liftGym } from '../rules/gymDay.ts'
 import { listedLocations } from '../rules/locations.ts'
 import type { EquipmentId, IsoDate, Location, Settings } from '../schema/index.ts'
 import { nextLiftWords } from './Preview.helpers.ts'
 import { openSettingsAtExport } from './Settings.tsx'
-import { windowWords } from './Window.helpers.ts'
 import {
   NEW_LOCATION_HASH,
   atGymWords,
+  declareWords,
+  downPeriodErrorWords,
   earlierPhaseWords,
+  extendWords,
+  pastMidnightWords,
+  pauseReplanWords,
   exportLine,
+  koosLine,
   gymRows,
-  liftChanges,
+  liftPlanView,
   markOffLines,
-  movesHeading,
+  modeLine,
   newWorkout,
   newWorkoutId,
   openWorkoutWords,
@@ -33,11 +41,14 @@ import {
   runWeekWords,
   startWords,
   todayView,
+  type DownPeriodView,
   type OpenWorkout,
+  type LoggedLine,
+  type TesterTodayBody,
   type TodayBody,
-  type TodayView,
   type YesterdayLine,
 } from './Today.helpers.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 
 const LABEL = 'font-mono text-small uppercase tracking-[0.22em] text-on-dark-muted'
 const SECTION = 'flex flex-col gap-4'
@@ -50,7 +61,7 @@ const BY_ID = new Map(PROGRAM.exercises.map((e) => [e.id, e]))
  */
 const CONTROL_ROW = 'flex items-center gap-x-2'
 
-type Lift = Extract<TodayBody, { kind: 'lift' }>
+type Lift = Extract<TodayBody, { kind: 'lift' }> | Extract<TesterTodayBody, { kind: 'lift' }>
 
 /**
  * The one thing he needs this morning: what today is, what it holds, how yesterday read, and a
@@ -58,10 +69,14 @@ type Lift = Extract<TodayBody, { kind: 'lift' }>
  */
 export function Today() {
   const today = useToday()
+  const timeZone = useTimeZone()
   const settings = useSettings()
   const history = useHistory()
   const activeLocation = useActiveLocation()
   const locations = useLocations()
+  // The KOOS entries feed only the quiet due line (Batch A); undefined while loading keeps the line off rather than wrong.
+  const koosEntries = useKoosEntries()
+  const engine = useEngineMode()
 
   if (settings === undefined || history === undefined || activeLocation === undefined || locations === undefined || (settings !== null && activeLocation === null)) {
     return (
@@ -72,42 +87,119 @@ export function Today() {
   }
   if (settings === null || activeLocation === null) {
     return (
-      <Screen title="Today" lead="No settings yet.">
-        <p className="text-body text-on-dark-dim">The injured side and the start date are set in Settings.</p>
-        <Button wide onClick={() => navigate({ name: 'settings' })}>
-          Settings
+      <Screen title="Today" lead="This phone isn’t set up yet.">
+        <p className="text-body text-on-dark-dim">The injured side, the start date and the home gym are set up first.</p>
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
         </Button>
       </Screen>
     )
   }
 
-  const view = todayView({ today, settings, history, program: PROGRAM })
+  const view = todayView({ mode: engine.mode, today, settings, history, program: PROGRAM })
+  if (view.written) {
+    // Tester mode (M-U3): the program as written and what was logged; no stop, no down period, no reading, no suggestion.
+    const body = view.body
+    return (
+      <Screen title="Today" lead={view.dateWords}>
+        <ModeLine line={modeLine(engine)} />
+        <ArrivedNotice />
+        <GymBlock active={activeLocation} locations={locations} />
+        <PhaseLine phaseNumber={view.phaseNumber} week={view.week} deload={view.deload} downPeriod={false} phaseName={view.phaseName} phaseHasSessions={view.phaseHasSessions} />
+        {body.kind === 'before-start' ? (
+          <BeforeStartBlock line={body.line} />
+        ) : body.kind === 'lift' ? (
+          <LiftBlock mode="tester" body={body} settings={settings} history={history} active={activeLocation} locations={locations} today={today} />
+        ) : body.kind === 'run' ? (
+          <WrittenRunBlock body={body} />
+        ) : (
+          <OffBlock label={body.label} />
+        )}
+        {body.kind === 'run' || body.kind === 'off' || body.kind === 'before-start' ? <NextLiftLink today={today} settings={settings} history={history} /> : null}
+        <OwnFlagsBlock notes={view.ownFlags} />
+        <OpenWorkoutsBlock open={view.open} active={activeLocation} locations={locations} />
+        <YesterdayLoggedBlock lines={view.yesterday} />
+        <KoosLine line={koosLine(koosEntries, today)} />
+        <ExportLine line={exportLine(settings.lastExportedAt, today, history, timeZone)} />
+      </Screen>
+    )
+  }
   if (view.body.kind === 'stop') {
     return (
       <Screen title="Today" lead={view.dateWords}>
         <StopBlock headline={view.body.headline} items={view.body.items} />
+        <LateFlagsBlock notes={view.lateFlags} offerCheck={false} />
       </Screen>
     )
   }
 
   return (
     <Screen title="Today" lead={view.dateWords}>
+      <ArrivedNotice />
       <GymBlock active={activeLocation} locations={locations} />
-      <PhaseLine view={view} />
+      <PhaseLine
+        phaseNumber={view.phaseNumber}
+        week={view.week}
+        deload={view.deload}
+        downPeriod={view.downPeriod?.kind === 'active' || view.downPeriod?.kind === 'ended-today'}
+        phaseName={view.phaseName}
+        phaseHasSessions={view.phaseHasSessions}
+      />
+      {view.downPeriod ? <DownPeriodBlock view={view.downPeriod} today={today} openToday={view.body.kind === 'lift' && view.body.workout?.status === 'in-progress' ? view.body.label : null} /> : null}
       {view.body.kind === 'before-start' ? (
         <BeforeStartBlock line={view.body.line} />
       ) : view.body.kind === 'lift' ? (
-        <LiftBlock body={view.body} settings={settings} history={history} active={activeLocation} locations={locations} today={today} />
+        <LiftBlock mode="full" body={view.body} settings={settings} history={history} active={activeLocation} locations={locations} today={today} />
       ) : view.body.kind === 'run' ? (
         <RunBlock body={view.body} gym={activeLocation} kit={settings.kit} />
       ) : (
         <OffBlock label={view.body.label} />
       )}
       {view.body.kind === 'run' || view.body.kind === 'off' || view.body.kind === 'before-start' ? <NextLiftLink today={today} settings={settings} history={history} /> : null}
+      <LateFlagsBlock notes={view.lateFlags} offerCheck />
       <OpenWorkoutsBlock open={view.open} active={activeLocation} locations={locations} />
       <YesterdayBlock lines={view.yesterday} />
-      <ExportLine line={exportLine(settings.lastExportedAt, today, history)} />
+      <KoosLine line={koosLine(koosEntries, today)} />
+      <ExportLine line={exportLine(settings.lastExportedAt, today, history, timeZone)} />
     </Screen>
+  )
+}
+
+/** What a first-run import did (M-U1), said once on the Today it opened onto; nothing otherwise. */
+function ArrivedNotice() {
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    const text = takeNotice('today')
+    if (text !== null) setNotice(text)
+  }, [])
+  return notice ? (
+    <p role="status" className="text-body text-on-dark wrap-anywhere">
+      {notice}
+    </p>
+  ) : null
+}
+
+/**
+ * A red flag ticked on a check logged late, for a past morning (Batch D, PROGRAM-QUESTIONS 175): a
+ * note in words, never the stop. Under the stop it adds no way out; otherwise it points to this
+ * morning's check, the one that can take over.
+ */
+function LateFlagsBlock({ notes, offerCheck }: { notes: string[]; offerCheck: boolean }) {
+  if (notes.length === 0) return null
+  return (
+    <section aria-label="Red flag on a past morning" className={SECTION}>
+      <h2 className={LABEL}>Red flag on a past morning</h2>
+      {notes.map((note) => (
+        <p key={note} className="text-body text-on-dark">
+          {note}
+        </p>
+      ))}
+      {offerCheck ? (
+        <Button wide onClick={() => navigate({ name: 'morning' })}>
+          This morning’s check
+        </Button>
+      ) : null}
+    </section>
   )
 }
 
@@ -231,7 +323,7 @@ function GymBlock({ active, locations }: { active: Location; locations: Location
   )
 }
 
-function PhaseLine({ view }: { view: TodayView }) {
+function PhaseLine(view: { phaseNumber: number; week: number | null; deload: boolean; downPeriod: boolean; phaseName: string; phaseHasSessions: boolean }) {
   return (
     <section aria-label="Phase and week" className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-3">
@@ -242,12 +334,203 @@ function PhaseLine({ view }: { view: TodayView }) {
         {view.deload ? (
           <span className="rounded-sm border border-on-dark-faint px-2 py-1 font-mono text-label uppercase tracking-[0.22em] text-on-dark">Deload week</span>
         ) : null}
+        {view.downPeriod ? (
+          <span className="rounded-sm border border-on-dark-faint px-2 py-1 font-mono text-label uppercase tracking-[0.22em] text-on-dark">Down period</span>
+        ) : null}
       </div>
       <p className="text-body text-on-dark-dim">{view.phaseName}</p>
       {!view.phaseHasSessions ? (
         <p className="text-body text-on-dark-dim">Phase {view.phaseNumber}’s sessions are not written yet; its gate criteria are all the app carries.</p>
       ) : null}
     </section>
+  )
+}
+
+/** Tester mode (M-U3): why nothing on screen is worked out from the logs, under the date. */
+function ModeLine({ line }: { line: string | null }) {
+  if (line === null) return null
+  return (
+    <p role="note" className="text-body text-on-dark wrap-anywhere">
+      {line}
+    </p>
+  )
+}
+
+/** Tester mode: a flag ticked on this morning's check, as the tester's own note in words (PROGRAM-QUESTIONS 228). */
+function OwnFlagsBlock({ notes }: { notes: string[] }) {
+  if (notes.length === 0) return null
+  return (
+    <section aria-label="Your note" className={SECTION}>
+      <h2 className={LABEL}>Your note</h2>
+      {notes.map((note) => (
+        <p key={note} className="text-body text-on-dark">
+          {note}
+        </p>
+      ))}
+    </section>
+  )
+}
+
+/** Tester mode: yesterday's sessions, logged, with no reading. */
+function YesterdayLoggedBlock({ lines }: { lines: LoggedLine[] }) {
+  if (lines.length === 0) return null
+  return (
+    <section aria-label="Yesterday" className="flex flex-col gap-3 border-t border-on-dark-faint pt-4">
+      <span className={LABEL}>Yesterday</span>
+      {lines.map((line, i) => (
+        <p key={`${line.label}:${i}`} className="text-body text-on-dark">
+          {line.words}
+        </p>
+      ))}
+    </section>
+  )
+}
+
+/** Tester mode: the run day as written (program.md's row note, verbatim) and the week's miles against the plan's number. */
+function WrittenRunBlock({ body }: { body: Extract<TesterTodayBody, { kind: 'run' }> }) {
+  return (
+    <section aria-label="Scheduled session" className={SECTION}>
+      <h2 className={HEADING}>{body.label}</h2>
+      {body.note ? <p className="text-body text-on-dark-dim">{body.note}</p> : null}
+      {body.loggedToday.length > 0 ? (
+        <p className="text-body text-on-dark">
+          ✓ Logged today: {body.loggedToday.map((r) => `${runLabel(r.type)}${r.miles > 0 ? `, ${r.miles} mi` : ''}`).join('; ')}.
+        </p>
+      ) : null}
+      <p className="text-small text-on-dark-dim">{runWeekWords(body)}</p>
+      <Button variant={body.loggedToday.length > 0 ? 'secondary' : 'primary'} wide onClick={() => navigate({ name: 'run' })}>
+        {body.loggedToday.length > 0 ? 'Log another run' : 'Log the run'}
+      </Button>
+    </section>
+  )
+}
+
+/**
+ * A down period (Batch E, PROGRAM-QUESTIONS 185): declared, made longer, ended or kept going here,
+ * the one place, since a period always starts today and its status lives here. Each form opens
+ * inline (no modal); each write asks the rule again in the repo, and a refusal is one sentence with
+ * the form left open. The date is read again at the tap, so a form left open past midnight never
+ * starts a period yesterday.
+ */
+function DownPeriodBlock({ view, today, openToday }: { view: DownPeriodView; today: IsoDate; openToday: string | null }) {
+  const timeZone = useTimeZone()
+  const noteId = useId()
+  const [open, setOpen] = useState<'declare' | 'extend' | null>(null)
+  const [days, setDays] = useState(view.kind === 'offer' ? view.defaultDays : 7)
+  const [longer, setLonger] = useState(view.kind === 'active' && view.extend ? view.extend.days + 1 : 0)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+
+  async function act(write: (now: IsoDate) => Promise<unknown>, after: string | null): Promise<void> {
+    const now = todayIn(new Date(), timeZone)
+    if (now !== today) {
+      setProblem(pastMidnightWords(now))
+      return
+    }
+    setBusy(true)
+    setProblem(null)
+    try {
+      await write(now)
+      setOpen(null)
+      setNote('')
+      setDone(after)
+    } catch (e) {
+      setProblem(downPeriodErrorWords(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section aria-label="Down period" className="flex flex-col gap-3">
+      {view.kind === 'offer' ? (
+        <>
+          <p className="text-body text-on-dark-dim">Not feeling 100%? Ill or run down, not the knee.</p>
+          {open !== 'declare' ? (
+            <Button wide onClick={() => { setOpen('declare'); setProblem(null); setDone(null) }}>
+              Pause progression
+            </Button>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-sm border border-on-dark-faint p-3">
+              <Stepper label="Days" value={days} min={view.minDays} max={view.maxDays} onChange={setDays} />
+              <p className="text-body text-on-dark-dim">{declareWords(today, days).line}</p>
+              <label htmlFor={noteId} className="text-body text-on-dark-dim">
+                Note <span className="text-on-dark-muted">(optional)</span>
+              </label>
+              <input id={noteId} type="text" autoComplete="off" enterKeyHint="done" maxLength={120} value={note} onChange={(e) => setNote(e.target.value)} className="tap w-full rounded-sm bg-ink px-3 text-body text-on-dark" />
+              <Button
+                variant="primary"
+                wide
+                disabled={busy}
+                onClick={() => void act((now) => declareDownPeriod({ today: now, days, declaredAt: new Date().toISOString(), ...(note.trim() ? { note } : {}) }), pauseReplanWords(openToday))}
+              >
+                {declareWords(today, days).button}
+              </Button>
+              <Button variant="quiet" wide disabled={busy} onClick={() => { setOpen(null); setProblem(null) }}>
+                Not now
+              </Button>
+            </div>
+          )}
+        </>
+      ) : view.kind === 'ahead' ? (
+        <p className="text-body text-on-dark-dim">{view.line}</p>
+      ) : (
+        <>
+          <p className="text-body text-on-dark">{view.line}</p>
+          {view.note ? <p className="text-body text-on-dark-dim wrap-anywhere">Note: {view.note}</p> : null}
+          {view.kind === 'ended-today' ? (
+            <Button wide disabled={busy} onClick={() => void act((now) => resumeDownPeriod(view.id, now), null)}>
+              Keep it going
+            </Button>
+          ) : (
+            <>
+              {view.lastDay ? <p className="text-body text-on-dark-dim">{view.lastDay}</p> : null}
+              {view.canEnd ? (
+                <Button wide disabled={busy} onClick={() => void act((now) => endDownPeriod(view.id, now), null)}>
+                  End it today
+                </Button>
+              ) : null}
+              {view.atCap ? <p className="text-body text-on-dark-dim">{view.atCap}</p> : null}
+              {view.extend && open !== 'extend' ? (
+                <Button variant="quiet" wide onClick={() => { setLonger(view.extend ? view.extend.days + 1 : longer); setOpen('extend'); setProblem(null) }}>
+                  Make it longer
+                </Button>
+              ) : null}
+              {view.extend && open === 'extend' ? (
+                <div className="flex flex-col gap-3 rounded-sm border border-on-dark-faint p-3">
+                  <Stepper label="Days in all" value={longer} min={view.extend.days + 1} max={view.extend.maxDays} onChange={setLonger} />
+                  <ExtendButton start={view.start} days={longer} busy={busy} onExtend={(end) => void act((now) => extendDownPeriod(view.id, end, now), null)} />
+                  <Button variant="quiet" wide disabled={busy} onClick={() => { setOpen(null); setProblem(null) }}>
+                    Not now
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </>
+      )}
+      {problem ? (
+        <p role="alert" className="text-body text-on-dark">
+          {problem}
+        </p>
+      ) : null}
+      {done ? (
+        <p role="status" className="text-body text-on-dark-dim">
+          {done}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+function ExtendButton({ start, days, busy, onExtend }: { start: IsoDate; days: number; busy: boolean; onExtend: (end: IsoDate) => void }) {
+  const { end, button } = extendWords(start, days)
+  return (
+    <Button variant="primary" wide disabled={busy} onClick={() => onExtend(end)}>
+      {button}
+    </Button>
   )
 }
 
@@ -264,6 +547,7 @@ function BeforeStartBlock({ line }: { line: string }) {
 }
 
 function LiftBlock({
+  mode,
   body,
   settings,
   history,
@@ -271,6 +555,7 @@ function LiftBlock({
   locations,
   today,
 }: {
+  mode: EngineMode
   body: Lift
   settings: Settings
   history: History
@@ -291,6 +576,14 @@ function LiftBlock({
   // logged lift ran at (Nov 6), else the active gym, and Shawn can pick another here before Start.
   const offered = gymToOffer(lastLoggedGym(history.workouts, loggedIds, locations), active)
   const gym = workout === null ? (listed.find((l) => l.id === pickedId) ?? offered) : liftGym(workout, active, locations)
+  const showsPlan = template !== null && workout?.status !== 'finished' && !(workout?.status === 'abandoned' && body.earlierPhase !== null)
+  const week = workout?.week ?? body.week
+  const before = workout?.date ?? today
+  // The gym's changes and the time window, for the mode (`liftPlanView`): the engine's plan in full mode, the written session for a tester.
+  const plan = useMemo(
+    () => (showsPlan && template ? liftPlanView(mode, { template, week, settings, history, gym, before, minutes, label, byId: BY_ID, items: PROGRAM.equipment }) : null),
+    [showsPlan, mode, template, week, settings, history, gym, before, minutes, label],
+  )
 
   const start = async () => {
     if (!template) return
@@ -355,7 +648,7 @@ function LiftBlock({
           </Button>
         </>
       ) : workout?.status === 'finished' ? (
-        <FinishedBlock body={body} />
+        <FinishedBlock label={body.label} reading={'reading' in body ? body.reading : null} checkDone={'checkDone' in body ? body.checkDone : true} />
       ) : workout?.status === 'abandoned' && body.earlierPhase !== null ? (
         // Ended early before the phase advanced: the day's lift is this one, so there is no second lift to start (PROGRAM-QUESTIONS 117).
         <p className="text-body text-on-dark-dim">{earlierPhaseWords(label, body.earlierPhase, PROGRAM.phases, settings.currentPhase)}</p>
@@ -366,16 +659,14 @@ function LiftBlock({
           ) : workout?.status === 'abandoned' ? (
             <p className="text-body text-on-dark-dim">{label} was left early today; what was logged is kept. Resume to carry on in the same session.</p>
           ) : null}
-          <MovesBlock template={template} week={workout?.week ?? body.week} before={workout?.date ?? today} label={label} gym={gym} settings={settings} history={history} />
+          {plan ? <MovesBlock plan={plan} /> : null}
           {workout === null ? (
             <Button variant="quiet" onClick={() => navigate({ name: 'preview', date: today })}>
               See the session first
             </Button>
           ) : null}
           {workout === null && listed.length > 1 ? <WhereBlock gyms={listed} chosen={gym.id} onPick={setPickedId} /> : null}
-          {workout?.status !== 'in-progress' ? (
-            <FitBlock template={template} week={workout?.week ?? body.week} before={workout?.date ?? today} gym={gym} settings={settings} history={history} minutes={minutes} onChange={setMinutes} />
-          ) : null}
+          {workout?.status !== 'in-progress' && plan ? <TimeWindow minutes={minutes} onChange={setMinutes} lines={plan.window} /> : null}
           <Button variant="primary" wide className="wrap-anywhere" disabled={busy} onClick={() => void start()}>
             {busy ? 'Saving…' : startWords(label, workout, gym, active)}
           </Button>
@@ -392,30 +683,14 @@ function LiftBlock({
 
 /**
  * What changes at the session's gym, in words: read off the plan the runner runs there (the same
- * history, gym and date), so a slot its history moved, or the rack moves or caps, says so here too.
+ * history, gym and date; `liftPlanView`), so a slot its history moved, or the rack moves or caps, says
+ * so here too. In tester mode, the routes alone.
  */
-function MovesBlock({
-  template,
-  week,
-  before,
-  label,
-  gym,
-  settings,
-  history,
-}: {
-  template: NonNullable<Lift['template']>
-  week: number
-  before: IsoDate
-  label: string
-  gym: Location
-  settings: Settings
-  history: History
-}) {
-  const plans = planSession({ template, week, settings, history, gym: { location: gym, kit: settings.kit }, before })
-  const moves = liftChanges({ plans, byId: BY_ID, items: PROGRAM.equipment, rackLb: gym.dumbbellMaxLb })
+function MovesBlock({ plan }: { plan: { movesHeading: string; moves: string[] } }) {
+  const { moves } = plan
   return (
     <div className="flex flex-col gap-2">
-      <p className={`wrap-anywhere ${moves.length === 0 ? 'text-small text-on-dark-muted' : 'text-body text-on-dark'}`}>{movesHeading(gym.name, label, moves.length)}</p>
+      <p className={`wrap-anywhere ${moves.length === 0 ? 'text-small text-on-dark-muted' : 'text-body text-on-dark'}`}>{plan.movesHeading}</p>
       {moves.length > 0 ? (
         <ul className="flex list-disc flex-col gap-1 pl-6">
           {moves.map((move, i) => (
@@ -456,44 +731,17 @@ function WhereBlock({ gyms, chosen, onPick }: { gyms: readonly Location[]; chose
   )
 }
 
-/** "Time you have" before Start: the plan's estimate and what fits (`windowFit`), in words. */
-function FitBlock({
-  template,
-  week,
-  before,
-  gym,
-  settings,
-  history,
-  minutes,
-  onChange,
-}: {
-  template: NonNullable<Lift['template']>
-  week: number
-  before: IsoDate
-  gym: Location
-  settings: Settings
-  history: History
-  minutes: number | null
-  onChange: (minutes: number | null) => void
-}) {
-  const extend = useMemo(() => sessionExtensions(template, history, settings, week), [template, history, settings, week])
-  const plans = useMemo(() => planSession({ template, week, settings, history, gym: { location: gym, kit: settings.kit }, before, extend }), [template, week, settings, history, gym, before, extend])
-  const fit = windowFit(plans, settings.restTimerSeconds, minutes)
-  const nameOf = (slotId: string) => plans.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId
-  return <TimeWindow minutes={minutes} onChange={onChange} lines={windowWords(fit, minutes, plans.filter((p) => !isExtraSlotId(p.slot.id)).length, nameOf)} />
-}
-
-function FinishedBlock({ body }: { body: Lift }) {
+function FinishedBlock({ label, reading, checkDone }: { label: string; reading: { result: Parameters<typeof readingSentence>[0] } | null; checkDone: boolean }) {
   return (
     <>
-      <p className="text-body text-on-dark">{body.label} is done for today.</p>
-      {body.reading ? (
+      <p className="text-body text-on-dark">{label} is done for today.</p>
+      {reading ? (
         <div className="flex flex-col gap-1">
-          <ReadingWord result={body.reading.result} />
-          <p className="text-small text-on-dark-dim">{readingSentence(body.reading.result)}</p>
+          <ReadingWord result={reading.result} />
+          <p className="text-small text-on-dark-dim">{readingSentence(reading.result)}</p>
         </div>
       ) : null}
-      {!body.checkDone ? <p className="text-small text-on-dark-muted">Tomorrow’s morning check completes this reading.</p> : null}
+      {!checkDone ? <p className="text-small text-on-dark-muted">Tomorrow’s morning check completes this reading.</p> : null}
       <Button wide onClick={() => navigate({ name: 'morning' })}>
         Morning check
       </Button>
@@ -582,6 +830,22 @@ function YesterdayBlock({ lines }: { lines: YesterdayLine[] }) {
           </Button>
         </>
       ) : null}
+    </section>
+  )
+}
+
+/** One quiet line once a KOOS check is 28+ days overdue (Batch A), with the way to the form; it carries no score — scores show on Progress only. */
+function KoosLine({ line }: { line: string | null }) {
+  if (line === null) return null
+  return (
+    <section aria-label="KOOS check" className={CONTROL_ROW}>
+      <span className="min-w-0 text-small text-on-dark-muted">{line}</span>
+      <span aria-hidden="true" className="shrink-0 text-small text-on-dark-muted">
+        ·
+      </span>
+      <Button variant="quiet" className="shrink-0" onClick={() => navigate({ name: 'koos' })}>
+        Open the form
+      </Button>
     </section>
   )
 }

@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { IsoDate } from './enums.ts'
+import { DEFAULT_TIME_ZONE, IsoDate, KnownTimeZone, MORNING_TAGS, MorningTag, TimeZone, isKnownTimeZone } from './enums.ts'
 import { REST_MAX, REST_MIN } from '../screens/Settings.helpers.ts'
 import {
+  ACL_RSI_MAX,
+  ACL_RSI_MIN,
+  AclRsiEntry,
   DEFAULT_KIT,
+  DOWN_PERIOD_MAX_DAYS,
+  DOWN_PERIOD_MIN_DAYS,
+  DOWN_PERIOD_NOTE_MAX,
+  DownPeriod,
   DURATION_MAX,
   DURATION_MIN,
+  KOOS_MAX,
+  KOOS_MIN,
+  KoosEntry,
   EXTRA_TEXT_MAX,
   HR_MAX_MAX,
   HR_MAX_MIN,
@@ -12,6 +22,8 @@ import {
   HR_RESTING_MIN,
   HrSettings,
   Location,
+  TIME_ZONE_ID,
+  TimeZoneSetting,
   MorningCheck,
   PLANET_FITNESS_LOCATION_ID,
   REST_TIMER_MAX,
@@ -294,5 +306,167 @@ describe('metrics phase 3: a VO2 max reading is a dated whole number, one per da
     expect(Vo2Reading.safeParse({ date: '2026-13-45', vo2: 42 }).success).toBe(false)
     expect(Vo2Reading.safeParse({ date: '2026-11-07' }).success).toBe(false)
     expect(Vo2Reading.safeParse({ vo2: 42 }).success).toBe(false)
+  })
+})
+
+describe('Batch A: a KOOS entry is 42 optional ticked boxes, 0 to 4, one entry per day', () => {
+  const KOOS_FIELDS = [
+    'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9',
+    'sy1', 'sy2', 'sy3', 'sy4', 'sy5', 'sy6', 'sy7',
+    'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10', 'a11', 'a12', 'a13', 'a14', 'a15', 'a16', 'a17',
+    'sp1', 'sp2', 'sp3', 'sp4', 'sp5',
+    'q1', 'q2', 'q3', 'q4',
+  ] as const
+  it('pins the bounds and the 42 field names: 9 pain, 7 symptoms, 17 ADL, 5 sport, 4 QOL', () => {
+    expect([KOOS_MIN, KOOS_MAX]).toEqual([0, 4])
+    expect(KOOS_FIELDS).toHaveLength(42)
+    expect(Object.keys(KoosEntry.shape)).toEqual(['date', ...KOOS_FIELDS])
+  })
+  it('takes answers 0 to 4, the edges included, and every item may be skipped', () => {
+    expect(KoosEntry.parse({ date: '2026-11-08' })).toEqual({ date: '2026-11-08' })
+    expect(KoosEntry.parse({ date: '2026-11-08', p1: 0, sy4: 4, a17: 2, sp5: 3, q1: 1 })).toEqual({ date: '2026-11-08', p1: 0, sy4: 4, a17: 2, sp5: 3, q1: 1 })
+    const full = Object.fromEntries(KOOS_FIELDS.map((f, i) => [f, i % 5]))
+    expect(KoosEntry.safeParse({ date: '2026-11-08', ...full }).success).toBe(true)
+  })
+  it('refuses outside 0 to 4 and anything not whole, never clamping', () => {
+    for (const p1 of [-1, 5, 2.5]) expect(KoosEntry.safeParse({ date: '2026-11-08', p1 }).success, String(p1)).toBe(false)
+  })
+  it('is strict: a key it doesn’t know or a bad date is refused', () => {
+    expect(KoosEntry.safeParse({ date: '2026-11-08', p10: 2 }).success).toBe(false)
+    expect(KoosEntry.safeParse({ date: '2026-11-08', score: 90 }).success).toBe(false)
+    expect(KoosEntry.safeParse({ date: '2026-13-45', p1: 2 }).success).toBe(false)
+    expect(KoosEntry.safeParse({ p1: 2 }).success).toBe(false)
+  })
+})
+
+describe('Batch A: an ACL-RSI entry is 12 required answers, 0 to 10, one entry per day', () => {
+  const ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12'] as const
+  const full = (value: number): Record<string, unknown> => ({ date: '2026-11-08', ...Object.fromEntries(ITEMS.map((f) => [f, value])) })
+  it('pins the bounds and the 12 field names', () => {
+    expect([ACL_RSI_MIN, ACL_RSI_MAX]).toEqual([0, 10])
+    expect(Object.keys(AclRsiEntry.shape)).toEqual(['date', ...ITEMS])
+  })
+  it('takes answers 0 to 10, the edges included, and needs all 12: the published scale has no missing-data rule', () => {
+    expect(AclRsiEntry.safeParse(full(0)).success).toBe(true)
+    expect(AclRsiEntry.safeParse(full(10)).success).toBe(true)
+    const { i7: _skip, ...missing } = full(7)
+    void _skip
+    expect(AclRsiEntry.safeParse(missing).success).toBe(false)
+  })
+  it('refuses outside 0 to 10 and anything not whole, never clamping', () => {
+    for (const i1 of [-1, 11, 7.5]) expect(AclRsiEntry.safeParse({ ...full(5), i1 }).success, String(i1)).toBe(false)
+  })
+  it('is strict: a key it doesn’t know or a bad date is refused', () => {
+    expect(AclRsiEntry.safeParse({ ...full(5), i13: 5 }).success).toBe(false)
+    expect(AclRsiEntry.safeParse({ ...full(5), score: 76 }).success).toBe(false)
+    expect(AclRsiEntry.safeParse({ ...full(5), date: '2026-13-45' }).success).toBe(false)
+  })
+})
+
+describe('Batch D: a morning check may carry fixed tags and, for a past morning, the day it was logged', () => {
+  const v9 = { id: 'mc-2026-11-18', date: '2026-11-18', appliesTo: { kind: 'workout', id: '2026-11-17-p1-a' }, stiffnessUnder30Min: true, worseThanYesterday: false, visibleSwelling: false, warmth: false, painChangePoints: 0, redFlags: [] }
+  it('reads a check stored before Batch D unchanged: no tags, no loggedOn', () => {
+    const parsed = MorningCheck.parse(v9)
+    expect(parsed).toEqual(v9)
+    expect('tags' in parsed).toBe(false)
+    expect('loggedOn' in parsed).toBe(false)
+  })
+  it('pins the six tags in the form’s order', () => {
+    expect(MORNING_TAGS).toEqual(['poor-sleep', 'long-sitting', 'on-feet', 'brace', 'nsaid', 'new-shoes'])
+    expect(MorningTag.options).toBe(MORNING_TAGS)
+  })
+  it('takes known tags, each once', () => {
+    expect(MorningCheck.safeParse({ ...v9, tags: ['poor-sleep'] }).success).toBe(true)
+    expect(MorningCheck.safeParse({ ...v9, tags: ['nsaid', 'brace', 'poor-sleep'] }).success).toBe(true)
+  })
+  it('refuses an unknown tag, a repeated tag and an empty list (absent is the one way to say none)', () => {
+    expect(MorningCheck.safeParse({ ...v9, tags: ['hangover'] }).success).toBe(false)
+    expect(MorningCheck.safeParse({ ...v9, tags: ['brace', 'brace'] }).success).toBe(false)
+    expect(MorningCheck.safeParse({ ...v9, tags: [] }).success).toBe(false)
+  })
+  it('takes loggedOn only after the morning it describes', () => {
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-20' }).success).toBe(true)
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-19' }).success).toBe(true)
+    const same = MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-18' })
+    expect(same.success).toBe(false)
+    expect(same.error?.issues[0]?.message).toBe('a check logged late is logged after the morning it describes')
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-11-17' }).success).toBe(false)
+    expect(MorningCheck.safeParse({ ...v9, loggedOn: '2026-02-30' }).success).toBe(false)
+  })
+  it('keeps its shape for the backup test’s field list', () => {
+    expect(Object.keys(MorningCheck.shape)).toEqual(['id', 'date', 'appliesTo', 'stiffnessUnder30Min', 'worseThanYesterday', 'visibleSwelling', 'warmth', 'painChangePoints', 'redFlags', 'notes', 'tags', 'loggedOn'])
+  })
+})
+
+describe('DownPeriod (Batch E)', () => {
+  const row = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T08:00:00-05:00' }
+  it('takes a period of 3 to 14 days, counted from its start', () => {
+    expect(DownPeriod.safeParse(row).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-16' }).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-27' }).success).toBe(true)
+    expect(DOWN_PERIOD_MIN_DAYS).toBe(3)
+    expect(DOWN_PERIOD_MAX_DAYS).toBe(14)
+  })
+  it('refuses a period under 3 days, over 14, or ending before it starts', () => {
+    const short = DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-15' })
+    expect(short.success).toBe(false)
+    expect(short.error?.issues[0]?.message).toBe('a down period runs 3 to 14 days from its start')
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-28' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, plannedEnd: '2026-11-13' }).success).toBe(false)
+  })
+  it('takes an early end from its start to the day before its planned end', () => {
+    expect(DownPeriod.safeParse({ ...row, endedOn: '2026-11-14' }).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, endedOn: '2026-11-19' }).success).toBe(true)
+    const late = DownPeriod.safeParse({ ...row, endedOn: '2026-11-20' })
+    expect(late.success).toBe(false)
+    expect(late.error?.issues[0]?.message).toBe('a down period ends early on a day from its start to the day before its planned end')
+    expect(DownPeriod.safeParse({ ...row, endedOn: '2026-11-13' }).success).toBe(false)
+  })
+  it('takes a short note of plain text, trimmed', () => {
+    expect(DownPeriod.parse({ ...row, note: '  Flu  ' }).note).toBe('Flu')
+    expect(DownPeriod.safeParse({ ...row, note: 'x'.repeat(DOWN_PERIOD_NOTE_MAX) }).success).toBe(true)
+    expect(DownPeriod.safeParse({ ...row, note: 'x'.repeat(DOWN_PERIOD_NOTE_MAX + 1) }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, note: '   ' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, note: 'two\nlines' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, note: '​' }).success).toBe(false)
+  })
+  it('refuses a key it doesn’t keep, and a bad date or stamp', () => {
+    expect(DownPeriod.safeParse({ ...row, reason: 'flu' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, start: '2026-02-30' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, declaredAt: '2026-11-14' }).success).toBe(false)
+    expect(DownPeriod.safeParse({ ...row, id: '' }).success).toBe(false)
+  })
+  it('keeps its shape for the backup test’s field list', () => {
+    expect(Object.keys(DownPeriod.shape)).toEqual(['id', 'start', 'plannedEnd', 'endedOn', 'declaredAt', 'note'])
+  })
+})
+
+describe('M-U1: the time zone, a one-row table of its own (PROGRAM-QUESTIONS 203, 204)', () => {
+  it('defaults to New York, Shawn’s zone', () => {
+    expect(DEFAULT_TIME_ZONE).toBe('America/New_York')
+  })
+  it('takes zone names by shape, and asks the phone’s zone data only at use', () => {
+    for (const zone of ['America/New_York', 'UTC', 'Asia/Calcutta', 'Europe/London', 'America/Argentina/Buenos_Aires', 'Etc/GMT+5']) {
+      expect(TimeZone.safeParse(zone).success, zone).toBe(true)
+      expect(KnownTimeZone.safeParse(zone).success, zone).toBe(true)
+      expect(isKnownTimeZone(zone), zone).toBe(true)
+    }
+    for (const zone of ['', 'a'.repeat(65), 'America/New York', '/UTC', 'America//X', 'a/b/c/d', 'New_York\n']) {
+      expect(TimeZone.safeParse(zone).success, zone).toBe(false)
+      expect(isKnownTimeZone(zone), zone).toBe(false)
+    }
+    // The right shape, a zone no phone knows: a stored row or a file may hold it; Settings and first run refuse it.
+    expect(TimeZone.safeParse('Not/AZone').success).toBe(true)
+    expect(isKnownTimeZone('Not/AZone')).toBe(false)
+    expect(KnownTimeZone.safeParse('Not/AZone').success).toBe(false)
+  })
+  it('holds one row keyed time-zone, nothing else', () => {
+    expect(TimeZoneSetting.parse({ id: TIME_ZONE_ID, zone: 'America/Los_Angeles' })).toEqual({ id: 'time-zone', zone: 'America/Los_Angeles' })
+    expect(TimeZoneSetting.safeParse({ id: 'tz', zone: 'UTC' }).success).toBe(false)
+    expect(TimeZoneSetting.safeParse({ id: TIME_ZONE_ID, zone: 'UTC', note: 'x' }).success).toBe(false)
+    expect(TimeZoneSetting.safeParse({ id: TIME_ZONE_ID }).success).toBe(false)
+  })
+  it('the settings row gains no key for it: an older build still reads the row (PROGRAM-QUESTIONS 132)', () => {
+    expect(Object.keys(Settings.shape).sort()).toEqual(['activeLocationId', 'currentPhase', 'dumbbellMax', 'injuredSide', 'kit', 'lastExportedAt', 'painPerSet', 'phaseEnteredWeek', 'redFlag', 'restTimerSeconds', 'startDate'])
   })
 })

@@ -1,0 +1,82 @@
+{
+ "result": {
+  "39446750": {
+   "uid": "39446750",
+   "pubdate": "2024 Dec 1",
+   "sortpubdate": "2024/12/01 00:00",
+   "title": "Resistance Training Prescription During Planned Deloading Periods: A Survey of Strength and Conditioning Coaches Across Varying Sporting Codes.",
+   "fulljournalname": "Journal of strength and conditioning research",
+   "source": "J Strength Cond Res",
+   "pubtype": [
+    "Journal Article"
+   ],
+   "elocationid": "doi: 10.1519/JSC.0000000000004932",
+   "authors": [
+    {
+     "name": "De Marco K"
+    },
+    {
+     "name": "Goods PSR"
+    },
+    {
+     "name": "Baldwin KM"
+    },
+    {
+     "name": "Hiscock DJ"
+    },
+    {
+     "name": "Scott BR"
+    }
+   ]
+  },
+  "41730991": {
+   "uid": "41730991",
+   "pubdate": "2026 Feb 24",
+   "sortpubdate": "2026/02/24 00:00",
+   "title": "Effects of deload periods in resistance training on muscle hypertrophy and strength endurance in untrained young men using a randomized within subject design.",
+   "fulljournalname": "Scientific reports",
+   "source": "Sci Rep",
+   "pubtype": [
+    "Journal Article",
+    "Randomized Controlled Trial"
+   ],
+   "elocationid": "doi: 10.1038/s41598-026-40612-5",
+   "authors": [
+    {
+     "name": "Pancar Z"
+    },
+    {
+     "name": "Ilhan MT"
+    },
+    {
+     "name": "Darendeli MK"
+    },
+    {
+     "name": "Karaca B"
+    },
+    {
+     "name": "Ikidag MA"
+    },
+    {
+     "name": "Tasdogan AM"
+    },
+    {
+     "name": "Ulema MS"
+    },
+    {
+     "name": "Alkhamees NH"
+    },
+    {
+     "name": "Al-Mhanna SB"
+    },
+    {
+     "name": "Batrakoulis A"
+    }
+   ]
+  },
+  "uids": [
+   "41730991",
+   "39446750"
+  ]
+ }
+}

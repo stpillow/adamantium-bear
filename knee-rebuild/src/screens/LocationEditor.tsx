@@ -1,40 +1,30 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate, replaceRoute } from '../app/router.ts'
 import { PROGRAM, availableAt } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
+import { Choice, Note, Section } from '../components/FormParts.tsx'
 import { Screen } from '../components/Screen.tsx'
-import { Stepper } from '../components/Stepper.tsx'
-import { Tap } from '../components/Tap.tsx'
-import { useActiveLocation, useLocations, useProgramOverrides, useSettings } from '../db/hooks.ts'
+import { useActiveLocation, useDownPeriods, useLocations, useProgramOverrides, useSettings } from '../db/hooks.ts'
 import { addExtra, addLocation, markOff, removeExtra, renameLocation, setActiveLocation, setDumbbellMax, setKit, setPresent } from '../db/repo.ts'
-import { equipmentChecklist, usedEquipment, type Available } from '../rules/equipment.ts'
+import { usedEquipment, type Available } from '../rules/equipment.ts'
 import { extraTooLong } from '../rules/locations.ts'
 import { itemOutcome, notHereWrite, typedOutcome, type TypedOutcome } from '../rules/whereYouTrain.ts'
-import type { EquipmentId, IsoDate, Location, ProgramOverride, Settings } from '../schema/index.ts'
+import type { DownPeriod, EquipmentId, IsoDate, Location, ProgramOverride, Settings } from '../schema/index.ts'
 import {
   DEFAULT_START,
   KEEP_AS_TYPED,
-  RACK_MAX,
-  RACK_MIN,
-  RACK_PRESETS,
-  RACK_STEP,
   START_CHOICES,
   changesView,
-  checklistSections,
   coverageWeek,
   extraTooLongWords,
   keptRows,
   kitAfter,
-  kitRows,
   markedWords,
   nameCheck,
   nameCountWords,
   outcomeWords,
-  rackChoiceWords,
-  rackGridNote,
-  rackNote,
-  rackSaved,
   removedExtraWords,
   removeExtraAsk,
   startWords,
@@ -43,8 +33,8 @@ import {
   type KeptRow,
 } from './LocationEditor.helpers.ts'
 import { failedWords } from './Locations.helpers.ts'
+import { EquipmentChecklist, KitList, RackPicker } from './location/parts.tsx'
 
-const CHECKLIST = equipmentChecklist(PROGRAM.equipment, PROGRAM.exercises)
 const USED = usedEquipment(PROGRAM.exercises)
 const BY_ID = new Map(PROGRAM.exercises.map((e) => [e.id, e]))
 const FLASH_MS = 1500
@@ -68,12 +58,16 @@ export function LocationEditor({ locationId }: { locationId: string | null }) {
   const active = useActiveLocation()
   // The Program screen's edits: "What this changes" reads the lists the sessions run.
   const overrides = useProgramOverrides()
+  // A down period holds the phase-week bands, so "What this changes" reads the slots Today plans (PROGRAM-QUESTIONS 188).
+  const downPeriods = useDownPeriods()
 
-  if (locations === undefined || settings === undefined || active === undefined || overrides === undefined) return <Opening />
+  if (locations === undefined || settings === undefined || active === undefined || overrides === undefined || downPeriods === undefined) return <Opening />
   if (settings === null || active === null) {
     return (
-      <Screen title="Location" lead="No gyms yet.">
-        <p className="text-body text-on-dark-dim">Open the app from Today once so it can write the home gym, then come back.</p>
+      <Screen title="Location" lead="This phone isn’t set up yet.">
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
+        </Button>
       </Screen>
     )
   }
@@ -89,7 +83,7 @@ export function LocationEditor({ locationId }: { locationId: string | null }) {
       </Screen>
     )
   }
-  return <EditLocation key={location.id} location={location} locations={locations} settings={settings} activeId={active.id} overrides={overrides} />
+  return <EditLocation key={location.id} location={location} locations={locations} settings={settings} activeId={active.id} overrides={overrides} downPeriods={downPeriods} />
 }
 
 function Opening() {
@@ -195,13 +189,16 @@ function EditLocation({
   settings,
   activeId,
   overrides,
+  downPeriods,
 }: {
   location: Location
   locations: Location[]
   settings: Settings
   activeId: string
   overrides: readonly ProgramOverride[]
+  downPeriods: readonly DownPeriod[]
 }) {
+  const { mode } = useEngineMode()
   const today = useToday()
   const [savedField, flashSaved] = useFlash()
   const [problem, setProblem] = useState<Problem>(null)
@@ -230,11 +227,10 @@ function EditLocation({
   const problemFor = (field: Field) => (problem?.field === field ? problem.text : null)
   const available = availableAt({ location, kit: settings.kit })
   const isActive = location.id === activeId
-  const sections = checklistSections({ checklist: CHECKLIST, location, available, byId: BY_ID, vocabulary: PROGRAM.equipment, table: PROGRAM.substitutionTable })
   const changes = changesView({
     templates: templatesAsRun(settings, overrides),
     phase: settings.currentPhase,
-    phaseWeek: coverageWeek(settings, today),
+    phaseWeek: coverageWeek(settings, today, downPeriods, mode),
     phaseEnteredWeek: settings.phaseEnteredWeek,
     byId: BY_ID,
     available,
@@ -279,18 +275,13 @@ function EditLocation({
         <RackDraft stored={location.dumbbellMaxLb} onSave={(lb) => run('rack', () => setDumbbellMax(location.id, lb))} />
       </Section>
 
-      {sections.map((s) => (
-        <Section key={s.group} label={s.group} saved={savedField === `group:${s.group}`} problem={problemFor(`group:${s.group}`)}>
-          {s.rows.map((row) => (
-            <div key={row.id} className="flex flex-col gap-1">
-              <Tap label={row.label} value={row.here} yes="Here" no="Not here" onChange={(here) => mark(s.group, row.id, here)} />
-              {row.notes.map((line) => (
-                <Note key={line}>{line}</Note>
-              ))}
-            </div>
-          ))}
-        </Section>
-      ))}
+      <EquipmentChecklist
+        location={location}
+        kit={settings.kit}
+        onToggle={mark}
+        saved={(group) => savedField === `group:${group}`}
+        problem={(group) => problemFor(`group:${group}`)}
+      />
 
       <Section label="In your bag (every gym)" saved={savedField === 'kit'} problem={problemFor('kit')}>
         <KitDraft stored={settings.kit} onSave={(kit) => run('kit', () => setKit(kit))} />
@@ -430,31 +421,6 @@ function RackDraft({ stored, onSave }: { stored: number; onSave: (lb: number) =>
   return <RackPicker value={value} onChange={(lb) => void change(lb)} />
 }
 
-/** None, 25, 50, 60, 75, 80, or any rack by 5 lb on the stepper; a weight typed in between saves as the 5 lb below it (`rackValue`). */
-function RackPicker({ value, onChange: save }: { value: number; onChange: (lb: number) => void }) {
-  const onChange = (lb: number) => save(rackSaved(lb))
-  return (
-    <>
-      <div role="radiogroup" aria-label="Heaviest dumbbell" className="grid grid-cols-3 gap-2">
-        {RACK_PRESETS.map((lb) => (
-          <Choice
-            key={lb}
-            compact
-            label={rackChoiceWords(lb)}
-            selected={value === lb}
-            onSelect={() => {
-              if (value !== lb) onChange(lb)
-            }}
-          />
-        ))}
-      </div>
-      <Stepper label="Heaviest dumbbell" unit="lb" value={value} step={RACK_STEP} min={RACK_MIN} max={RACK_MAX} onChange={onChange} />
-      <Note>{rackNote(value)}</Note>
-      <Note>{rackGridNote}</Note>
-    </>
-  )
-}
-
 /** The bag, with a draft in front of the stored kit so a second tap builds on the first. */
 function KitDraft({ stored, onSave }: { stored: readonly EquipmentId[]; onSave: (kit: EquipmentId[]) => Promise<boolean> }) {
   const [kit, setKitDraft] = useState<readonly EquipmentId[]>(stored)
@@ -478,13 +444,7 @@ function KitDraft({ stored, onSave }: { stored: readonly EquipmentId[]; onSave: 
       setKitDraft(stored)
     }
   }
-  return (
-    <div className="flex flex-col gap-2">
-      {kitRows(PROGRAM.equipment, kit).map((row) => (
-        <Tap key={row.id} label={row.name} value={row.inBag} yes="In the bag" no="Not in the bag" onChange={(inBag) => void change(row.id, inBag)} />
-      ))}
-    </div>
-  )
+  return <KitList kit={kit} onChange={(id, inBag) => void change(id, inBag)} />
 }
 
 type Typed = { typed: string; outcome: TypedOutcome; words: string }
@@ -708,57 +668,4 @@ function useFlash(): [Field | null, (field: Field) => void] {
     timer.current = window.setTimeout(() => setField(null), FLASH_MS)
   }
   return [field, flash]
-}
-
-/** A labelled group with a Saved word on its label row and a problem sentence under it. */
-function Section({ label, saved, problem, children }: { label: string; saved: boolean; problem: string | null; children: ReactNode }) {
-  return (
-    <section aria-label={label} className="flex flex-col gap-3 border-t border-on-dark-faint pt-4">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="font-mono text-small font-normal uppercase tracking-[0.22em] text-on-dark-muted">{label}</h2>
-        <span role="status" aria-live="polite" className="font-mono text-small uppercase tracking-[0.22em] text-green-bright">
-          {saved ? '✓ Saved' : ''}
-        </span>
-      </div>
-      {children}
-      {problem ? (
-        <p role="alert" className="text-body text-on-dark wrap-anywhere">
-          {problem}
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
-function Note({ children }: { children: ReactNode }) {
-  return <p className="text-small text-on-dark-muted">{children}</p>
-}
-
-/** One of several choices: the chosen one says so with a mark (and, wide, a word), never by color alone. */
-function Choice({ label, selected, onSelect, compact = false }: { label: string; selected: boolean; onSelect: () => void; compact?: boolean }) {
-  // The mark keeps to one line beside a label that wraps ("✓" over "Chosen" read as two marks).
-  const mark = <span className="shrink-0 whitespace-nowrap font-mono text-small uppercase tracking-[0.22em]">{selected ? (compact ? '✓' : '✓ Chosen') : '○'}</span>
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={onSelect}
-      className={`tap flex w-full items-center rounded-sm border px-4 py-3 text-body ${compact ? 'justify-center gap-2' : 'justify-between gap-4 text-left'} ${
-        selected ? 'border-paper bg-navy-lift text-on-dark' : 'border-on-dark-faint bg-transparent text-on-dark-dim'
-      }`}
-    >
-      {compact ? (
-        <>
-          {mark}
-          <span>{label}</span>
-        </>
-      ) : (
-        <>
-          <span className="min-w-0">{label}</span>
-          {mark}
-        </>
-      )}
-    </button>
-  )
 }

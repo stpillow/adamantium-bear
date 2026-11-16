@@ -1,0 +1,46 @@
+{
+ "hitCount": 1,
+ "resultList": {
+  "result": [
+   {
+    "id": "17307888",
+    "source": "MED",
+    "pmid": "17307888",
+    "doi": "10.1177/0363546506298279",
+    "title": "Continued sports activity, using a pain-monitoring model, during rehabilitation in patients with Achilles tendinopathy: a randomized controlled study.",
+    "authorString": "Silbernagel KG, Thomeé R, Eriksson BI, Karlsson J.",
+    "pubYear": "2007",
+    "pubTypeList": {
+     "pubType": [
+      "Research Support, Non-U.S. Gov't",
+      "Randomized Controlled Trial",
+      "Journal Article"
+     ]
+    },
+    "commentCorrectionList": {
+     "commentCorrection": [
+      {
+       "source": "MED",
+       "id": "17581977",
+       "reference": "Am J Sports Med. 2007 Jul;35(7):1208; author reply 1208-9. doi: 10.1177/0363546507303564.",
+       "type": "Comment in",
+       "orderIn": 1
+      },
+      {
+       "source": "MED",
+       "id": "18469580",
+       "reference": "Clin J Sport Med. 2008 May;18(3):303-4. doi: 10.1097/01.jsm.0000248841.86132.a0.",
+       "type": "Comment in",
+       "orderIn": 2
+      }
+     ]
+    },
+    "journalInfo": {
+     "journal": {
+      "title": "The American journal of sports medicine"
+     }
+    }
+   }
+  ]
+ }
+}

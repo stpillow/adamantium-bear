@@ -8,8 +8,11 @@ import { HEADING, LABEL, Note, Problem } from './parts.tsx'
 import { AddedExercises } from './AddedExercises.tsx'
 import { SlotEditor, editFailedWords, saveSlotEdit } from './SlotEditor.tsx'
 
-/** The current phase's sessions, A then B then C, each slot read-only with an Edit that opens its editor in place. */
-export function PhaseSessions({ screen, overrides, added, today }: { screen: PhaseScreen; overrides: readonly ProgramOverride[]; added: readonly AddedSlot[]; today: IsoDate }) {
+/**
+ * The current phase's sessions, A then B then C, each slot read-only with an Edit that opens its
+ * editor in place. With `canEdit` false (tester mode, M-U3), read-only throughout: no Edit and no Add exercise.
+ */
+export function PhaseSessions({ screen, overrides, added, today, canEdit }: { screen: PhaseScreen; overrides: readonly ProgramOverride[]; added: readonly AddedSlot[]; today: IsoDate; canEdit: boolean }) {
   // One editor open at a time; leaving a cue's field saves it, and a new cue not yet added stays with its slot, so opening another loses nothing.
   const [open, setOpen] = useState<string | null>(null)
   const bySlot = overridesBySlot(overrides)
@@ -23,10 +26,10 @@ export function PhaseSessions({ screen, overrides, added, today }: { screen: Pha
           <h2 className={HEADING}>{session.heading}</h2>
           <ol className="flex flex-col gap-6">
             {session.rows.map((row) => (
-              <SlotCard key={row.id} row={row} override={bySlot.get(row.id)} today={today} open={open === row.id} onToggle={() => setOpen((o) => (o === row.id ? null : row.id))} />
+              <SlotCard key={row.id} row={row} override={bySlot.get(row.id)} today={today} canEdit={canEdit} open={canEdit && open === row.id} onToggle={() => setOpen((o) => (o === row.id ? null : row.id))} />
             ))}
           </ol>
-          <AddedExercises templateId={session.templateId} heading={session.heading} added={added} today={today} />
+          {canEdit ? <AddedExercises templateId={session.templateId} heading={session.heading} added={added} today={today} /> : null}
         </section>
       ))}
     </div>
@@ -43,7 +46,7 @@ function useSlotDraft<K extends keyof SlotDraft>(slotId: string, part: K): [Slot
   return [value, setValue]
 }
 
-function SlotCard({ row, override, today, open, onToggle }: { row: SlotRow; override: ProgramOverride | undefined; today: IsoDate; open: boolean; onToggle: () => void }) {
+function SlotCard({ row, override, today, canEdit, open, onToggle }: { row: SlotRow; override: ProgramOverride | undefined; today: IsoDate; canEdit: boolean; open: boolean; onToggle: () => void }) {
   // The editor's last refusal or failed save, kept under the slot once Done editing closes it (the
   // tap that closes it is often the one that left a refused field), until the editor opens again.
   const [standing, setStanding] = useSlotDraft(row.id, 'standing')
@@ -137,9 +140,11 @@ function SlotCard({ row, override, today, open, onToggle }: { row: SlotRow; over
         <SlotEditor slot={row.slot} override={override} today={today} onStanding={setStanding} newCue={newCue} onNewCue={setNewCue} removed={removed} onRemoved={setRemoved} />
       ) : null}
       {/* One button under the slot or its editor, the same element either way, so focus stays on it. */}
-      <Button ref={buttonRef} wide aria-expanded={open} aria-label={`${open ? 'Done editing' : 'Edit cues and substitutions for'} ${row.exerciseName}, slot ${row.label}`} onClick={toggle}>
-        {open ? 'Done editing' : 'Edit cues and substitutions'}
-      </Button>
+      {canEdit ? (
+        <Button ref={buttonRef} wide aria-expanded={open} aria-label={`${open ? 'Done editing' : 'Edit cues and substitutions for'} ${row.exerciseName}, slot ${row.label}`} onClick={toggle}>
+          {open ? 'Done editing' : 'Edit cues and substitutions'}
+        </Button>
+      ) : null}
       {!open && standing ? <Problem>{standing}</Problem> : null}
       {unadded ? (
         <p role="status" className="text-body text-on-dark wrap-anywhere">

@@ -1,0 +1,69 @@
+{
+ "hitCount": 16,
+ "nextCursorMark": "AoJwwL6U4YwDKDQ5OTkyOTc5",
+ "resultList": {
+  "result": [
+   {
+    "id": "41730991",
+    "source": "MED",
+    "pmid": "41730991",
+    "pmcid": "PMC13031491",
+    "doi": "10.1038/s41598-026-40612-5",
+    "title": "Effects of deload periods in resistance training on muscle hypertrophy and strength endurance in untrained young men using a randomized within subject design.",
+    "authorString": "Pancar Z, Ilhan MT, Darendeli MK, Karaca B, Ikidag MA, Tasdogan AM, Ulema MS, Alkhamees NH, Al-Mhanna SB, Batrakoulis A.",
+    "journalTitle": "Sci Rep",
+    "pubYear": "2026",
+    "firstPublicationDate": "2026-02-24",
+    "pubType": "research-article; randomized controlled trial; journal article"
+   },
+   {
+    "id": "IND609282051",
+    "source": "AGR",
+    "title": "Two-stage decentralized coordinated deloading control of large-scale wind farm with adaptive kinetic energy storage method",
+    "authorString": "Wei L, Wei J, Huang S, Li C, Wang B, Wang S.",
+    "journalTitle": "Applied Energy",
+    "pubYear": "2025",
+    "firstPublicationDate": "2025-12-01",
+    "pubType": "journal article"
+   },
+   {
+    "id": "39446750",
+    "source": "MED",
+    "pmid": "39446750",
+    "doi": "10.1519/jsc.0000000000004932",
+    "title": "Resistance Training Prescription During Planned Deloading Periods: A Survey of Strength and Conditioning Coaches Across Varying Sporting Codes.",
+    "authorString": "De Marco K, Goods PSR, Baldwin KM, Hiscock DJ, Scott BR.",
+    "journalTitle": "J Strength Cond Res",
+    "pubYear": "2024",
+    "firstPublicationDate": "2024-10-24",
+    "pubType": "journal article"
+   },
+   {
+    "id": "38499934",
+    "source": "MED",
+    "pmid": "38499934",
+    "pmcid": "PMC10948666",
+    "doi": "10.1186/s40798-024-00691-y",
+    "title": "Deloading Practices in Strength and Physique Sports: A Cross-sectional Survey.",
+    "authorString": "Rogerson D, Nolan D, Androulakis Korakakis P, Immonen V, Wolf M, Bell L.",
+    "journalTitle": "Sports Med Open",
+    "pubYear": "2024",
+    "firstPublicationDate": "2024-03-18",
+    "pubType": "research-article; journal article"
+   },
+   {
+    "id": "38274324",
+    "source": "MED",
+    "pmid": "38274324",
+    "pmcid": "PMC10809978",
+    "doi": "10.7717/peerj.16777",
+    "title": "Gaining more from doing less? The effects of a one-week deload period during supervised resistance training on muscular adaptations.",
+    "authorString": "Coleman M, Burke R, Augustin F, Piñero A, Maldonado J, Fisher JP, Israetel M, Androulakis Korakakis P, Swinton P, Oberlin D, Schoenfeld BJ.",
+    "journalTitle": "PeerJ",
+    "pubYear": "2024",
+    "firstPublicationDate": "2024-01-22",
+    "pubType": "research support, non-u.s. gov't; research-article; randomized controlled trial; journal article"
+   }
+  ]
+ }
+}

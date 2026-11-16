@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM, availableAt } from '../app/session.ts'
 import { takeDraft } from '../app/strava.ts'
@@ -15,6 +16,7 @@ import { runSwapGym } from '../rules/gymDay.ts'
 import { listedLocations } from '../rules/locations.ts'
 import type { IsoDate, Location, Run, RunType, Settings } from '../schema/index.ts'
 import { noSwapSuggestedWords, runLabel } from './Today.helpers.ts'
+import { lateCheckOffer } from './MorningCheck.helpers.ts'
 import {
   MILES_MAX,
   MILES_STEP,
@@ -37,6 +39,7 @@ import {
   loggerView,
   newRunId,
   noSuggestionWords,
+  painRequiredWords,
   formFromDraft,
   openForm,
   reasonSentence,
@@ -89,8 +92,10 @@ export function RunLogger() {
   }
   if (settings === null || activeLocation === null) {
     return (
-      <Screen title={TITLE} lead="No settings yet.">
-        <p className="text-body text-on-dark-dim">Open the app from Today once so it can seed its settings, then come back.</p>
+      <Screen title={TITLE} lead="This phone isn’t set up yet.">
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
+        </Button>
       </Screen>
     )
   }
@@ -109,6 +114,7 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
   const [error, setError] = useState<string | null>(null)
   // Shawn's max and resting HR (metrics phase 2): only the saved screen's HR-load line reads them here.
   const hrSettings = useHrSettings()
+  const { mode } = useEngineMode()
 
   // A swap is judged and stored at the gym it was done at: today's at the active gym; an earlier day's
   // at the gym picked for it, else that day's lift's gym, else the active one (runSwapGym).
@@ -117,7 +123,7 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
   const gymId = runSwapGym({ date, today, activeId: active.id, listed, workouts: history.workouts, picked: form.gymPick })
   const location = listed.find((l) => l.id === gymId) ?? active
   const gym = { name: location.name, available: availableAt({ location, kit: settings.kit }) }
-  const view = loggerView({ today, picked: { date: form.date, type: form.type }, settings, history, program: PROGRAM, gym })
+  const view = loggerView({ mode, today, picked: { date: form.date, type: form.type }, settings, history, program: PROGRAM, gym })
   if (view.kind === 'before-start') {
     return (
       <Screen title={TITLE} lead={view.line}>
@@ -136,14 +142,21 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
 
   if (saved) {
     const hrLine = hrLoadWords(saved, hrSettings ?? null)
+    // The run just saved may not be in the live history yet; the offer reads it either way (Batch D).
+    const late = lateCheckOffer({ date: saved.date, today, startDate: settings.startDate, history: { ...history, runs: [...history.runs.filter((r) => r.id !== saved.id), saved] } })
     return (
-      <Screen title={TITLE} lead={loggedWords(saved, today, history.morningChecks)}>
+      <Screen title={TITLE} lead={loggedWords(mode, saved, today, history.morningChecks, late !== null)}>
         {/* The HR load (TRIMP) beside the sRPE words, only when the run and Settings can compute one; absent says nothing, never 0. */}
         {hrLine ? <p className="text-body text-on-dark">{hrLine}</p> : null}
         <p role="status" className="text-body text-on-dark">
           {weekLine(view.summary, null)}
         </p>
         <div className="flex flex-col gap-3">
+          {late ? (
+            <Button wide onClick={() => navigate({ name: 'morning', date: late.morning })}>
+              {late.label}
+            </Button>
+          ) : null}
           <Button variant="primary" wide onClick={() => navigate({ name: 'today' })}>
             Today
           </Button>
@@ -204,7 +217,7 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
               <Choice key={date} compact label={dayChoiceWords(date, today)} selected={!view.dateLost && view.date === date} onSelect={() => set({ date })} />
             ))}
           </div>
-          <Note>{dayChoicesNote()}</Note>
+          <Note>{dayChoicesNote(mode)}</Note>
         </Section>
       ) : null}
 
@@ -228,7 +241,7 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
         {cue ? <p className="text-body text-on-dark-dim">{cue}</p> : null}
       </Section>
 
-      <SuggestionBlock view={view} today={today} onTake={(type) => set({ type })} />
+      {view.written ? <WrittenBlock note={view.written.note} /> : <SuggestionBlock view={view} today={today} onTake={(type) => set({ type })} />}
 
       <Section label="Distance and time">
         {resolved.swap ? (
@@ -250,7 +263,7 @@ function Logger({ today, settings, history, active, locations }: { today: IsoDat
 
       <Section label="Pain">
         <ScalePicker label="Max pain during the run" value={resolved.maxPain} options={PAIN_SCALE} onChange={(maxPain) => set({ maxPain })} />
-        <Note>Required: an unrated run is unknown, and unknown is not clean.</Note>
+        <Note>{painRequiredWords(mode)}</Note>
       </Section>
 
       <Section label="Heart rate">
@@ -350,6 +363,15 @@ function StopBlock({ headline, items }: { headline: string; items: string[] }) {
       </ul>
       <p className="text-body text-on-dark">Progression is suspended until this is cleared in Settings, with a note. A run you did still logs here.</p>
     </section>
+  )
+}
+
+/** Tester mode (M-U3): program.md's own note for the day, as written; nothing is suggested or preset. */
+function WrittenBlock({ note }: { note: string | null }) {
+  return (
+    <Section label="As written">
+      <p className="text-body text-on-dark-dim">{note ?? 'program.md writes no note for this day.'} Log what you did.</p>
+    </Section>
   )
 }
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { phaseWeekFor } from '../app/session.ts'
 import { homeLocation } from '../db/migrations.ts'
+import { weekOf } from '../rules/calendar.ts'
+import { newDownPeriod } from '../rules/downPeriod.ts'
 import { program } from '../program/program.ts'
 import { availableEquipment, equipmentChecklist, usedEquipment } from '../rules/equipment.ts'
 import { newLocation } from '../rules/locations.ts'
@@ -117,8 +120,8 @@ describe('start and rack choices', () => {
   it("preselects Planet Fitness's list and offers starting empty", () => {
     expect(DEFAULT_START).toBe('planet-fitness')
     expect(START_CHOICES.map((c) => c.label)).toEqual(['Start from Planet Fitness’s list', 'Start empty'])
-    // program.md's list, not Shawn's club: a new gym gets no 45° leg press (PROGRAM-QUESTIONS 71).
-    expect(startWords('planet-fitness')).toBe('Everything on program.md’s Planet Fitness list is marked here to start; your own club’s extras, like its 45° leg press, aren’t copied. Untick what this gym lacks.')
+    // program.md's list and nothing else: a new gym gets no 45° leg press (PROGRAM-QUESTIONS 71); the words name no one's club (M-U1, PROGRAM-QUESTIONS 211).
+    expect(startWords('planet-fitness')).toBe('Everything on program.md’s Planet Fitness list is marked here to start, and nothing else is. Untick what this gym lacks; tick what it adds.')
     expect(startWords('empty')).toBe('Nothing is marked here to start; tick what this gym has.')
     expect(startedFromWords('empty')).toBe('Started empty.')
     expect(startedFromWords('planet-fitness')).toBe('Started from Planet Fitness’s list.')
@@ -251,7 +254,10 @@ describe('Something else here?', () => {
   it('keeps what no exercise uses, in its own words', () => {
     expect(words('Kettlebells')).toBe('No exercise in the program uses kettlebells. Kept for the next program.md update.')
     expect(words('TRX')).toBe('No exercise in the program uses TRX. Kept for the next program.md update.')
-    expect(words('shoulder press')).toBe('Shoulder press machine is on program.md’s list, but no session uses it. Kept for the next program.md update.')
+    expect(words('treadmill')).toBe('Treadmill is on program.md’s list, but no session uses it. Kept for the next program.md update.')
+    // The overhead press machine uses it now (Batch C, PROGRAM-QUESTIONS 172): typed, it reads as an item the program uses.
+    expect(at('shoulder press')).toEqual({ kind: 'mark', id: 'shoulder-press-machine' })
+    expect(words('shoulder press')).toBe('Matches Shoulder press machine. Mark it here?')
   })
 
   it("sends the bag and the rack to their sections, and asks for text when there is none", () => {
@@ -269,9 +275,34 @@ describe('Something else here?', () => {
 
 describe('What this changes', () => {
   it("reads today's week of the phase, from week 1 before the start", () => {
-    expect(coverageWeek(settings(), '2026-10-30')).toBe(1)
-    expect(coverageWeek(settings(), '2026-11-18')).toBe(3)
-    expect(coverageWeek(settings({ currentPhase: 2, phaseEnteredWeek: 5 }), '2026-12-16')).toBe(3)
+    expect(coverageWeek(settings(), '2026-10-30', [], 'full')).toBe(1)
+    expect(coverageWeek(settings(), '2026-11-18', [], 'full')).toBe(3)
+    expect(coverageWeek(settings({ currentPhase: 2, phaseEnteredWeek: 5 }), '2026-12-16', [], 'full')).toBe(3)
+  })
+
+  it('reads the band a down period holds, as Today and the plan read it (PROGRAM-QUESTIONS 188)', () => {
+    // Phase 3 entered in week 8; a period Sat Jan 2 to Fri Jan 8, 2027: Tue Jan 5 is the calendar's phase week 3, held at 2.
+    const phaseThree = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
+    const period = newDownPeriod({ today: '2027-01-02', days: 7, declaredAt: '2027-01-02T13:00:00.000Z' })
+    expect(coverageWeek(phaseThree, '2027-01-05', [period], 'full')).toBe(2)
+    expect(coverageWeek(phaseThree, '2027-01-05', [], 'full')).toBe(3)
+    const history = { downPeriods: [period] }
+    for (const [date, week] of [['2027-01-01', 9], ['2027-01-05', 10], ['2027-01-09', 10], ['2027-01-12', 11], ['2027-01-19', 12]] as const) {
+      expect(coverageWeek(phaseThree, date, [period], 'full'), date).toBe(phaseWeekFor(week, phaseThree, history, date))
+    }
+  })
+
+  it('reads the calendar’s week in tester mode: a stored period holds no band and the engine is not asked (M-U3, PROGRAM-QUESTIONS 231)', () => {
+    // Phase 3 entered in week 4, a period Dec 5 to 8, 2026; Sat Dec 12 is the calendar's phase week 3, held at 2 in full mode.
+    const phaseThree = settings({ currentPhase: 3, phaseEnteredWeek: 4 })
+    const period = newDownPeriod({ today: '2026-12-05', days: 4, declaredAt: '2026-12-05T13:00:00.000Z' })
+    expect(coverageWeek(phaseThree, '2026-12-12', [period], 'full')).toBe(2)
+    expect(coverageWeek(phaseThree, '2026-12-12', [period], 'tester')).toBe(3)
+    expect(coverageWeek(phaseThree, '2026-12-12', [], 'tester')).toBe(3)
+    // The week Today's written session and the Program screen read for a tester.
+    for (const date of ['2026-11-04', '2026-12-06', '2026-12-12', '2027-01-05']) {
+      expect(coverageWeek(phaseThree, date, [period], 'tester'), date).toBe(phaseWeekFor(weekOf(date, phaseThree.startDate), phaseThree, { downPeriods: [period] }))
+    }
   })
 
   it("takes the current phase's three sessions, and none in Phase 4", () => {

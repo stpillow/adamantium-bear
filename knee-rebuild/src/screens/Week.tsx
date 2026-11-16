@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
@@ -24,6 +25,7 @@ export function Week() {
   const today = useToday()
   const settings = useSettings()
   const history = useHistory()
+  const { mode } = useEngineMode()
   /** Null follows the current week, so the screen opens on it and keeps up when the week turns. */
   const [selected, setSelected] = useState<number | null>(null)
   /** The day whose session is being moved, waiting for the day it goes to. */
@@ -51,7 +53,7 @@ export function Week() {
     )
   }
 
-  const view = weekView({ today, selected, settings, history, program: PROGRAM })
+  const view = weekView({ mode, today, selected, settings, history, program: PROGRAM })
   const movingRow = moving ? (view.days.find((d) => d.day === moving) ?? null) : null
   const moveIds = history.sessionMoves.map((m) => m.id)
   const busy = pending !== null
@@ -118,6 +120,11 @@ export function Week() {
         <h2 className={HEADING}>Miles</h2>
         <p className="text-lead text-on-dark">{view.miles}</p>
         <p className={view.capped ? 'text-body text-on-dark' : 'text-small text-on-dark-muted'}>{view.target}</p>
+        {view.downPeriods.map((line) => (
+          <p key={line} className="text-body text-on-dark-dim">
+            {line}
+          </p>
+        ))}
       </section>
 
       <section aria-label="Days" className={SECTION}>
@@ -235,6 +242,7 @@ function DayItem({
           {row.statusWord}
         </span>
         {row.reading ? <ReadingWord result={row.reading} /> : null}
+        {row.downPeriod ? <span className="rounded-sm border border-on-dark-faint px-2 font-mono text-label uppercase tracking-[0.22em] text-on-dark-dim">{row.downPeriod}</span> : null}
       </span>
       {row.logged.length > 0 ? <span className="text-small text-on-dark-dim">Logged: {row.logged.join(' · ')}</span> : null}
       {row.checkNote ? <span className="text-small text-on-dark-muted">{row.checkNote}.</span> : null}
@@ -252,16 +260,27 @@ function DayItem({
     else navigate({ name: 'run' })
   }
 
+  // A past day missing its morning check offers it (Batch D): a quiet button under the row, never
+  // inside the row's own button; hidden while a move waits, when a tap is meant for the move.
+  const late = moving === null ? row.lateCheck : null
   return (
-    <li className={`flex items-start gap-3 border-t border-on-dark-faint py-3 ${row.isToday ? 'border-l-2 border-l-paper pl-3' : ''}`}>
-      {action ? (
-        <button type="button" onClick={() => open(action)} className="tap flex flex-1 flex-col items-start gap-1 rounded-sm text-left">
-          {body}
-        </button>
-      ) : (
-        <div className="flex flex-1 flex-col gap-1">{body}</div>
-      )}
-      <MoveControl row={row} moving={moving} busy={busy} saving={saving} onMove={onMove} onCancel={onCancel} onSwap={onSwap} />
+    <li className={`flex flex-col gap-2 border-t border-on-dark-faint py-3 ${row.isToday ? 'border-l-2 border-l-paper pl-3' : ''}`}>
+      <div className="flex items-start gap-3">
+        {action ? (
+          <button type="button" onClick={() => open(action)} className="tap flex flex-1 flex-col items-start gap-1 rounded-sm text-left">
+            {body}
+          </button>
+        ) : (
+          <div className="flex flex-1 flex-col gap-1">{body}</div>
+        )}
+        <MoveControl row={row} moving={moving} busy={busy} saving={saving} onMove={onMove} onCancel={onCancel} onSwap={onSwap} />
+      </div>
+      {row.lateFlagNote ? <p className="text-small text-on-dark">{row.lateFlagNote}.</p> : null}
+      {late ? (
+        <Button variant="quiet" className="self-start" onClick={() => navigate({ name: 'morning', date: late.morning })}>
+          {late.label}
+        </Button>
+      ) : null}
     </li>
   )
 }

@@ -1,12 +1,16 @@
 import type { History } from '../db/repo.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
+import { ownFlagNote, writtenWeekMiles } from '../rules/written.ts'
 import { DAYS, addDays, dateOf, isDeloadWeek, weekOf, weekSchedule } from '../rules/calendar.ts'
 import { attachChecks, subjectReadings } from '../rules/history.ts'
 import { isSwap } from '../rules/mileage.ts'
 import { dayMovable, undoableMove, type MoveContext } from '../rules/moves.ts'
 import { morningCheckApplies, worst } from '../rules/reading.ts'
-import { stopMessage } from '../rules/redFlags.ts'
+import { lateFlagNote, stopMessage } from '../rules/redFlags.ts'
+import { downPeriodWords, isPaused, lastPausedDay } from '../rules/downPeriod.ts'
 import { readingsInWeek, runTypeFor, weekDays, weekMilesSummary, type DayStatus, type WeekDay, type WeekMiles } from '../rules/weekPlan.ts'
-import type { Day, DaySession, IsoDate, MorningCheck, Program, ReadingResult, SessionMove, SessionTemplate, Settings, WeeklyTemplate, Workout } from '../schema/index.ts'
+import type { Day, DaySession, DownPeriod, IsoDate, MorningCheck, Program, ReadingResult, SessionMove, SessionTemplate, Settings, WeeklyTemplate, Workout } from '../schema/index.ts'
+import { lateCheckOffer, weekLateFlagWords, weekOwnFlagWords } from './MorningCheck.helpers.ts'
 import { timeWords } from './RunLogger.helpers.ts'
 import { runLabel, sessionLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
@@ -17,7 +21,7 @@ import { runLabel, sessionLabel, shortDateWords, workoutLabel } from './Today.he
  * of src/rules; this file only composes the answers and names them.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves' | 'downPeriods'>
 export type ProgramLike = Pick<Program, 'weeklyTemplate' | 'weeklyTemplateRows' | 'mileagePlan' | 'templates' | 'redFlags'>
 
 /** The program's length: the screen pages through weeks 1 to 12, and on to the current week once past it. */
@@ -119,6 +123,10 @@ export function targetWords(summary: WeekMiles, previousReadings: readonly Readi
   const { target, capped, reason } = summary.target
   if (target === null) return `No target: ${reason}`
   if (!capped) return 'Target from the plan'
+  // A down period's hold or climb back (Batch E, PROGRAM-QUESTIONS 183) is said before rule 7's cap: it is the lower number.
+  const down = summary.target.downPeriod
+  if (down?.kind === 'held') return `Held at last week’s ${plural(target, 'mile')}: a down period covers the start of this week`
+  if (down?.kind === 'climbing') return `Up one plan step from last week’s ${plural(down.lastWeek, 'mile')}, after a down period`
   const read = worst(previousReadings) === 'back-off' ? 'back off' : 'hold'
   if (previousIsThisWeek) return `Capped at this week’s ${plural(target, 'mile')} so far: this week read ${read}`
   return `Capped at last week’s ${plural(target, 'mile')}: last week read ${read}`
@@ -182,6 +190,13 @@ export function checkNote(day: Pick<WeekDay, 'date' | 'runs' | 'workouts'>, chec
   const missing = subjects.some((s) => !checks.some((c) => morningCheckApplies(c, s)))
   if (!missing) return null
   return day.date >= addDays(today, -1) ? 'Morning check not done yet; until then it reads hold at best' : 'No morning check was logged for it'
+}
+
+/** The red flag on the next morning's check, when that check was logged late: a note on the session day's row, kept for good. */
+export function dayLateFlagNote(date: IsoDate, checks: readonly MorningCheck[], catalog: ProgramLike['redFlags']): string | null {
+  const morning = addDays(date, 1)
+  const note = checks.map((c) => (c.date === morning ? lateFlagNote(c, catalog) : null)).find((n) => n !== null)
+  return note ? weekLateFlagWords(note) : null
 }
 
 /** The week's own moves, in the order the engine applies them. A move of a day onto itself changes nothing. */
@@ -273,6 +288,12 @@ export interface DayRow {
   reading: ReadingResult | null
   logged: string[]
   checkNote: string | null
+  /** A past day missing its morning check, inside the 14 days: the button that logs it late (Batch D). */
+  lateCheck: { morning: IsoDate; label: string } | null
+  /** A red flag on the next morning's check, logged late: a note, never the stop (Batch D). */
+  lateFlagNote: string | null
+  /** "Down period" on a day one covers (Batch E): progression paused for that day's plan. */
+  downPeriod: string | null
   action: DayAction | null
   /** A quiet Move sits on every day that is not off and has nothing logged, in a week not yet over. */
   movable: boolean
@@ -302,18 +323,48 @@ export interface WeekView {
   /** Shown under the moves when earlier ones are kept: only the latest can be undone. */
   undoNote: string | null
   stop: { headline: string; items: string[] } | null
+  /** The down periods that touch this week, as history, in words (Batch E): "Down period: Saturday Nov 14 to Friday Nov 20 (7 days)". */
+  downPeriods: string[]
 }
 
-/** Everything the Week screen renders, from today, the week picked (null for the current one), the settings, the history and the program. */
-export function weekView(input: { today: IsoDate; selected: number | null; settings: Settings; history: HistoryLike; program: ProgramLike }): WeekView {
+/** The down periods touching a week, in start order, in words. */
+export function weekDownPeriodLines(startDate: IsoDate, week: number, periods: readonly DownPeriod[]): string[] {
+  const first = dateOf(startDate, week, 'mon')
+  const last = dateOf(startDate, week, 'sun')
+  return [...periods]
+    .filter((p) => p.start <= last && lastPausedDay(p) >= first)
+    .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+    .map((p) => `Down period: ${downPeriodWords(p)}`)
+}
+
+/** The tester's own note on the session day's row, from a flag ticked on the next morning's check (tester mode). */
+export function dayOwnFlagNote(date: IsoDate, checks: readonly MorningCheck[], catalog: ProgramLike['redFlags']): string | null {
+  const morning = addDays(date, 1)
+  const check = checks.find((c) => c.date === morning)
+  const note = check ? ownFlagNote(check, catalog) : null
+  return note ? weekOwnFlagWords(note) : null
+}
+
+/** The target line in tester mode: the plan's number, or the plan's own words outside it. */
+export function writtenTargetWords(summary: WeekMiles): string {
+  return summary.target.target === null ? `No target: ${summary.target.reason}` : 'Target from the plan'
+}
+
+/**
+ * Everything the Week screen renders, from today, the week picked (null for the current one), the
+ * settings, the history and the program. In tester mode (M-U3): no reading or check note on a row,
+ * the plan's own target, no stop, no down periods, a ticked flag as the tester's own note; no engine call.
+ */
+export function weekView(input: { mode: EngineMode; today: IsoDate; selected: number | null; settings: Settings; history: HistoryLike; program: ProgramLike }): WeekView {
   const { today, settings, history, program } = input
   const { startDate } = settings
   const currentWeek = weekOf(today, startDate)
   const week = shownWeek(input.selected, currentWeek)
-  const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
-  const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
-  const summary = weekMilesSummary(program.mileagePlan, week, startDate, history.runs, readings)
-  const previous = readingsInWeek(readings, startDate, week - 1).map((r) => r.result)
+  const tester = input.mode === 'tester'
+  const readings = tester ? [] : subjectReadings(attachChecks(history.workouts, history.setLogs, history.morningChecks), history.runs, history.morningChecks, settings.injuredSide)
+  const periods = tester ? [] : (history.downPeriods ?? [])
+  const summary = tester ? writtenWeekMiles(program.mileagePlan, week, startDate, history.runs) : weekMilesSummary(program.mileagePlan, week, startDate, history.runs, readings, periods)
+  const previous = tester ? [] : readingsInWeek(readings, startDate, week - 1).map((r) => r.result)
   const days = weekDays({ startDate, week, today, template: program.weeklyTemplate, moves: history.sessionMoves, runs: history.runs, workouts: history.workouts, readings })
   const { prev, next } = neighbourWeeks(week, currentWeek)
   const moveCtx: MoveContext = { startDate, week, currentWeek, runs: history.runs, workouts: history.workouts }
@@ -331,7 +382,7 @@ export function weekView(input: { today: IsoDate; selected: number | null; setti
     prev,
     next,
     miles: milesWords(summary),
-    target: targetWords(summary, previous, currentWeek >= 1 && week - 1 === currentWeek),
+    target: tester ? writtenTargetWords(summary) : targetWords(summary, previous, currentWeek >= 1 && week - 1 === currentWeek),
     capped: summary.target.capped,
     days: days.map((d) => {
       const { mark, word } = STATUS_WORDS[d.status]
@@ -350,7 +401,10 @@ export function weekView(input: { today: IsoDate; selected: number | null; setti
         statusWord: word,
         reading: d.reading,
         logged: loggedWords(d, program.templates),
-        checkNote: d.reading ? checkNote(d, history.morningChecks, today) : null,
+        checkNote: !tester && d.reading ? checkNote(d, history.morningChecks, today) : null,
+        lateCheck: lateCheckOffer({ date: d.date, today, startDate, history }),
+        lateFlagNote: tester ? dayOwnFlagNote(d.date, history.morningChecks, program.redFlags) : dayLateFlagNote(d.date, history.morningChecks, program.redFlags),
+        downPeriod: !tester && isPaused(d.date, periods) ? 'Down period' : null,
         action: dayAction(d, today),
         movable: free && d.session !== 'off',
         swappable: free,
@@ -360,6 +414,7 @@ export function weekView(input: { today: IsoDate; selected: number | null; setti
     moves,
     moveNote: weekOver ? 'That week is over; its days stay as they happened.' : null,
     undoNote: moves.length > 1 || (moves.length === 1 && undoable === null) ? undoWords(undoable, weekOver) : null,
-    stop: stopMessage(settings.redFlag, program.redFlags),
+    stop: tester ? null : stopMessage(settings.redFlag, program.redFlags),
+    downPeriods: tester ? [] : weekDownPeriodLines(startDate, week, periods),
   }
 }

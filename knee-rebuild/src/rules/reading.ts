@@ -78,7 +78,7 @@ export function sessionReading(sets: readonly SetLog[], injuredSide?: Side): Rea
   return { result: 'clean', reasons: [`pain stayed at ${max} or under and did not climb`] }
 }
 
-/** Rule 2. Stiffness past 30 minutes with nothing else flagged reads hold, not clean (PROGRAM-QUESTIONS 5). */
+/** Rule 2. Stiffness past 30 minutes with nothing else flagged reads hold, not clean (PROGRAM-QUESTIONS 5). A ticked red flag reads back-off whatever else is ticked (PROGRAM-QUESTIONS 180). */
 export function morningReading(check: MorningCheck): MorningReading {
   const redFlag = check.redFlags.length > 0
   const reasons: string[] = []
@@ -92,11 +92,11 @@ export function morningReading(check: MorningCheck): MorningReading {
   }
   if (check.worseThanYesterday) {
     reasons.push('worse than yesterday')
-    return { result: 'hold', reasons, redFlag }
+    return { result: redFlag ? 'back-off' : 'hold', reasons, redFlag }
   }
   if (!check.stiffnessUnder30Min) {
     reasons.push('stiffness lasted past 30 minutes')
-    return { result: 'hold', reasons, redFlag }
+    return { result: redFlag ? 'back-off' : 'hold', reasons, redFlag }
   }
   reasons.push('back to baseline, stiffness gone within 30 minutes')
   return { result: redFlag ? 'back-off' : 'clean', reasons, redFlag }

@@ -1,8 +1,9 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db.ts'
-import { getAddedSlots, getHrSettings, getLocations, getProgramOverrides, getSettings, getVo2Readings, loadHistory, type History } from './repo.ts'
+import { getAclRsiEntries, getAddedSlots, getDownPeriods, getHrSettings, getKoosEntries, getLocations, getProgramOverrides, getSettings, getTimeZoneSetting, getVo2Readings, loadHistory, onboardingFacts, preAccountsFacts, type History } from './repo.ts'
 import { locationOrHome } from '../rules/locations.ts'
-import type { AddedSlot, HrSettings, Location, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
+import { onboardingState, type OnboardingState } from '../rules/onboarding.ts'
+import type { AclRsiEntry, AddedSlot, DownPeriod, HrSettings, IsoDate, KoosEntry, Location, MorningCheck, ProgramOverride, SetLog, Settings, Vo2Reading, Workout } from '../schema/index.ts'
 
 /** Undefined while loading; null when no settings row exists yet. */
 export function useSettings(): Settings | null | undefined {
@@ -19,12 +20,35 @@ export function useVo2Readings(): Vo2Reading[] | undefined {
   return useLiveQuery(() => getVo2Readings(), [])
 }
 
+/** The KOOS entries (Batch A), one per day. Undefined while loading, so a screen never says "no entries" before the read lands. */
+export function useKoosEntries(): KoosEntry[] | undefined {
+  return useLiveQuery(() => getKoosEntries(), [])
+}
+
+/** The ACL-RSI entries (Batch A), one per day. Undefined while loading; the Gates screen hands them to the gate rule through gateContext. */
+export function useAclRsiEntries(): AclRsiEntry[] | undefined {
+  return useLiveQuery(() => getAclRsiEntries(), [])
+}
+
 export function useWorkout(id: string | null): Workout | null | undefined {
   return useLiveQuery(async () => (id ? ((await db.workouts.get(id)) ?? null) : null), [id])
 }
 
 export function useSetsFor(workoutId: string | null): SetLog[] | undefined {
   return useLiveQuery(async () => (workoutId ? db.setLogs.where('workoutId').equals(workoutId).toArray() : []), [workoutId])
+}
+
+/**
+ * Whether the phone holds writes from before accounts (M-U3, `preAccountsFacts`), live so an import
+ * is caught. Undefined while loading: the shell waits on it, so the engine mode never flashes.
+ */
+export function usePreAccountsLog(): boolean | undefined {
+  return useLiveQuery(() => preAccountsFacts(), [])
+}
+
+/** The morning checks dated `date` (one, or an imported row under another id beside it). Undefined while loading. */
+export function useMorningChecksOn(date: IsoDate): MorningCheck[] | undefined {
+  return useLiveQuery(() => db.morningChecks.where('date').equals(date).toArray(), [date])
 }
 
 /** The whole history, re-read whenever any table changes. */
@@ -62,4 +86,19 @@ export function useProgramOverrides(): ProgramOverride[] | undefined {
 /** The exercises Shawn added to a session (`withAddedSlots` lays them after a template's own). Undefined while loading. */
 export function useAddedSlots(): AddedSlot[] | undefined {
   return useLiveQuery(() => getAddedSlots(), [])
+}
+
+/** Every declared down period, in start order (the phase-week bands it holds, `bandWeek`). Undefined while loading. */
+export function useDownPeriods(): DownPeriod[] | undefined {
+  return useLiveQuery(() => getDownPeriods(), [])
+}
+
+/** The zone dates are counted in (M-U1) and how it was found (`getTimeZoneSetting`). Undefined while loading, so no frame counts in the wrong zone. */
+export function useTimeZoneSetting(): Awaited<ReturnType<typeof getTimeZoneSetting>> | undefined {
+  return useLiveQuery(() => getTimeZoneSetting(), [])
+}
+
+/** Whether this phone is set up (src/rules/onboarding.ts), re-read whenever any table changes. Undefined while loading, so first run never flashes. */
+export function useOnboardingState(): OnboardingState | undefined {
+  return useLiveQuery(async () => onboardingState(await onboardingFacts()), [])
 }

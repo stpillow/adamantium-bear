@@ -9,8 +9,15 @@ import {
   NEW_LOCATION_HASH,
   atGymWords,
   dateWords,
+  declareWords,
+  downPeriodErrorWords,
+  downPeriodView,
   earlierPhaseWords,
+  extendWords,
+  pastMidnightWords,
+  pauseReplanWords,
   exportLine,
+  koosLine,
   gymRows,
   itemWords,
   lackWords,
@@ -271,7 +278,7 @@ describe('openWorkouts', () => {
 })
 
 describe('todayView', () => {
-  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ today, settings: settings(s), history: history(h), program: PROGRAM })
+  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ mode: 'full', today, settings: settings(s), history: history(h), program: PROGRAM })
 
   it('before the start date: the start line, no week, Start disabled by the screen', () => {
     const v = view('2026-11-01')
@@ -380,7 +387,7 @@ describe('todayView', () => {
 })
 
 describe('run days', () => {
-  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ today, settings: settings(s), history: history(h), program: PROGRAM })
+  const view = (today: string, s: Partial<Settings> = {}, h: Partial<HistoryLike> = {}) => todayView({ mode: 'full', today, settings: settings(s), history: history(h), program: PROGRAM })
   const run = (date: string, miles: number, type: Run['type'] = 'mbr'): Run => ({ id: `r-${date}`, date, type, miles, minutes: 30, effort: 'easy', maxPain: 1, strides: false, tempo: false })
   it('suggests the run’s share of the week, under the ceiling', () => {
     const v = view('2026-11-06', {}, { runs: [run('2026-11-02', 3), run('2026-11-04', 3, 'easy')] })
@@ -656,11 +663,11 @@ describe('a Hold run day at a gym', () => {
   })
   it('todayView carries the morning’s reading on a run day, and the phase week on a lift day', () => {
     const hold = check('2026-11-04', { worseThanYesterday: true })
-    const runDay = todayView({ today: '2026-11-04', settings: settings(), history: history({ morningChecks: [hold] }), program: PROGRAM })
+    const runDay = todayView({ mode: 'full', today: '2026-11-04', settings: settings(), history: history({ morningChecks: [hold] }), program: PROGRAM })
     expect(runDay.body).toMatchObject({ kind: 'run', morning: 'hold' })
-    const noCheck = todayView({ today: '2026-11-02', settings: settings(), history: history(), program: PROGRAM })
+    const noCheck = todayView({ mode: 'full', today: '2026-11-02', settings: settings(), history: history(), program: PROGRAM })
     expect(noCheck.body).toMatchObject({ kind: 'run', morning: null })
-    const lift = todayView({ today: '2026-11-24', settings: settings({ currentPhase: 2, phaseEnteredWeek: 4 }), history: history(), program: PROGRAM })
+    const lift = todayView({ mode: 'full', today: '2026-11-24', settings: settings({ currentPhase: 2, phaseEnteredWeek: 4 }), history: history(), program: PROGRAM })
     expect(lift.body).toMatchObject({ kind: 'lift', week: 4, phaseWeek: 1 })
   })
 })
@@ -671,14 +678,132 @@ describe('the export reminder (M6)', () => {
   const none = { workouts: [], runs: [], morningChecks: [], gateTests: [] }
 
   it('says nothing until the last export is more than 7 days old, then counts the days', () => {
-    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-17', logged)).toBeNull()
-    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-18', logged)).toBe('No export in 8 days')
-    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-19', logged)).toBe('No export in 9 days')
+    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-17', logged, 'America/New_York')).toBeNull()
+    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-18', logged, 'America/New_York')).toBe('No export in 8 days')
+    expect(exportLine('2026-11-10T15:00:00.000Z', '2026-11-19', logged, 'America/New_York')).toBe('No export in 9 days')
   })
 
   it('never exported: counts from the first day logged, and says nothing with nothing logged', () => {
-    expect(exportLine(undefined, '2026-11-09', logged)).toBeNull()
-    expect(exportLine(undefined, '2026-11-11', logged)).toBe('No export yet; the logs go back 9 days')
-    expect(exportLine(undefined, '2026-12-20', none)).toBeNull()
+    expect(exportLine(undefined, '2026-11-09', logged, 'America/New_York')).toBeNull()
+    expect(exportLine(undefined, '2026-11-11', logged, 'America/New_York')).toBe('No export yet; the logs go back 9 days')
+    expect(exportLine(undefined, '2026-12-20', none, 'America/New_York')).toBeNull()
+  })
+
+  it('counts the export’s day in the user’s zone (M-U1)', () => {
+    expect(exportLine('2026-11-10T03:00:00Z', '2026-11-18', logged, 'America/New_York')).toBe('No export in 9 days')
+    expect(exportLine('2026-11-10T03:00:00Z', '2026-11-18', logged, 'Asia/Tokyo')).toBe('No export in 8 days')
+  })
+})
+
+describe('the KOOS due line (Batch A): one quiet word when a check is 28+ days out, no score ever', () => {
+  it('due with no entry stored, and once the latest entry is 28 days old; 27 is not due', () => {
+    expect(koosLine([], '2026-11-08')).toBe('A KOOS check is due')
+    expect(koosLine([{ date: '2026-10-11' }], '2026-11-08')).toBe('A KOOS check is due')
+    expect(koosLine([{ date: '2026-10-11' }], '2026-11-07')).toBeNull()
+    expect(koosLine([{ date: '2026-11-08' }], '2026-11-08')).toBeNull()
+  })
+
+  it('says nothing while the entries are still loading: a line that flashes before the read lands would be wrong', () => {
+    expect(koosLine(undefined, '2026-11-08')).toBeNull()
+  })
+})
+
+describe('a red flag on a check logged late is a note on Today, never the stop (Batch D, PROGRAM-QUESTIONS 175)', () => {
+  const late = check('2026-11-18', { redFlags: [PROGRAM.redFlags[0]?.id ?? 'locking'], loggedOn: '2026-11-20' })
+  it('shows under the body, which stays the day’s session, for 14 days from the morning', () => {
+    const v = todayView({ mode: 'full', today: '2026-11-20', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM })
+    expect(v.body.kind).not.toBe('stop')
+    expect(v.lateFlags).toHaveLength(1)
+    expect(v.lateFlags[0]).toMatch(/^A red flag was ticked on the check for Wednesday Nov 18’s morning, logged late on Friday Nov 20: .+\. Any of these means a call to the ortho or PT\./)
+    expect(todayView({ mode: 'full', today: '2026-12-02', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toHaveLength(1)
+    expect(todayView({ mode: 'full', today: '2026-12-03', settings: settings(), history: history({ morningChecks: [late] }), program: PROGRAM }).lateFlags).toEqual([])
+  })
+  it('rides beside the stop when today’s check took over too', () => {
+    const v = todayView({ mode: 'full', today: '2026-11-20', settings: settings({ redFlag: { active: true, since: '2026-11-20', items: ['locking'] } }), history: history({ morningChecks: [late] }), program: PROGRAM })
+    expect(v.body.kind).toBe('stop')
+    expect(v.lateFlags).toHaveLength(1)
+  })
+  it('a flag on an on-time check is not a late note', () => {
+    expect(todayView({ mode: 'full', today: '2026-11-20', settings: settings(), history: history({ morningChecks: [check('2026-11-18', { redFlags: ['locking'] })] }), program: PROGRAM }).lateFlags).toEqual([])
+  })
+})
+
+describe('the down period on Today (Batch E, PROGRAM-QUESTIONS 185)', () => {
+  const AT = '2026-11-14T13:00:00.000Z'
+  const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: AT, note: 'Flu' }
+  const view = (today: string, h: Partial<HistoryLike> = {}, s: Partial<Settings> = {}) => todayView({ mode: 'full', today, settings: settings(s), history: history(h), program: PROGRAM })
+
+  it('offers one with no period: 3 to 14 days, 7 by default, and says what it does', () => {
+    expect(downPeriodView('2026-11-14', [])).toEqual({ kind: 'offer', minDays: 3, maxDays: 14, defaultDays: 7 })
+    expect(declareWords('2026-11-14', 7)).toEqual({
+      line: 'Today, Saturday Nov 14, to Friday Nov 20. Loads, reps and the week’s miles hold; hold and back off still apply; every session is read as normal.',
+      button: 'Pause progression for 7 days',
+    })
+  })
+
+  it('on now: the day of how many, until when, End it today and Make it longer', () => {
+    expect(downPeriodView('2026-11-16', [P1])).toEqual({
+      kind: 'active',
+      id: 'dp-2026-11-14',
+      start: '2026-11-14',
+      line: 'Down period, day 3 of 7: progression paused until Friday Nov 20.',
+      note: 'Flu',
+      canEnd: true,
+      lastDay: null,
+      extend: { days: 7, maxDays: 14 },
+      atCap: null,
+    })
+    expect(extendWords('2026-11-14', 9)).toEqual({ end: '2026-11-22', button: 'Run it to Sunday Nov 22 (9 days)' })
+  })
+
+  it('on its last planned day there is no End: it ends tonight on its own', () => {
+    expect(downPeriodView('2026-11-20', [P1])).toMatchObject({ canEnd: false, lastDay: 'Its last day: progression resumes tomorrow, Saturday Nov 21.' })
+  })
+
+  it('at the 14-day cap there is no Make it longer, said in words', () => {
+    expect(downPeriodView('2026-11-16', [{ ...P1, plannedEnd: '2026-11-27' }])).toMatchObject({
+      line: 'Down period, day 3 of 14: progression paused until Friday Nov 27.',
+      extend: null,
+      atCap: 'It runs the full 14 days, to Friday Nov 27; a down period can’t run longer.',
+    })
+  })
+
+  it('ended today: progression resumes tomorrow, and Keep it going', () => {
+    expect(downPeriodView('2026-11-17', [{ ...P1, endedOn: '2026-11-17' }])).toEqual({
+      kind: 'ended-today',
+      id: 'dp-2026-11-14',
+      line: 'Down period ended today, day 4 of 7. Progression resumes tomorrow, Wednesday Nov 18.',
+      note: 'Flu',
+    })
+    expect(downPeriodView('2026-11-18', [{ ...P1, endedOn: '2026-11-17' }]).kind).toBe('offer')
+  })
+
+  it('a row dated ahead is said, with nothing to declare', () => {
+    expect(downPeriodView('2026-11-12', [P1])).toEqual({ kind: 'ahead', line: 'A down period from Saturday Nov 14 is stored (Saturday Nov 14 to Friday Nov 20 (7 days)); a new one can’t start before it ends.' })
+  })
+
+  it('shows on lift, run and off days, and never under the stop or before the program', () => {
+    expect(view('2026-11-17', { downPeriods: [P1] }).downPeriod?.kind).toBe('active')
+    expect(view('2026-11-16', { downPeriods: [P1] }).downPeriod?.kind).toBe('active')
+    expect(view('2026-11-15', { downPeriods: [P1] }).downPeriod?.kind).toBe('active')
+    expect(view('2026-11-16', { downPeriods: [P1] }, { redFlag: { active: true, since: '2026-11-16', items: ['locking'] } }).downPeriod).toBeNull()
+    expect(view('2026-11-01').downPeriod).toBeNull()
+  })
+
+  it('says what declaring does to a lift open today, refuses past midnight, and words a refusal', () => {
+    expect(pauseReplanWords('Session A')).toBe('Session A, open today, now plans its remaining exercises with progression paused; the sets already logged stay as logged.')
+    expect(pauseReplanWords(null)).toBeNull()
+    expect(pastMidnightWords('2026-11-15')).toBe('It is past midnight: today is now Sunday Nov 15. Nothing was saved; close this and open it again to start from today.')
+    expect(downPeriodErrorWords(new Error('A down period runs 3 to 14 days.'))).toBe('A down period runs 3 to 14 days. Nothing was saved.')
+    expect(downPeriodErrorWords(new Error('disk full'))).toBe('Nothing was saved (disk full).')
+  })
+
+  it('a run day in a held week says the target held, in words', () => {
+    // Week 3 (Mon Nov 16) is covered: held at week 2's 11, not the plan's 12.
+    const v = view('2026-11-16', { downPeriods: [P1] })
+    expect(v.body).toMatchObject({ kind: 'run', target: 11, capped: true, targetReason: 'down period: held at last week’s 11 miles' })
+    if (v.body.kind !== 'run') throw new Error('a run day')
+    expect(runWeekWords(v.body)).toBe('This week: 0 of 11 miles · down period: held at last week’s 11 miles')
+    expect(view('2026-11-16').body).toMatchObject({ target: 12, capped: false })
   })
 })

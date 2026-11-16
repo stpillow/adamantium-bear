@@ -1,9 +1,10 @@
 import { PROGRAM } from '../app/session.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import type { Block } from '../rules/markdown.ts'
 import { plainText } from '../rules/markdown.ts'
 import { addableSubstitutions, cleanCue, cueLength, editedParts, overridesBySlot, slotEdit, substitutionProblem, type Edited, type SlotEdit } from '../rules/overrides.ts'
 import { slotsForPhaseWeek } from '../rules/session.ts'
-import { CUE_MAX, showsText, type Exercise, type IsoDate, type ProgramOverride, type Settings, type Slot } from '../schema/index.ts'
+import { CUE_MAX, showsText, type DownPeriod, type Exercise, type IsoDate, type ProgramOverride, type Settings, type Slot } from '../schema/index.ts'
 import { coverageWeek, currentTemplates, shortDate } from './LocationEditor.helpers.ts'
 
 /*
@@ -27,10 +28,12 @@ export function exerciseName(id: string): string {
   return nameOf(id)
 }
 
-export type ProgramView = 'phase' | 'reference'
+/** The third view, the published studies (Batch F), is read from src/screens/Evidence.helpers.ts; this file only names it. */
+export type ProgramView = 'phase' | 'reference' | 'evidence'
 export const VIEW_CHOICES: readonly { value: ProgramView; label: string }[] = [
   { value: 'phase', label: 'This phase' },
   { value: 'reference', label: 'program.md' },
+  { value: 'evidence', label: 'Evidence' },
 ]
 
 export const REFERENCE_LEAD = 'program.md as written, for reference. The app runs on its transcription, with your slot edits on top; program.md itself never changes.'
@@ -77,9 +80,16 @@ export function groupWords(slot: Slot, slots: readonly Slot[]): string | null {
 
 /**
  * The current phase's sessions, A then B then C, each with the slots that run this week of the
- * phase (`slotsForPhaseWeek`, from the week Today plans), every slot with its edits laid over it.
+ * phase (`slotsForPhaseWeek`, from the week Today plans, a down period's held band included), every
+ * slot with its edits laid over it.
  */
-export function phaseScreen(settings: Settings, today: IsoDate, overrides: readonly ProgramOverride[]): PhaseScreen {
+/** What the Program screen lets a mode do (M-U3, PROGRAM-QUESTIONS 232): a tester reads the program; only full mode edits a slot or adds an exercise. */
+export function programControls(mode: EngineMode): { canEdit: boolean } {
+  return { canEdit: mode === 'full' }
+}
+
+export function phaseScreen(settings: Settings, today: IsoDate, overrides: readonly ProgramOverride[], downPeriods: readonly DownPeriod[], mode: EngineMode = 'full'): PhaseScreen {
+
   const phase = PROGRAM.phases.find((p) => p.number === settings.currentPhase)
   const name = phase ? `Phase ${phase.number}, ${phase.name}` : `Phase ${settings.currentPhase}`
   const templates = currentTemplates(settings)
@@ -90,10 +100,12 @@ export function phaseScreen(settings: Settings, today: IsoDate, overrides: reado
       notWritten: `Phase ${settings.currentPhase}’s sessions are not written yet; program.md says they come once Gate 3 is clean. Its preview is under program.md.`,
     }
   }
-  const phaseWeek = coverageWeek(settings, today)
+  // Held where a down period holds the bands, so this week's sessions are the ones Today plans (PROGRAM-QUESTIONS 188).
+  // Tester mode (M-U3): the calendar's phase week, with no down period holding a band, and nothing to edit.
+  const phaseWeek = coverageWeek(settings, today, downPeriods, mode)
   const bySlot = overridesBySlot(overrides)
   return {
-    lead: `${name}: week ${phaseWeek} of the phase. Read-only until you tap Edit on a slot.`,
+    lead: mode === 'tester' ? `${name}: week ${phaseWeek} of the phase, as written. A tester account can’t edit it.` : `${name}: week ${phaseWeek} of the phase. Read-only until you tap Edit on a slot.`,
     notWritten: null,
     sessions: templates.map((template) => {
       const slots = slotsForPhaseWeek(template, phaseWeek)

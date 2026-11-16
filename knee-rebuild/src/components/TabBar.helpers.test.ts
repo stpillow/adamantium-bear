@@ -26,7 +26,17 @@ describe('activeTab', () => {
       [{ name: 'run' }, 'more'],
       [{ name: 'program' }, 'more'],
       [{ name: 'settings' }, 'more'],
+      // Batch A: the KOOS form sits under Progress (its scores live there); ACL-RSI under Gates (its row lives there).
+      [{ name: 'koos' }, 'progress'],
+      [{ name: 'acl-rsi' }, 'gates'],
     ]
     for (const [route, tab] of cases) expect(activeTab(route)).toBe(tab)
+  })
+})
+
+describe('first run (M-U1)', () => {
+  it('sits under Today, though the tab bar is hidden while it shows', () => {
+    expect(activeTab({ name: 'welcome' })).toBe('today')
+    expect(activeTab({ name: 'welcome', step: 'side' })).toBe('today')
   })
 })

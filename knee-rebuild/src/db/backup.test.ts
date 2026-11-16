@@ -5,9 +5,12 @@ import { BACKUP_SCHEMA_VERSION, BACKUP_TABLES, backupText, parseBackup, type Bac
 import { addDays, dateOf } from '../rules/calendar.ts'
 import { afterMorningCheck, stopMessage } from '../rules/redFlags.ts'
 import {
+  AclRsiEntry,
   AddedSlot,
+  DownPeriod,
   GateTest,
   HrSettings,
+  KoosEntry,
   Location,
   MorningCheck,
   PLANET_FITNESS_LOCATION_ID,
@@ -16,6 +19,7 @@ import {
   SessionMove,
   SetLog,
   Settings,
+  TimeZoneSetting,
   Vo2Reading,
   Workout,
   type Day,
@@ -30,22 +34,31 @@ import {
   addExtra,
   addGateTest,
   addLocation,
+  addLateMorningCheck,
   addMorningCheck,
   addRun,
   addSessionMove,
   archiveLocation,
+  declareDownPeriod,
   defaultSettings,
+  endDownPeriod,
   ensureLocations,
   ensureSettings,
+  extendDownPeriod,
+  getDownPeriods,
   getProgramOverrides,
   getSettings,
+  getTimeZoneSetting,
   markOff,
   putWorkout,
   resetAll,
   saveAddedSlot,
+  saveAclRsiEntry,
   saveHrSettings,
+  saveKoosEntry,
   saveProgramOverride,
   saveSettings,
+  saveTimeZone,
   saveVo2Reading,
   setDumbbellMax,
   setId,
@@ -250,6 +263,23 @@ async function seedHistory(): Promise<void> {
       painChangePoints: 3,
       redFlags: ['locking', 'giving-way'],
       notes: 'Caught on the stairs twice.\nIced it; 🧊 20 min',
+      tags: ['poor-sleep', 'long-sitting', 'nsaid'],
+    }),
+  )
+  // Batch D: a check for a past morning, logged late, with a tag.
+  await addLateMorningCheck(
+    MorningCheck.parse({
+      id: 'mc-2026-11-16',
+      date: '2026-11-16',
+      appliesTo: null,
+      stiffnessUnder30Min: true,
+      worseThanYesterday: false,
+      visibleSwelling: false,
+      warmth: false,
+      painChangePoints: 0,
+      redFlags: [],
+      tags: ['brace'],
+      loggedOn: '2026-11-18',
     }),
   )
   await addGateTest(
@@ -271,6 +301,29 @@ async function seedHistory(): Promise<void> {
   await saveVo2Reading({ date: '2026-12-05', vo2: 44 })
   await saveVo2Reading({ date: '2026-12-05', vo2: 45 })
   await saveVo2Reading({ date: '2026-12-19', vo2: 46 })
+  // A complete KOOS entry, all 42 items answered so fieldsUsed sees every field, saved twice on its
+  // day (the second save replaces), and a partial one with skips (Batch A).
+  await saveKoosEntry({ date: '2026-12-06', p1: 4, sy1: 4, a1: 4, sp1: 4, q1: 4 })
+  await saveKoosEntry({
+    date: '2026-12-06',
+    p1: 1, p2: 2, p3: 1, p4: 2, p5: 0, p6: 2, p7: 1, p8: 0, p9: 1,
+    sy1: 1, sy2: 2, sy3: 0, sy4: 1, sy5: 1, sy6: 2, sy7: 1,
+    a1: 1, a2: 1, a3: 0, a4: 0, a5: 1, a6: 0, a7: 1, a8: 0, a9: 0, a10: 1, a11: 0, a12: 1, a13: 1, a14: 0, a15: 0, a16: 2, a17: 1,
+    sp1: 2, sp2: 2, sp3: 3, sp4: 3, sp5: 2,
+    q1: 2, q2: 2, q3: 1, q4: 2,
+  })
+  await saveKoosEntry({ date: '2026-12-18', p1: 1, p2: 1, p3: 0, p4: 1, p5: 0, sy2: 1, q1: 1 })
+  // An ACL-RSI entry, saved twice on its day (the second save replaces): all 12 items are required, so every field is used (Batch A).
+  await saveAclRsiEntry({ date: '2026-12-19', i1: 5, i2: 5, i3: 5, i4: 5, i5: 5, i6: 5, i7: 5, i8: 5, i9: 5, i10: 5, i11: 5, i12: 5 })
+  await saveAclRsiEntry({ date: '2026-12-19', i1: 8, i2: 7, i3: 6, i4: 8, i5: 7, i6: 6, i7: 7, i8: 8, i9: 6, i10: 9, i11: 8, i12: 7 })
+  // Two down periods (Batch E): one declared with a note, made longer and ended early, so every field is used; one run to its end.
+  await declareDownPeriod({ today: '2026-11-28', days: 5, declaredAt: '2026-11-28T13:00:00.000Z', note: 'Flu, “the bad one”' })
+  await extendDownPeriod('dp-2026-11-28', '2026-12-04', '2026-11-29')
+  await endDownPeriod('dp-2026-11-28', '2026-11-30')
+  await declareDownPeriod({ today: '2026-12-14', days: 3, declaredAt: '2026-12-14T13:00:00.000Z' })
+  // The time zone (M-U1): saved twice, the second replaces; one row.
+  await saveTimeZone('Europe/London')
+  await saveTimeZone('America/Los_Angeles')
 }
 
 /** The keys every row of a table uses, across the table: every field of the schema shows up somewhere. */
@@ -289,6 +342,10 @@ const SHAPES: Record<keyof BackupTables, readonly string[]> = {
   addedSlots: Object.keys(AddedSlot.shape),
   hrSettings: Object.keys(HrSettings.shape),
   vo2Readings: Object.keys(Vo2Reading.shape),
+  koosEntries: Object.keys(KoosEntry.shape),
+  aclRsiEntries: Object.keys(AclRsiEntry.shape),
+  downPeriods: Object.keys(DownPeriod.shape),
+  timeZoneSettings: Object.keys(TimeZoneSetting.shape),
 }
 
 describe('the backup carries the whole database', () => {
@@ -323,13 +380,12 @@ describe('export, reset, import, export again', () => {
     const stamped = await rawDump()
     expect((await getSettings())?.lastExportedAt).toBe(T1)
 
-    await resetAll(defaultSettings(program), program, TODAY)
-    // Reset covers the new tables: the Program edits and lastExportedAt go, the home gym comes back through the launch path.
-    expect(await getSettings()).toEqual(defaultSettings(program))
-    expect((await getSettings())?.lastExportedAt).toBeUndefined()
+    await resetAll()
+    // Reset clears every table and writes nothing (M-U1): no settings, no gyms, no stamp, no time zone; first run comes next.
+    expect(await getSettings()).toBeUndefined()
     expect(await getProgramOverrides()).toEqual([])
-    expect(await db.locations.toArray()).toEqual([homeLocation(defaultSettings(program).dumbbellMax, program.planetFitness, TODAY, program.equipmentListVersion)])
-    for (const name of BACKUP_TABLES.filter((n) => n !== 'locations')) expect(await db.table(name).count(), name).toBe(0)
+    for (const table of db.tables) expect(await table.count(), table.name).toBe(0)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'none' })
 
     const read = parseBackup(text1)
     if (!read.ok) throw new Error(read.refusal)
@@ -364,8 +420,8 @@ describe('import is all or nothing', () => {
     await seedHistory()
     const { backup } = await exportBackup(T1)
     const before = await rawDump()
-    const newer = { ...backup, schemaVersion: 9 } as unknown as Backup
-    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 9; this one reads up to 8).')
+    const newer = { ...backup, schemaVersion: 13 } as unknown as Backup
+    await expect(replaceAll(newer, program, TODAY)).rejects.toThrow('This backup is from a newer version of the app (schema version 13; this one reads up to 12).')
     const twice = { ...backup, runs: [...backup.runs, ...backup.runs.slice(0, 1)] }
     await expect(replaceAll(twice, program, TODAY)).rejects.toThrow('twice')
     expect(await rawDump()).toEqual(before)
@@ -394,6 +450,26 @@ describe('an import and the red flag (PROGRAM-QUESTIONS 128)', () => {
     expect(stopMessage(after?.redFlag ?? { active: false, items: [] }, program.redFlags)?.headline).toBe('Stop. Call the ortho or PT.')
     // Everything else is the file's: the flagged morning check is gone with the rest of what came after it.
     expect((await db.morningChecks.toArray()).map((m) => m.id)).toEqual(['mc-2026-11-04'])
+  })
+})
+
+describe('an import and a down period (Batch E, PROGRAM-QUESTIONS 189)', () => {
+  it('a phone in a down period importing a file from before it keeps the period: an import never lifts a pause', async () => {
+    await ensureSettings(defaultSettings(program))
+    await ensureLocations(program, START)
+    await declareDownPeriod({ today: '2026-11-03', days: 3, declaredAt: '2026-11-03T13:00:00.000Z' })
+    const before = backupText((await exportBackup('2026-11-07T23:00:00.000Z')).backup)
+    await declareDownPeriod({ today: '2026-11-14', days: 7, declaredAt: '2026-11-14T13:00:00.000Z', note: 'Flu' })
+    const standing = await db.downPeriods.get('dp-2026-11-14')
+
+    const read = parseBackup(before)
+    if (!read.ok) throw new Error(read.refusal)
+    await replaceAll(read.backup, program, '2026-11-16')
+    // The file's past period comes in; the phone's standing one stays, as it was.
+    expect(await getDownPeriods()).toEqual([read.backup.downPeriods[0], standing])
+    // On the day after it ended, the same import brings the file's list in whole.
+    await replaceAll(read.backup, program, '2026-11-21')
+    expect(await getDownPeriods()).toEqual(read.backup.downPeriods)
   })
 })
 
@@ -429,9 +505,9 @@ describe('the export stamp has its own row, so the build before M6 still reads t
     expect((await getSettings())?.lastExportedAt).toBe(T2)
 
     // Reset takes the stamp's row with everything else.
-    await resetAll(defaultSettings(program), program, TODAY)
-    expect(await db.settings.count()).toBe(1)
-    expect((await getSettings())?.lastExportedAt).toBeUndefined()
+    await resetAll()
+    expect(await db.settings.count()).toBe(0)
+    expect(await getSettings()).toBeUndefined()
   })
 
   it('a row an earlier M6 build wrote with the stamp inside still reads, stamp and all', async () => {
@@ -524,5 +600,58 @@ describe('the export stamp and the runner’s stored swaps', () => {
     if (!read.ok) throw new Error(read.refusal)
     await replaceAll(read.backup, program, TODAY)
     expect([...store.keys()]).toEqual(['other-app:key'])
+  })
+})
+
+describe('the time zone through an import (M-U1, PROGRAM-QUESTIONS 206)', () => {
+  async function setUp(): Promise<void> {
+    await ensureSettings(defaultSettings(program))
+    await ensureLocations(program, START)
+  }
+
+  it('a file’s zone replaces the phone’s', async () => {
+    await setUp()
+    await saveTimeZone('Asia/Tokyo')
+    const read = parseBackup(backupText((await exportBackup(T1)).backup))
+    if (!read.ok) throw new Error(read.refusal)
+    expect(read.backup.timeZoneSettings).toEqual([{ id: 'time-zone', zone: 'Asia/Tokyo' }])
+    await saveTimeZone('America/Los_Angeles')
+    await replaceAll(read.backup, program, TODAY, T2)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'Asia/Tokyo', stored: 'ok' })
+  })
+
+  it('a file with no zone (written before M-U1) keeps the phone’s', async () => {
+    await setUp()
+    const { backup } = await exportBackup(T1)
+    await saveTimeZone('America/Los_Angeles')
+    await replaceAll({ ...backup, timeZoneSettings: [] }, program, TODAY, T2)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/Los_Angeles', stored: 'ok' })
+    // A version 11 file, carried forward: the same.
+    const v11 = { ...JSON.parse(backupText(backup)), schemaVersion: 11 } as Record<string, unknown>
+    delete v11.timeZoneSettings
+    const read = parseBackup(JSON.stringify(v11))
+    if (!read.ok) throw new Error(read.refusal)
+    await replaceAll(read.backup, program, TODAY, T2)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/Los_Angeles', stored: 'ok' })
+  })
+
+  it('a file whose zone this phone doesn’t know still imports, and the phone keeps its own', async () => {
+    await setUp()
+    await saveTimeZone('America/Los_Angeles')
+    const { backup } = await exportBackup(T1)
+    const read = parseBackup(backupText({ ...backup, timeZoneSettings: [{ id: 'time-zone', zone: 'Mars/Olympus_Mons' }] }))
+    if (!read.ok) throw new Error(read.refusal)
+    await replaceAll(read.backup, program, TODAY, T2)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/Los_Angeles', stored: 'ok' })
+  })
+
+  it('an unreadable zone row on the phone never blocks a restore', async () => {
+    await setUp()
+    const { backup } = await exportBackup(T1)
+    await db.timeZoneSettings.put({ id: 'time-zone', zone: 42 } as unknown as TimeZoneSetting)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'unreadable' })
+    await replaceAll(backup, program, TODAY, T2)
+    expect(await db.timeZoneSettings.count()).toBe(0)
+    expect(await getTimeZoneSetting()).toEqual({ zone: 'America/New_York', stored: 'none' })
   })
 })

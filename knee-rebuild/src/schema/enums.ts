@@ -85,11 +85,26 @@ export type ReadingResult = z.infer<typeof ReadingResult>
 export const WorkoutStatus = z.enum(['planned', 'in-progress', 'finished', 'abandoned'])
 export type WorkoutStatus = z.infer<typeof WorkoutStatus>
 
+/**
+ * The morning check's fixed tags (Batch D, Shawn's Nov 8 decision 10; PROGRAM-QUESTIONS 177): one
+ * optional tap each for the day and night before the morning, none by default. Counted on the
+ * phone against the readings, in plain counts on Progress, and read by no rule that decides
+ * anything (src/rules/morningTags.guard.test.ts). The order here is the form's and the count's.
+ */
+export const MorningTag = z.enum(['poor-sleep', 'long-sitting', 'on-feet', 'brace', 'nsaid', 'new-shoes'])
+export type MorningTag = z.infer<typeof MorningTag>
+export const MORNING_TAGS: readonly MorningTag[] = MorningTag.options
+
 /** What a day of the weekly template holds. */
 export const DaySession = z.enum(['run:mbr', 'lift:A', 'run:easy', 'lift:B', 'run:long', 'lift:C', 'off'])
 export type DaySession = z.infer<typeof DaySession>
 
-/** How a gate item is evaluated. `manual` items are toggles; the rest read logged data. */
+/**
+ * How a gate item is evaluated. `manual` items are toggles; the rest read logged data.
+ * `acl-rsi` reads the latest stored ACL-RSI questionnaire entry against the item's `minScore`
+ * (Batch A, PROGRAM-QUESTIONS 156): the one rule-level reader of the questionnaire is the gates
+ * rule, pinned by src/rules/aclRsi.guard.test.ts.
+ */
 export const GateEvaluator = z.enum([
   'manual',
   'clean-weeks',
@@ -98,10 +113,49 @@ export const GateEvaluator = z.enum([
   'no-swelling',
   'run-no-reaction',
   'no-swelling-after-plyo',
+  'acl-rsi',
 ])
 export type GateEvaluator = z.infer<typeof GateEvaluator>
 
-/** Calendar date in America/New_York, as YYYY-MM-DD, and a real date on the calendar. */
+/**
+ * The time zone dates are counted in when the user has stored none (M-U1, PROGRAM-QUESTIONS 203):
+ * Shawn's, so a phone set up before the setting existed computes exactly the dates it did.
+ */
+export const DEFAULT_TIME_ZONE = 'America/New_York'
+
+/**
+ * An IANA time zone name by its shape alone ("America/Los_Angeles", "UTC", "Etc/GMT+5"): what a
+ * stored row and a backup file may hold. Whether this phone's time zone data knows the name is
+ * asked at use (`isKnownTimeZone`), never here, so a file from a phone with newer zone data
+ * ("Europe/Kyiv" on an older iOS) still imports, and the phone keeps its own zone instead
+ * (PROGRAM-QUESTIONS 204, 206).
+ */
+export const TimeZone = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+){0,2}$/, 'expected a time zone name like America/New_York')
+export type TimeZone = z.infer<typeof TimeZone>
+
+/**
+ * Whether this phone's time zone data knows a zone: constructing a formatter for it succeeds. Not
+ * membership in the phone's list of zones, which leaves out UTC and the old aliases a phone may
+ * still report (PROGRAM-QUESTIONS 204).
+ */
+export function isKnownTimeZone(zone: string): boolean {
+  if (!TimeZone.safeParse(zone).success) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** A time zone this phone knows: what Settings and first run save. */
+export const KnownTimeZone = TimeZone.refine(isKnownTimeZone, 'not a time zone this phone knows')
+
+/** Calendar date in the user's time zone (New York by default; M-U1), as YYYY-MM-DD, and a real date on the calendar. */
 export const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')

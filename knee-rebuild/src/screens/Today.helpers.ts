@@ -1,5 +1,11 @@
 import type { History } from '../db/repo.ts'
-import { addDays, dayOf, isDeloadWeek, scheduledSession } from '../rules/calendar.ts'
+import { planSession, sessionExtensions, warmUpFor, windowFit, type Gym } from '../app/session.ts'
+import { writtenFit, writtenSession } from '../app/written.ts'
+import type { EngineMode, EngineModeState } from '../rules/engineMode.ts'
+import { isExtraSlotId } from '../rules/extensions.ts'
+import { ownFlagNote } from '../rules/written.ts'
+import { planTarget } from '../rules/mileage.ts'
+import { addDays, daysBetween, isDeloadWeek, scheduledSession } from '../rules/calendar.ts'
 import { type Available, type ExerciseLookup, type RunSwapType, type SlotRoute } from '../rules/equipment.ts'
 import { gymChanges, type GymChange, type PlannedSlot } from '../rules/gymChanges.ts'
 import { liftGym, swapCallAt } from '../rules/gymDay.ts'
@@ -7,20 +13,40 @@ import { attachChecks, subjectReadings, workoutReading } from '../rules/history.
 import { listedLocations } from '../rules/locations.ts'
 import { morningCheckApplies, morningReading, type Reading } from '../rules/reading.ts'
 import { phaseWeekOf } from '../rules/session.ts'
+import {
+  DOWN_PERIOD_DEFAULT_DAYS,
+  DOWN_PERIOD_MAX_DAYS,
+  DOWN_PERIOD_MIN_DAYS,
+  activeDownPeriod,
+  bandHeldNote,
+  bandWeek,
+  downPeriodWords,
+  endProblem,
+  lastPausedDay,
+  latestEnd,
+  plannedDays,
+  standingPeriod,
+} from '../rules/downPeriod.ts'
 import { runsInWeek, suggestRun, targetForWeek, type RunSuggestion } from '../rules/weekPlan.ts'
 import { weekMiles } from '../rules/mileage.ts'
-import { stopMessage } from '../rules/redFlags.ts'
+import { lateFlagNotes, stopMessage } from '../rules/redFlags.ts'
 import { exportNudge, loggedRange } from '../rules/backup.ts'
+import { koosDue } from '../rules/koos.ts'
+import { dateWords, monthDayWords, shortDateWords } from '../rules/dateWords.ts'
+import { lateFlagWords, ownFlagWords } from './MorningCheck.helpers.ts'
+import { windowWords } from './Window.helpers.ts'
 import type {
   IsoDateTime,
+  KoosEntry,
   Run,
-  Day,
   DaySession,
+  DownPeriod,
   Equipment,
   EquipmentId,
   Exercise,
   IsoDate,
   Location,
+  MorningCheck,
   Phase,
   Program,
   ReadingResult,
@@ -40,45 +66,12 @@ import type {
  * composes the answers and names things. The program pieces are passed in, so tests use fixtures.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves' | 'downPeriods'>
 export type ProgramLike = Pick<Program, 'phases' | 'weeklyTemplate' | 'weeklyTemplateRows' | 'redFlags' | 'templates' | 'mileagePlan'>
 type TemplateRows = ProgramLike['weeklyTemplateRows']
 
-const WEEKDAY: Record<Day, string> = {
-  mon: 'Monday',
-  tue: 'Tuesday',
-  wed: 'Wednesday',
-  thu: 'Thursday',
-  fri: 'Friday',
-  sat: 'Saturday',
-  sun: 'Sunday',
-}
-const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
-function monthAndDay(date: IsoDate): { month: string; day: number } {
-  const [, m, d] = date.split('-').map(Number)
-  const month = m === undefined ? undefined : MONTH[m - 1]
-  if (month === undefined || d === undefined || Number.isNaN(d)) throw new RangeError(`not a YYYY-MM-DD date: ${date}`)
-  return { month, day: d }
-}
-
-/** "Tuesday, November 3": the screen's lead line. */
-export function dateWords(date: IsoDate): string {
-  const { month, day } = monthAndDay(date)
-  return `${WEEKDAY[dayOf(date)]}, ${month} ${day}`
-}
-
-/** "Nov 10": the form a mark-off's date takes. */
-export function monthDayWords(date: IsoDate): string {
-  const { month, day } = monthAndDay(date)
-  return `${month.slice(0, 3)} ${day}`
-}
-
-/** "Monday Nov 2": the form the start line uses. */
-export function shortDateWords(date: IsoDate): string {
-  const { month, day } = monthAndDay(date)
-  return `${WEEKDAY[dayOf(date)]} ${month.slice(0, 3)} ${day}`
-}
+/** Dates in words live in src/rules/dateWords.ts (Batch E); re-exported so no screen changed its import. */
+export { dateWords, monthDayWords, shortDateWords }
 
 const RUN_LABEL: Record<RunType, string> = {
   mbr: 'Run: MBR',
@@ -289,7 +282,7 @@ export type TodayBody =
       /** This week's miles so far and the week's target (null outside the plan), with why when capped. */
       weekMiles: number
       target: number | null
-      /** The rule's own flag: true exactly when rule 7 put the target below the plan's number. */
+      /** The rule's own flag: true exactly when rule 7, or a down period, put the target below the plan's number. */
       capped: boolean
       targetReason: string
       /** Runs already logged today. */
@@ -322,6 +315,8 @@ export function runWeekWords(body: Pick<RunBody, 'weekMiles' | 'target' | 'cappe
 }
 
 export interface TodayView {
+  /** Tester mode's view carries `written: true`; this one never does. */
+  written?: undefined
   dateWords: string
   phaseNumber: number
   phaseName: string
@@ -333,10 +328,271 @@ export interface TodayView {
   body: TodayBody
   yesterday: YesterdayLine[]
   open: OpenWorkout[]
+  /**
+   * A red flag on a check logged late, for a past morning in the last 14 days, in words (Batch D,
+   * PROGRAM-QUESTIONS 175): a note under every body, the stop included, never the stop itself.
+   */
+  lateFlags: string[]
+  /** The down period block (Batch E): the offer, the one on now, or the one ended today; null under the stop and before the program. */
+  downPeriod: DownPeriodView | null
 }
 
-/** Everything the Today screen renders, from today's date, the settings, the stored history and the program. */
-export function todayView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView {
+/**
+ * Today's down period block (Batch E, PROGRAM-QUESTIONS 185), every line in words: the offer to
+ * declare one; the one on now, with the day of how many and until when, End it today (not on its
+ * last planned day) and Make it longer (up to the 14-day cap); the one ended today, with Keep it going;
+ * or a row dated ahead (from an import or a clock change), said so, with nothing to tap.
+ */
+export type DownPeriodView =
+  | { kind: 'offer'; minDays: number; maxDays: number; defaultDays: number }
+  | {
+      kind: 'active'
+      id: string
+      start: IsoDate
+      line: string
+      note: string | null
+      /** Null on its last planned day: it ends tonight on its own, said in `lastDay`. */
+      canEnd: boolean
+      lastDay: string | null
+      /** Its planned length now, and the most it may run to; null at the cap. */
+      extend: { days: number; maxDays: number } | null
+      atCap: string | null
+    }
+  | { kind: 'ended-today'; id: string; line: string; note: string | null }
+  | { kind: 'ahead'; line: string }
+
+export function downPeriodView(today: IsoDate, periods: readonly DownPeriod[]): DownPeriodView {
+  const active = activeDownPeriod(today, periods)
+  if (active === null) {
+    const standing = standingPeriod(today, periods)
+    if (standing !== null) return { kind: 'ahead', line: `A down period from ${shortDateWords(standing.start)} is stored (${downPeriodWords(standing)}); a new one can’t start before it ends.` }
+    return { kind: 'offer', minDays: DOWN_PERIOD_MIN_DAYS, maxDays: DOWN_PERIOD_MAX_DAYS, defaultDays: DOWN_PERIOD_DEFAULT_DAYS }
+  }
+  const day = daysBetween(active.start, today) + 1
+  const of = plannedDays(active)
+  const note = active.note ?? null
+  if (active.endedOn === today) {
+    return { kind: 'ended-today', id: active.id, line: `Down period ended today, day ${day} of ${of}. Progression resumes tomorrow, ${shortDateWords(addDays(today, 1))}.`, note }
+  }
+  const atCap = active.plannedEnd >= latestEnd(active)
+  return {
+    kind: 'active',
+    id: active.id,
+    start: active.start,
+    line: `Down period, day ${day} of ${of}: progression paused until ${shortDateWords(lastPausedDay(active))}.`,
+    note,
+    canEnd: endProblem(periods, active.id, today) === null,
+    lastDay: today === active.plannedEnd ? `Its last day: progression resumes tomorrow, ${shortDateWords(addDays(today, 1))}.` : null,
+    extend: atCap ? null : { days: of, maxDays: DOWN_PERIOD_MAX_DAYS },
+    atCap: atCap ? `It runs the full ${DOWN_PERIOD_MAX_DAYS} days, to ${shortDateWords(active.plannedEnd)}; a down period can’t run longer.` : null,
+  }
+}
+
+/** "Today, Saturday Nov 14, to Friday Nov 20. …": what declaring a period of `days` would do, under the stepper. */
+export function declareWords(today: IsoDate, days: number): { line: string; button: string } {
+  return {
+    line: `Today, ${shortDateWords(today)}, to ${shortDateWords(addDays(today, days - 1))}. Loads, reps and the week’s miles hold; hold and back off still apply; every session is read as normal.`,
+    button: `Pause progression for ${days} days`,
+  }
+}
+
+/**
+ * What declaring a period does to a lift open today (PROGRAM-QUESTIONS 187; a change to an open
+ * lift's remaining prescriptions is never silent, 176(e)): its remaining exercises plan again with
+ * progression paused, equal or lower, and the logged sets stay. Null with no lift open today.
+ */
+export function pauseReplanWords(openLabel: string | null): string | null {
+  return openLabel === null ? null : `${openLabel}, open today, now plans its remaining exercises with progression paused; the sets already logged stay as logged.`
+}
+
+/** The tap came after midnight under a form opened yesterday: refused, so a period never starts on a day already past. */
+export function pastMidnightWords(now: IsoDate): string {
+  return `It is past midnight: today is now ${shortDateWords(now)}. Nothing was saved; close this and open it again to start from today.`
+}
+
+/** A refused or failed down-period write, in one sentence: the rule's own when it refused. */
+export function downPeriodErrorWords(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return /[.!?]$/.test(message) ? `${message} Nothing was saved.` : `Nothing was saved (${message}).`
+}
+
+/** "Run it to Sunday Nov 22 (9 days)": Make it longer's button for a period of `days` days in all. */
+export function extendWords(start: IsoDate, days: number): { end: IsoDate; button: string } {
+  const end = addDays(start, days - 1)
+  return { end, button: `Run it to ${shortDateWords(end)} (${days} days)` }
+}
+
+// ---- Tester mode (M-U3; PROGRAM-QUESTIONS 223 to 232): the program as written, nothing read ----
+
+/**
+ * The line under the date, and in Settings, Account, on a phone in tester mode: why nothing here is
+ * worked out from the logs. Null in full mode.
+ */
+export function modeLine(state: EngineModeState): string | null {
+  switch (state.reason) {
+    case 'tester':
+      return 'Tester account: this app shows the program as written and works out nothing from your logs.'
+    case 'signed-out':
+      return 'Signed out: this app shows the program as written and works out nothing from your logs. Sign in from Settings, Account.'
+    case 'unconfirmed':
+      return 'This phone hasn’t reached the app’s server yet, so it shows the program as written and works out nothing from your logs. Open the app once with a connection.'
+    default:
+      return null
+  }
+}
+
+export interface LoggedLine {
+  label: string
+  /** "Session A: logged.", "Run: easy: logged." */
+  words: string
+}
+
+/** Yesterday's finished or ended lifts and runs, logged, with no reading (tester mode). Empty when there was none. */
+export function yesterdayLogged(today: IsoDate, history: Pick<HistoryLike, 'workouts' | 'runs'>, templates: readonly SessionTemplate[]): LoggedLine[] {
+  const yesterday = addDays(today, -1)
+  const lifts = history.workouts.filter((w) => w.date === yesterday && (w.status === 'finished' || w.status === 'abandoned')).map((w) => workoutLabel(w, templates))
+  const runs = history.runs.filter((r) => r.date === yesterday).map((r) => runLabel(r.type))
+  return [...lifts, ...runs].map((label) => ({ label, words: `${label}: logged.` }))
+}
+
+/** This morning's ticked flags as the tester's own note, in words; empty with none ticked (tester mode). */
+export function ownFlagLines(today: IsoDate, checks: readonly Pick<MorningCheck, 'date' | 'redFlags'>[], catalog: ProgramLike['redFlags']): string[] {
+  const check = checks.find((c) => c.date === today)
+  const note = check ? ownFlagNote(check, catalog) : null
+  return note ? [ownFlagWords(note, today)] : []
+}
+
+export type TesterTodayBody =
+  | { kind: 'before-start'; line: string }
+  | {
+      kind: 'lift'
+      letter: SessionLetter
+      label: string
+      week: number
+      phaseWeek: number
+      isDeload: boolean
+      template: SessionTemplate | null
+      workout: Workout | null
+      earlierPhase: number | null
+    }
+  | {
+      kind: 'run'
+      label: string
+      /** program.md's own row note for the day, verbatim. */
+      note: string | null
+      weekMiles: number
+      /** The plan's number for the week, never capped; null outside the plan. */
+      target: number | null
+      capped: false
+      targetReason: string
+      loggedToday: Run[]
+    }
+  | { kind: 'off'; label: string }
+
+/** Today in tester mode: what the day holds as written, and what was logged; no stop, no reading, no suggestion, no down period. */
+export interface TesterTodayView {
+  written: true
+  dateWords: string
+  phaseNumber: number
+  phaseName: string
+  phaseHasSessions: boolean
+  week: number | null
+  deload: boolean
+  body: TesterTodayBody
+  yesterday: LoggedLine[]
+  open: OpenWorkout[]
+  /** A flag ticked on this morning's check, as the tester's own note. */
+  ownFlags: string[]
+}
+
+function testerTodayView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TesterTodayView {
+  const { today, settings, history, program } = input
+  const scheduled = scheduledSession(today, settings.startDate, program.weeklyTemplate, history.sessionMoves)
+  const week = scheduled.session === null ? null : scheduled.week
+  const letter = scheduled.session === null ? null : sessionLetter(scheduled.session)
+  const workout = letter ? todaysLift(history.workouts, today, letter, program.templates) : null
+  const own = workout ? (program.templates.find((t) => t.id === workout.templateId) ?? null) : null
+  const earlierPhase = own && own.phase !== settings.currentPhase ? own.phase : null
+  const template = own ?? (letter ? (program.templates.find((t) => t.phase === settings.currentPhase && t.letter === letter) ?? null) : null)
+  const base = {
+    written: true as const,
+    dateWords: dateWords(today),
+    phaseNumber: settings.currentPhase,
+    phaseName: phaseName(program.phases, settings.currentPhase),
+    phaseHasSessions: program.templates.some((t) => t.phase === settings.currentPhase),
+    week,
+    deload: week !== null && isDeloadWeek(week),
+    yesterday: yesterdayLogged(today, history, program.templates),
+    open: openWorkouts(history.workouts, program.templates, workout?.status === 'in-progress' ? workout.id : null),
+    ownFlags: ownFlagLines(today, history.morningChecks, program.redFlags),
+  }
+  if (scheduled.session === null || week === null) return { ...base, body: { kind: 'before-start', line: `Week 1 starts ${shortDateWords(settings.startDate)}` } }
+  const session = scheduled.session
+  if (letter) {
+    // The calendar's phase week: no down period holds a written band (PROGRAM-QUESTIONS 231).
+    const phaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+    return { ...base, body: { kind: 'lift', letter, label: sessionLabel(session), week, phaseWeek, isDeload: isDeloadWeek(week), template, workout, earlierPhase } }
+  }
+  if (session === 'off') return { ...base, body: { kind: 'off', label: sessionLabel(session, program.weeklyTemplateRows) } }
+  const todays = history.runs.filter((r) => r.date === today)
+  const before = runsInWeek(history.runs, settings.startDate, week).filter((r) => r.date < today)
+  const target = planTarget(program.mileagePlan, week)
+  return {
+    ...base,
+    body: {
+      kind: 'run',
+      label: sessionLabel(session),
+      note: sessionNote(session, program.weeklyTemplateRows),
+      weekMiles: weekMiles([...before, ...todays]),
+      target,
+      capped: false,
+      targetReason: target === null ? `week ${week} is outside the 12-week plan` : 'from the plan',
+      loggedToday: todays,
+    },
+  }
+}
+
+/** What the lift block shows before Start: the gym's changes and the time window, in words. */
+export interface LiftPlanView {
+  movesHeading: string
+  moves: string[]
+  window: string[]
+}
+
+/**
+ * Today's lift block before Start (MovesBlock and FitBlock): in full mode the plan the runner runs
+ * there (`planSession`, with the extra-time pool for the window); in tester mode the session as
+ * written (`writtenSession`): routes only, no rack moves, the window over the written sets, nothing added.
+ */
+export function liftPlanView(
+  mode: EngineMode,
+  input: { template: SessionTemplate; week: number; settings: Settings; history: History; gym: Location; before: IsoDate; minutes: number | null; label: string; byId: ExerciseLookup; items: readonly ItemLike[] },
+): LiftPlanView {
+  const { template, week, settings, history, before, minutes } = input
+  const gym: Gym = { location: input.gym, kit: settings.kit }
+  const warm = warmUpFor(template.phase, gym)
+  if (mode === 'tester') {
+    const plans = writtenSession({ template, week, settings, history, gym })
+    const moves = liftChanges({ plans: plans.map((p) => ({ slot: p.slot, exercise: p.exercise, route: p.route, prescriptions: [] })), byId: input.byId, items: input.items, rackLb: input.gym.dumbbellMaxLb })
+    const fit = writtenFit(plans, settings.restTimerSeconds, minutes, { warmUpMinutes: warm.total })
+    const nameOf = (slotId: string) => plans.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId
+    return { movesHeading: movesHeading(input.gym.name, input.label, moves.length), moves, window: windowWords(fit, minutes, plans.length, nameOf, warm) }
+  }
+  const plans = planSession({ template, week, settings, history, gym, before })
+  const moves = liftChanges({ plans, byId: input.byId, items: input.items, rackLb: input.gym.dumbbellMaxLb })
+  const extend = sessionExtensions(template, history, settings, week, before)
+  const withExtra = planSession({ template, week, settings, history, gym, before, extend })
+  // Door to door (PROGRAM-QUESTIONS 166): the warm-up at this gym off the top, and the warm-up sets the runner will show counted.
+  const fit = windowFit(withExtra, settings.restTimerSeconds, minutes, { warmUpMinutes: warm.total, ramps: true })
+  const nameOf = (slotId: string) => withExtra.find((p) => p.slot.id === slotId)?.exercise.name ?? slotId
+  return { movesHeading: movesHeading(input.gym.name, input.label, moves.length), moves, window: windowWords(fit, minutes, withExtra.filter((p) => !isExtraSlotId(p.slot.id)).length, nameOf, warm) }
+}
+
+/** Everything the Today screen renders, from today's date, the settings, the stored history and the program. In tester mode, the written view: no engine call at all. */
+export function todayView(input: { mode: 'full'; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView
+export function todayView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView | TesterTodayView
+export function todayView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike }): TodayView | TesterTodayView {
+  if (input.mode === 'tester') return testerTodayView(input)
   const { today, settings, history, program } = input
   const scheduled = scheduledSession(today, settings.startDate, program.weeklyTemplate, history.sessionMoves)
   const week = scheduled.session === null ? null : scheduled.week
@@ -355,6 +611,8 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     deload: week !== null && isDeloadWeek(week),
     yesterday: yesterdayReadings(today, history, program.templates, settings.injuredSide),
     open: openWorkouts(history.workouts, program.templates, workout?.status === 'in-progress' ? workout.id : null),
+    lateFlags: lateFlagNotes(history.morningChecks, today, program.redFlags).map(lateFlagWords),
+    downPeriod: null,
   }
 
   const stop = stopMessage(settings.redFlag, program.redFlags)
@@ -363,21 +621,25 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     return { ...base, body: { kind: 'before-start', line: `Week 1 starts ${shortDateWords(settings.startDate)}` } }
   }
 
+  const periods = history.downPeriods ?? []
+  const withPeriod = { ...base, downPeriod: downPeriodView(today, periods) }
   const session = scheduled.session
-  const phaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  // A down period holds the phase-week bands (the tempo among them) where it began (PROGRAM-QUESTIONS 188).
+  const calendarPhaseWeek = phaseWeekOf(Math.max(week, settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  const phaseWeek = bandWeek({ date: today, phaseWeek: calendarPhaseWeek, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods })
   if (letter) {
     const [record] = workout && workout.status === 'finished' ? attachChecks([workout], history.setLogs, history.morningChecks) : []
     const reading = record ? workoutReading(record, settings.injuredSide) : null
     const checkDone = record?.morningCheck !== undefined
     return {
-      ...base,
+      ...withPeriod,
       body: { kind: 'lift', letter, label: sessionLabel(session), week, phaseWeek, isDeload: isDeloadWeek(week), template, workout, earlierPhase, reading, checkDone },
     }
   }
-  if (session === 'off') return { ...base, body: { kind: 'off', label: sessionLabel(session, program.weeklyTemplateRows) } }
+  if (session === 'off') return { ...withPeriod, body: { kind: 'off', label: sessionLabel(session, program.weeklyTemplateRows) } }
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
-  const target = targetForWeek(program.mileagePlan, week, settings.startDate, history.runs, readings)
+  const target = targetForWeek(program.mileagePlan, week, settings.startDate, history.runs, readings, periods)
   const before = runsInWeek(history.runs, settings.startDate, week).filter((r) => r.date < today)
   const todays = history.runs.filter((r) => r.date === today)
   const check = history.morningChecks.find((c) => c.date === today)
@@ -390,9 +652,11 @@ export function todayView(input: { today: IsoDate; settings: Settings; history: 
     currentPhase: settings.currentPhase,
     phaseWeek,
     morning,
+    calendarPhaseWeek,
+    bandNote: bandHeldNote({ date: today, calendarPhaseWeek, band: phaseWeek, periods }),
   })
   return {
-    ...base,
+    ...withPeriod,
     body: {
       kind: 'run',
       label: sessionLabel(session),
@@ -574,8 +838,22 @@ export function runSuggestionAtGym(
  * a week old, or, never exported, once the first thing logged is (src/rules/backup.ts
  * `exportNudge`); null otherwise, and with nothing logged.
  */
-export function exportLine(lastExportedAt: IsoDateTime | undefined, today: IsoDate, history: Pick<History, 'workouts' | 'runs' | 'morningChecks' | 'gateTests'>): string | null {
-  const nudge = exportNudge(lastExportedAt, today, loggedRange(history).first)
+export function exportLine(lastExportedAt: IsoDateTime | undefined, today: IsoDate, history: Pick<History, 'workouts' | 'runs' | 'morningChecks' | 'gateTests'>, timeZone: string): string | null {
+  const nudge = exportNudge(lastExportedAt, today, loggedRange(history).first, timeZone)
   if (!nudge) return null
   return nudge.kind === 'since-export' ? `No export in ${nudge.days} days` : `No export yet; the logs go back ${nudge.days} days`
+}
+
+// ---- The KOOS due line (Batch A): monthly means 28 days, PROGRAM-QUESTIONS 158 ----
+
+/**
+ * Today's one quiet line about the questionnaire, in the export line's shape: "A KOOS check is
+ * due" once the latest entry is 28 or more days old, or none is stored yet (src/rules/koos.ts
+ * `koosDue`); null otherwise, and while the entries are still loading — a line that flashes
+ * before the read lands would say something wrong. It routes to the form and carries NO score:
+ * scores show on Progress only.
+ */
+export function koosLine(entries: readonly KoosEntry[] | undefined, today: IsoDate): string | null {
+  if (entries === undefined) return null
+  return koosDue(entries, today) ? 'A KOOS check is due' : null
 }

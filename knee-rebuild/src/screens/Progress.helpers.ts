@@ -1,11 +1,16 @@
 import type { History } from '../db/repo.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { addDays, daysBetween, weekOf } from '../rules/calendar.ts'
 import { attachChecks, subjectReadings, type SubjectReading, type WorkoutRecord } from '../rules/history.ts'
 import { awaitingMorningCheck, consecutiveCleanDays, loadSeries, milesSeries, symmetryLeftOut, symmetrySeries, type LoadPoint, type MilesWeek, type SymmetryLeftOut, type SymmetryPoint } from '../rules/progress.ts'
 import { ACUTE_HIGH, ACUTE_LOW, acuteChronic, hrPair, trainingLoads, weeklyTrainingLoads, type AcuteChronic, type Band, type HrPair, type TrainingLoadEntry, type TrainingLoadWeek } from '../rules/trainingLoad.ts'
+import { KOOS_SUBSCALES, KOOS_SUBSCALE_WORDS, koosDue, koosSeries, koosSubscaleScore } from '../rules/koos.ts'
 import { latestReading, replacesToday, vo2Problem, vo2Series } from '../rules/vo2.ts'
+import { weekAdherence, type WeekAdherence } from '../rules/weekPlan.ts'
+import { downPeriodWords } from '../rules/downPeriod.ts'
+import { TAG_MIN_SAMPLE, anyTagged, tagCounts, type ReadingCounts } from '../rules/morningTags.ts'
 import { LOWER_BODY_PATTERNS } from '../rules/wholeKnee.ts'
-import type { Exercise, Gate, HrSettings, IsoDate, MileageWeek, MorningCheck, Program, Run, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading } from '../schema/index.ts'
+import type { DownPeriod, Exercise, Gate, HrSettings, IsoDate, KoosEntry, MileageWeek, MorningCheck, MorningTag, Program, Run, SessionMove, SessionTemplate, SetLog, SetSide, Settings, Side, Vo2Reading, WeeklyTemplate, Workout } from '../schema/index.ts'
 import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
 
 /**
@@ -16,8 +21,8 @@ import { runLabel, shortDateWords, workoutLabel } from './Today.helpers.ts'
  * the answers for the screen and says them in words.
  */
 
-export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs'>
-export type ProgramLike = Pick<Program, 'exercises' | 'gates' | 'mileagePlan' | 'templates'>
+export type HistoryLike = Pick<History, 'workouts' | 'setLogs' | 'morningChecks' | 'runs' | 'sessionMoves' | 'downPeriods'>
+export type ProgramLike = Pick<Program, 'exercises' | 'gates' | 'mileagePlan' | 'templates' | 'weeklyTemplate'>
 
 // ---------------------------------------------------------------------------------------------
 // Numbers and dates in words
@@ -998,36 +1003,46 @@ export function ratioWords(ratio: number, band: Band): string {
   return `${printed}×`
 }
 
-const ACUTE_WORDS = 'the 7 days through yesterday'
+/** The spans the skew words name (src/rules' acuteChronic): the 7 days through yesterday, and the 28 days before them. */
+const ACUTE_WORDS = 'the last 7 days'
 const CHRONIC_WORDS = 'the 4 weeks before'
 
-/** The warning: a mark (an arrow and a word, never a color) and its sentence. */
+/**
+ * The warning (Batch B, PROGRAM-QUESTIONS 162): a mark (an arrow and a word, never a color) and its
+ * sentence. Both printed numbers are week-rates, a week at the smoothed recent rate against a week
+ * at the smoothed longer rate, and the sentence says so, so the numbers never contradict the words.
+ */
 export function trainingLoadWarning(ac: AcuteChronic): { mark: string | null; text: string } {
   if (ac.band === 'too-early') {
     return ac.startsOn === null
       ? { mark: null, text: 'Nothing logged yet. The comparison starts 35 days after the first session or run.' }
-      : { mark: null, text: `No comparison yet: it needs 4 weeks logged before ${ACUTE_WORDS}. It starts ${shortDateWords(ac.startsOn)}.` }
+      : { mark: null, text: `No comparison yet: the smoothed rates need 35 days of history. It starts ${shortDateWords(ac.startsOn)}.` }
   }
   if (ac.band === 'none' || ac.ratio === null || ac.chronicWeek === null) {
     return { mark: null, text: `No training load is counted in ${CHRONIC_WORDS} ${ACUTE_WORDS}, so there is nothing to compare against yet.` }
   }
-  const compared = `The 7 days through yesterday carried ${ratioWords(ac.ratio, ac.band)} your average week of ${CHRONIC_WORDS} (${trainingLoadNumber(ac.acute)} against ${trainingLoadNumber(ac.chronicWeek)})`
+  const compared = `Your recent week-rate of training load is ${ratioWords(ac.ratio, ac.band)} your longer rate (${trainingLoadNumber(ac.acute)} against ${trainingLoadNumber(ac.chronicWeek)}, both smoothed through yesterday)`
   if (ac.band === 'high') return { mark: '↑ High', text: `${compared}. A warning only: no session or run changes because of it.` }
   if (ac.band === 'low') return { mark: '↓ Low', text: `${compared}: a drop. A note only: nothing changes because of it.` }
   return { mark: '– Steady', text: `${compared}.` }
 }
 
-/** What pushes the ratio, and which way, one sentence each (src/rules' `skews`, in its order). */
+/**
+ * What pushes the ratio, and which way, one sentence each (src/rules' `skews`, in its order). The
+ * direction is the rules' (from the EWMA weights against the ratio, PROGRAM-QUESTIONS 162d); when
+ * the days behind a line pull both ways it says the ratio can read higher or lower.
+ */
 export function skewLines(ac: AcuteChronic): string[] {
   return ac.skews.map((skew) => {
     const where = skew.window === 'acute' ? ACUTE_WORDS : CHRONIC_WORDS
+    const reads = skew.reads === 'either' ? 'can read higher or lower' : `reads ${skew.reads}`
     if (skew.why === 'deload') {
       return skew.window === 'acute'
-        ? `The 7 days through yesterday include deload days, planned lighter, so the ratio reads ${skew.reads}.`
-        : `The 4 weeks before include a deload week, planned lighter, so the ratio reads ${skew.reads}.`
+        ? `The last 7 days include deload days, planned lighter, so the ratio ${reads}.`
+        : `The 4 weeks before include a deload week, planned lighter, so the ratio ${reads}.`
     }
     const n = (skew.window === 'acute' ? ac.notCountedAcute : ac.notCountedChronic).length
-    return `${n} ${n === 1 ? 'session' : 'sessions'} in ${where} ${n === 1 ? 'isn’t' : 'aren’t'} counted, so the ratio reads ${skew.reads} than it is.`
+    return `${n} ${n === 1 ? 'session' : 'sessions'} in ${where} ${n === 1 ? 'isn’t' : 'aren’t'} counted, so the ratio ${reads} than it is.`
   })
 }
 
@@ -1195,6 +1210,125 @@ export function vo2Entry(input: { value: number | null; readings: readonly Vo2Re
 }
 
 // ---------------------------------------------------------------------------------------------
+// KOOS (Batch A): the five subscale trends in words and numbers; scores show here ONLY, never
+// on the Gates screen (Shawn, Nov 8; PROGRAM-QUESTIONS 158), and they inform and change nothing
+// ---------------------------------------------------------------------------------------------
+
+export interface KoosView {
+  /** One row per subscale, the published order: the name and the trend in words and numbers, or why it has no score. Empty with no entries stored. */
+  rows: { name: string; words: string }[]
+  /** The due line, the same words Today's quiet line uses; null while a recent entry stands. */
+  due: string | null
+  /** Said in place of the trends while nothing is stored. */
+  empty: string
+}
+
+/**
+ * The KOOS section's words, over src/rules/koos.ts. Only this file, the Today helpers (the due
+ * line) and the form's own helpers touch the rule module (src/rules/koos.guard.test.ts pins
+ * that); the screen renders these words. Each subscale's row is its latest scored entry against
+ * the scored entry before it — an entry with too few answers for a subscale is said in words,
+ * never scored (the published missing-data rule) and never breaks the comparison.
+ */
+export function koosView({ entries, today }: { entries: readonly KoosEntry[]; today: IsoDate }): KoosView {
+  const series = koosSeries(entries)
+  const latest = series.at(-1)
+  const due = !koosDue(entries, today) ? null : latest ? `A KOOS check is due — the last entry was ${axisDate(latest.date)}.` : 'A KOOS check is due — none entered yet.'
+  const rows = !latest
+    ? []
+    : KOOS_SUBSCALES.map((subscale) => {
+        const name = KOOS_SUBSCALE_WORDS[subscale]
+        const scored = series
+          .map((entry) => ({ date: entry.date, score: koosSubscaleScore(entry, subscale) }))
+          .filter((point): point is { date: IsoDate; score: number } => point.score !== null)
+        const newest = scored.at(-1)
+        if (!newest) return { name, words: 'not scored yet — too few answers' }
+        const previous = scored.at(-2)
+        if (newest.date !== latest.date) {
+          // The newest entry skipped too many of this subscale's items; the last score still stands, said with its date.
+          return { name, words: `not scored ${axisDate(latest.date)} — too few answers; last ${fmt(newest.score)} on ${axisDate(newest.date)}` }
+        }
+        if (!previous) return { name, words: `${fmt(newest.score)} — ${axisDate(newest.date)}` }
+        const move = newest.score > previous.score ? 'up from' : newest.score < previous.score ? 'down from' : 'unchanged from'
+        return { name, words: `${fmt(newest.score)} — ${axisDate(newest.date)}, ${move} ${fmt(previous.score)} on ${axisDate(previous.date)}` }
+      })
+  return {
+    rows,
+    due,
+    empty: 'No questionnaire entries yet. The KOOS asks 42 questions about the knee over the last week; its five subscales trend here, 100 meaning no problems.',
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Morning tags (Batch D, Shawn's Nov 8 decision 10; PROGRAM-QUESTIONS 177, 178)
+
+/** Each tag as the counts name it: "After poor sleep", and on its own line "Poor sleep". */
+export const TAG_AFTER: Record<MorningTag, string> = {
+  'poor-sleep': 'poor sleep',
+  'long-sitting': 'a long sit or car ride',
+  'on-feet': 'a day on your feet',
+  brace: 'wearing the brace',
+  nsaid: 'an anti-inflammatory',
+  'new-shoes': 'new shoes',
+}
+
+const TAG_NAME: Record<MorningTag, string> = {
+  'poor-sleep': 'Poor sleep',
+  'long-sitting': 'A long sit or car ride',
+  'on-feet': 'A day on your feet',
+  brace: 'Wearing the brace',
+  nsaid: 'An anti-inflammatory',
+  'new-shoes': 'New shoes',
+}
+
+export interface TagRow {
+  tag: MorningTag
+  /** The counts after the tag, or where they stand short of the sample. */
+  line: string
+  /** The paired mornings without the tag, once the tag's own counts show. */
+  without: string | null
+}
+
+export interface TagsView {
+  /** What the counts are, and what they are not. */
+  intro: string
+  /** One line in place of the rows when no tag was ever ticked. */
+  empty: string | null
+  rows: TagRow[]
+}
+
+function readingCount(n: number): string {
+  return `${n} ${n === 1 ? 'reading' : 'readings'}`
+}
+
+function countsWords(c: ReadingCounts): string {
+  return `${readingCount(c.paired)} — ${c.clean} clean, ${c.hold} hold, ${c.backOff} back off.`
+}
+
+/**
+ * The Morning tags section: plain counts of the readings on the mornings after each tag, beside the
+ * paired mornings without it, each shown only from TAG_MIN_SAMPLE paired mornings. A count says what
+ * came after, never why: no score, no chart, no color. The rule module pairs each check with the one
+ * reading it completes (morningTags.ts).
+ */
+export function tagsView(input: { checks: readonly MorningCheck[]; readings: readonly SubjectReading[] }): TagsView {
+  const intro = 'Counts only: the readings on mornings after each tag. A count says what came after, not why.'
+  if (!anyTagged(input.checks)) {
+    return { intro, empty: `No tags yet. They’re optional taps on the morning check; a tag’s counts show once it has ${TAG_MIN_SAMPLE} mornings with a session the day before.`, rows: [] }
+  }
+  const rows = tagCounts(input.checks, input.readings).map((c): TagRow => {
+    if (c.tagged === 0) return { tag: c.tag, line: `${TAG_NAME[c.tag]}: not tagged yet.`, without: null }
+    if (c.paired < TAG_MIN_SAMPLE) {
+      const mornings = `${c.paired} ${c.paired === 1 ? 'morning' : 'mornings'}`
+      return { tag: c.tag, line: `${TAG_NAME[c.tag]}: tagged on ${mornings} with a session the day before. Counts show from ${TAG_MIN_SAMPLE}.`, without: null }
+    }
+    const without = c.without.paired < TAG_MIN_SAMPLE ? `Mornings without it: fewer than ${TAG_MIN_SAMPLE} so far.` : `Mornings without it: ${countsWords(c.without)}`
+    return { tag: c.tag, line: `After ${TAG_AFTER[c.tag]}: ${countsWords(c)}`, without }
+  })
+  return { intro, empty: null, rows }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------------------------
 
@@ -1208,28 +1342,115 @@ export interface ExerciseView {
   leftOut: string[]
 }
 
+// ---------------------------------------------------------------------------------------------
+// Sessions done of those scheduled, per program week (Batch B)
+// ---------------------------------------------------------------------------------------------
+
+export interface AdherenceView {
+  /** The small text over the list; null with nothing to list. */
+  note: string | null
+  /** One line per program week with anything scheduled, newest first. */
+  lines: string[]
+}
+
+const ADHERENCE_NOTE = 'Sessions done, of those scheduled. A record, not a score: a skipped day on a bad knee is the program working.'
+
+/** "Week 6 (so far) · Lifts 1 of 3 · Runs 2 of 3"; a half with nothing scheduled is left out. */
+export function adherenceLine(week: number, counts: WeekAdherence, current: boolean): string {
+  return [
+    `Week ${week}${current ? ' (so far)' : ''}`,
+    ...(counts.liftsScheduled > 0 ? [`Lifts ${counts.liftsDone} of ${counts.liftsScheduled}`] : []),
+    ...(counts.runsScheduled > 0 ? [`Runs ${counts.runsDone} of ${counts.runsScheduled}`] : []),
+  ].join(' · ')
+}
+
+/**
+ * Every program week from 1 to this one, newest first, each with its counts (src/rules'
+ * `weekAdherence`): the weeks the Week screen pages through up to today, so past week 12 it runs on
+ * while the program does. Future weeks aren't listed; nothing before the program is.
+ */
+export function adherenceView(input: {
+  startDate: IsoDate
+  today: IsoDate
+  template: WeeklyTemplate
+  moves: readonly SessionMove[]
+  runs: readonly Run[]
+  workouts: readonly Workout[]
+}): AdherenceView {
+  const current = weekOf(input.today, input.startDate)
+  const lines: string[] = []
+  for (let week = current; week >= 1; week--) {
+    const counts = weekAdherence({ startDate: input.startDate, week, template: input.template, moves: input.moves, runs: input.runs, workouts: input.workouts })
+    if (counts !== null) lines.push(adherenceLine(week, counts, week === current))
+  }
+  return { note: lines.length > 0 ? ADHERENCE_NOTE : null, lines }
+}
+
+/**
+ * Every declared down period as history (Batch E, PROGRAM-QUESTIONS 187), newest first, in the
+ * Week screen's words. Beside the weekly counts and never folded into them: a down period doesn't
+ * change what was scheduled, so the counts carry no annotation and nothing here is a streak.
+ */
+export function downPeriodLines(periods: readonly DownPeriod[]): string[] {
+  return [...periods].sort((a, b) => (a.start < b.start ? 1 : a.start > b.start ? -1 : 0)).map(downPeriodWords)
+}
+
 export interface ProgressView {
-  clean: CleanDaysView
+  /** Null in tester mode (M-U3): nothing is read, so there are no clean days to count. */
+  clean: CleanDaysView | null
+  adherence: AdherenceView
+  /** The down periods, newest first, in words; empty with none declared. */
+  downPeriods: string[]
   exercises: ExerciseRow[]
   refs: SymmetryRef[]
   miles: MilesView
   training: TrainingLoadView
   vo2: Vo2View
+  koos: KoosView
+  /** Null in tester mode: the counts are of readings. */
+  tags: TagsView | null
   records: WorkoutRecord[]
 }
 
-/** Everything the screen shows that doesn't depend on the exercise picked. The VO2 readings come in on their own, never through History: no rule reads them. */
-export function progressView(input: { today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[] }): ProgressView {
+/** The screen's lead for the mode: tester mode shows no clean days and no tag counts. */
+export function progressLead(mode: EngineMode): string {
+  return mode === 'tester'
+    ? 'What is logged on this phone, over time: sessions done, loads, symmetry, miles, training load, VO2 max and KOOS.'
+    : 'What is logged on this phone, over time: clean days, loads, symmetry, miles, training load, VO2 max, KOOS and morning tags.'
+}
+
+/** Everything the screen shows that doesn't depend on the exercise picked. The VO2 readings and KOOS entries come in on their own, never through History: no rule reads them. */
+export function progressView(input: { mode: EngineMode; today: IsoDate; settings: Settings; history: HistoryLike; program: ProgramLike; hrSettings?: HrSettings | null; vo2Readings?: readonly Vo2Reading[]; koosEntries?: readonly KoosEntry[] }): ProgressView {
   const { today, settings, history, program } = input
   const records = attachChecks(history.workouts, history.setLogs, history.morningChecks)
+  if (input.mode === 'tester') {
+    // Tester mode (M-U3, PROGRAM-QUESTIONS 227): what was logged, with no reading taken: no clean days, no tag counts, no down periods, no gate lines on symmetry.
+    return {
+      clean: null,
+      adherence: adherenceView({ startDate: settings.startDate, today, template: program.weeklyTemplate, moves: history.sessionMoves, runs: history.runs, workouts: history.workouts }),
+      downPeriods: [],
+      exercises: loggedExercises(records, program.exercises),
+      refs: [],
+      miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),
+      training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
+      vo2: vo2View({ readings: input.vo2Readings ?? [] }),
+      koos: koosView({ entries: input.koosEntries ?? [], today }),
+      tags: null,
+      records,
+    }
+  }
   const readings = subjectReadings(records, history.runs, history.morningChecks, settings.injuredSide)
   return {
     clean: cleanDaysView({ readings, today, records, runs: history.runs, checks: history.morningChecks, templates: program.templates }),
+    adherence: adherenceView({ startDate: settings.startDate, today, template: program.weeklyTemplate, moves: history.sessionMoves, runs: history.runs, workouts: history.workouts }),
+    downPeriods: downPeriodLines(history.downPeriods ?? []),
     exercises: loggedExercises(records, program.exercises),
     refs: symmetryRefs(program.gates),
     miles: milesView(program.mileagePlan, history.runs, settings.startDate, today),
     training: trainingLoadView({ records, runs: history.runs, startDate: settings.startDate, today, templates: program.templates, hrSettings: input.hrSettings ?? null }),
     vo2: vo2View({ readings: input.vo2Readings ?? [] }),
+    koos: koosView({ entries: input.koosEntries ?? [], today }),
+    tags: tagsView({ checks: history.morningChecks, readings }),
     records,
   }
 }

@@ -17,7 +17,7 @@ const CHECKLIST = equipmentChecklist(PROGRAM.equipment, PROGRAM.exercises)
 /**
  * Every gym the lists offer (`#/locations`, from More): its name, "Active" on the active one, its
  * rack and how much of the checklist it lacks; New, Use here, Edit and Archive (two inline taps;
- * no delete). Archiving the active gym returns to Planet Fitness and says so.
+ * no delete). Archiving the active gym returns to the home gym and says so.
  */
 export function Locations() {
   const locations = useLocations()
@@ -37,14 +37,16 @@ export function Locations() {
   }
   if (settings === null || active === null) {
     return (
-      <Screen title={TITLE} lead="No gyms yet.">
-        <p className="text-body text-on-dark-dim">Open the app from Today once so it can write the home gym, then come back.</p>
+      <Screen title={TITLE} lead="This phone isn’t set up yet.">
+        <Button wide onClick={() => navigate({ name: 'welcome' })}>
+          Set up
+        </Button>
       </Screen>
     )
   }
 
   const rows = locationRows(locations, active.id, CHECKLIST, (location) => availableAt({ location, kit: settings.kit }))
-  const homeName = locationOrHome(locations, PLANET_FITNESS_LOCATION_ID)?.name ?? 'Planet Fitness'
+  const homeName = locationOrHome(locations, PLANET_FITNESS_LOCATION_ID)?.name ?? 'the home gym'
 
   const use = async (row: LocationRow) => {
     setBusy(true)

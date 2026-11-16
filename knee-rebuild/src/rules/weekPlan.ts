@@ -1,7 +1,8 @@
-import type { Day, DaySession, IsoDate, MileageWeek, ReadingResult, Run, RunType, SessionMove, WeeklyTemplate, Workout } from '../schema/index.ts'
+import type { Day, DaySession, DownPeriod, IsoDate, MileageWeek, ReadingResult, Run, RunType, SessionMove, WeeklyTemplate, Workout } from '../schema/index.ts'
 import { DAYS, dateOf, isDeloadWeek, weekOf, weekSchedule } from './calendar.ts'
+import { weekHeld } from './downPeriod.ts'
 import type { SubjectReading } from './history.ts'
-import { isSwap, runSplit, weekMiles, weekTarget, type WeekTarget } from './mileage.ts'
+import { isSwap, planTarget, runSplit, weekMiles, weekTarget, type WeekTarget } from './mileage.ts'
 
 export function runsInWeek(runs: readonly Run[], startDate: IsoDate, week: number): Run[] {
   return runs.filter((r) => weekOf(r.date, startDate) === week)
@@ -15,8 +16,42 @@ export function readingsInWeek(readings: readonly SubjectReading[], startDate: I
  * Rule 7 assembled from the logs: the plan's number, capped at last week's actual miles when any
  * run or workout last week read hold or back-off. A week with nothing logged caps nothing: it is
  * unknown, and the plan is already a ceiling (PROGRAM-QUESTIONS 56).
+ *
+ * Down periods (Batch E, PROGRAM-QUESTIONS 183) only ever lower it. A week whose Monday a period
+ * covers (`weekHeld`) doesn't step up: it holds at last week's target, as down periods set that too
+ * (so held weeks in a row hold the same number). The weeks after one climb back one plan step a week
+ * from last week's (plan(w) − plan(w−1), so a flat deload week stays flat) until they meet rule 7's
+ * number. Rule 7's cap is always in the number first, and the lower of the two stands.
  */
-export function targetForWeek(plan: readonly MileageWeek[], week: number, startDate: IsoDate, runs: readonly Run[], readings: readonly SubjectReading[]): WeekTarget {
+export function targetForWeek(
+  plan: readonly MileageWeek[],
+  week: number,
+  startDate: IsoDate,
+  runs: readonly Run[],
+  readings: readonly SubjectReading[],
+  periods: readonly DownPeriod[] = [],
+): WeekTarget {
+  const own = ruleSeven(plan, week, startDate, runs, readings)
+  if (week <= 1 || periods.length === 0 || own.target === null) return own
+  const last = targetForWeek(plan, week - 1, startDate, runs, readings, periods)
+  if (last.target === null) return own
+  if (weekHeld(startDate, week, periods)) {
+    if (own.target <= last.target) return own
+    return { target: last.target, capped: true, reason: `down period: held at last week’s ${last.target} miles`, downPeriod: { kind: 'held', lastWeek: last.target } }
+  }
+  if (last.downPeriod === undefined) return own
+  const step = Math.max(0, (planTarget(plan, week) ?? 0) - (planTarget(plan, week - 1) ?? 0))
+  const ceiling = Math.round((last.target + step) * 100) / 100
+  if (own.target <= ceiling) return own
+  return {
+    target: ceiling,
+    capped: true,
+    reason: `after a down period: up one plan step from last week’s ${last.target} miles`,
+    downPeriod: { kind: 'climbing', lastWeek: last.target },
+  }
+}
+
+function ruleSeven(plan: readonly MileageWeek[], week: number, startDate: IsoDate, runs: readonly Run[], readings: readonly SubjectReading[]): WeekTarget {
   if (week <= 1) return weekTarget(plan, week, null)
   const previousReadings = readingsInWeek(readings, startDate, week - 1).map((r) => r.result)
   if (previousReadings.length === 0) return weekTarget(plan, week, null)
@@ -64,6 +99,10 @@ export function suggestRun(input: {
   phaseWeek: number
   /** Today's morning reading, or null when no check was logged today (the miles stand; the hard parts wait). */
   morning: ReadingResult | null
+  /** The calendar's phase week, when a down period holds `phaseWeek` behind it (Batch E). */
+  calendarPhaseWeek?: number
+  /** Why the band is held (`bandHeldNote`), said when it costs the tempo. */
+  bandNote?: string | null
 }): RunSuggestion | null {
   const type = runTypeFor(input.session)
   if (!type) return null
@@ -104,6 +143,7 @@ export function suggestRun(input: {
   }
   if (strides) reasons.push('finish with 4 × 15 s strides building to about 85%, full walk-back between')
   if (tempo) reasons.push('carry a 2 × 5 min comfortably-hard segment with 3 min easy between')
+  if (type === 'long' && phase3 && !plannedTempo && input.bandNote && (input.calendarPhaseWeek ?? 0) >= 3) reasons.push(`no tempo this week: ${input.bandNote}`)
   if (fasterAllowed) reasons.push('one faster effort is allowed today')
   return { type, miles, headline: runHeadline(swapSuggested, miles, tempo || fasterAllowed), strides, tempo, fasterAllowed, swapSuggested, reasons }
 }
@@ -170,6 +210,57 @@ export function weekDays(input: {
   })
 }
 
+/** One program week's sessions done, of those scheduled (Batch B). No streak: a count per week, nothing carried over. */
+export interface WeekAdherence {
+  liftsDone: number
+  liftsScheduled: number
+  runsDone: number
+  runsScheduled: number
+}
+
+/**
+ * Sessions done of those scheduled in one program week (Batch B, PROGRAM-QUESTIONS 164): the weekly
+ * template after moves (`weekSchedule`, so a moved session counts on its moved day), each lift or run
+ * day done by `sessionDone`, as the Week screen reads it. A swap counts as the run it stood in for,
+ * an ended-early lift counts (it happened), a run on a lift day doesn't make the lift done, and a
+ * run on an off day counts toward nothing. A deload week is an ordinary scheduled week. Null before
+ * the program or for a week with nothing scheduled. Only the date of a run is read. It is a record,
+ * not a score: there is no streak and nothing carried from week to week, because a day skipped on a
+ * bad knee is the program working.
+ */
+export function weekAdherence(input: {
+  startDate: IsoDate
+  week: number
+  template: WeeklyTemplate
+  moves: readonly SessionMove[]
+  runs: readonly Pick<Run, 'date'>[]
+  workouts: readonly Pick<Workout, 'date' | 'status'>[]
+}): WeekAdherence | null {
+  if (input.week < 1) return null
+  const schedule = weekSchedule(input.template, input.week, input.moves)
+  const counts: WeekAdherence = { liftsDone: 0, liftsScheduled: 0, runsDone: 0, runsScheduled: 0 }
+  for (const day of DAYS) {
+    const session = schedule[day]
+    const isLift = session.startsWith('lift:')
+    const isRun = runTypeFor(session) !== null
+    if (!isLift && !isRun) continue
+    const date = dateOf(input.startDate, input.week, day)
+    const done = sessionDone(
+      session,
+      input.runs.filter((r) => r.date === date),
+      input.workouts.filter((w) => w.date === date),
+    )
+    if (isLift) {
+      counts.liftsScheduled += 1
+      if (done) counts.liftsDone += 1
+    } else {
+      counts.runsScheduled += 1
+      if (done) counts.runsDone += 1
+    }
+  }
+  return counts.liftsScheduled + counts.runsScheduled === 0 ? null : counts
+}
+
 export interface WeekMiles {
   target: WeekTarget
   miles: number
@@ -177,7 +268,14 @@ export interface WeekMiles {
   swaps: number
 }
 
-export function weekMilesSummary(plan: readonly MileageWeek[], week: number, startDate: IsoDate, runs: readonly Run[], readings: readonly SubjectReading[]): WeekMiles {
+export function weekMilesSummary(
+  plan: readonly MileageWeek[],
+  week: number,
+  startDate: IsoDate,
+  runs: readonly Run[],
+  readings: readonly SubjectReading[],
+  periods: readonly DownPeriod[] = [],
+): WeekMiles {
   const own = runsInWeek(runs, startDate, week)
-  return { target: targetForWeek(plan, week, startDate, runs, readings), miles: weekMiles(own), sessions: own.length, swaps: own.filter(isSwap).length }
+  return { target: targetForWeek(plan, week, startDate, runs, readings, periods), miles: weekMiles(own), sessions: own.length, swaps: own.filter(isSwap).length }
 }

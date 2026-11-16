@@ -120,7 +120,7 @@ const BOTH = { name: 'Planet Fitness', available: new Set(['elliptical', 'rower'
 const ROWER_ONLY = { name: 'Marriott Downtown', available: new Set(['rower', 'treadmill']) }
 const NEITHER = { name: 'Marriott Downtown', available: new Set(['treadmill']) }
 
-const base = { picked: { date: null, type: null }, settings: settings(), history: history(), program: PROGRAM, gym: BOTH }
+const base = { mode: 'full' as const, picked: { date: null, type: null }, settings: settings(), history: history(), program: PROGRAM, gym: BOTH }
 
 describe('dateChoices', () => {
   it('is empty before the program starts', () => {
@@ -139,7 +139,7 @@ describe('dateChoices', () => {
     expect(dateChoices('2026-11-09', START)).toContain('2026-11-08')
   })
   it('says which days can be logged, and how a late run reads', () => {
-    expect(dayChoicesNote()).toBe('The last 14 days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold.')
+    expect(dayChoicesNote('full')).toBe('The last 14 days can be logged. A run logged late is read like any other: with no morning check the day after, it reads hold at best until that morning’s check is logged. For yesterday that is this morning’s check; for an earlier day the app offers it after you save.')
   })
   it('names each choice by its weekday, and today as Today', () => {
     expect(dayChoiceWords('2026-11-05', '2026-11-05')).toBe('Today')
@@ -661,23 +661,29 @@ describe('newRunId', () => {
 
 describe('loggedWords', () => {
   it('today’s run: tomorrow’s morning check reads it', () => {
-    expect(loggedWords(run('2026-11-04', 3), '2026-11-04', [])).toBe('Logged. Tomorrow’s morning check reads it.')
+    expect(loggedWords('full', run('2026-11-04', 3), '2026-11-04', [])).toBe('Logged. Tomorrow’s morning check reads it.')
   })
   it('an earlier run already covered by a check names that check', () => {
-    expect(loggedWords(run('2026-11-02', 3), '2026-11-05', [check('2026-11-03')])).toBe('Logged for Monday Nov 2. The morning check from Tuesday Nov 3 reads it.')
+    expect(loggedWords('full', run('2026-11-02', 3), '2026-11-05', [check('2026-11-03')])).toBe('Logged for Monday Nov 2. The morning check from Tuesday Nov 3 reads it.')
   })
   it('yesterday’s run: this morning’s check reads it, even one saved before the run and linked to the lift', () => {
-    expect(loggedWords(run('2026-11-04', 3), '2026-11-05', [])).toBe('Logged for yesterday, Wednesday Nov 4. This morning’s check reads it.')
+    expect(loggedWords('full', run('2026-11-04', 3), '2026-11-05', [])).toBe('Logged for yesterday, Wednesday Nov 4. This morning’s check reads it.')
     const linked = check('2026-11-05', { appliesTo: { kind: 'workout', id: 'w' } })
-    expect(loggedWords(run('2026-11-04', 3), '2026-11-05', [linked])).toBe('Logged for Wednesday Nov 4. The morning check from Thursday Nov 5 reads it.')
+    expect(loggedWords('full', run('2026-11-04', 3), '2026-11-05', [linked])).toBe('Logged for Wednesday Nov 4. The morning check from Thursday Nov 5 reads it.')
   })
   it('an older run on a day whose next-morning check linked the lift is read by that check', () => {
     const linked = check('2026-11-04', { appliesTo: { kind: 'workout', id: 'w' } })
-    expect(loggedWords(run('2026-11-03', 2), '2026-11-05', [linked])).toBe('Logged for Tuesday Nov 3. The morning check from Wednesday Nov 4 reads it.')
+    expect(loggedWords('full', run('2026-11-03', 2), '2026-11-05', [linked])).toBe('Logged for Tuesday Nov 3. The morning check from Wednesday Nov 4 reads it.')
   })
   it('an older run no check covers reads as the engine reads it without one', () => {
-    expect(loggedWords(run('2026-11-02', 3), '2026-11-05', [])).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads hold.')
-    expect(loggedWords(run('2026-11-02', 3, 'easy', 7), '2026-11-05', [])).toContain('reads back off')
+    expect(loggedWords('full', run('2026-11-02', 3), '2026-11-05', [])).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads hold.')
+    expect(loggedWords('full', run('2026-11-02', 3, 'easy', 7), '2026-11-05', [])).toContain('reads back off')
+  })
+  it('inside the window, a run no check covers reads hold until that morning’s check is logged late; back off stays back off (Batch D)', () => {
+    expect(loggedWords('full', run('2026-11-02', 3), '2026-11-05', [], true)).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads hold until you log that morning’s check.')
+    expect(loggedWords('full', run('2026-11-02', 3, 'easy', 7), '2026-11-05', [], true)).toBe('Logged for Monday Nov 2. No morning check from the day after covers it, so it reads back off.')
+    // Yesterday’s run goes to this morning’s check, never a late one.
+    expect(loggedWords('full', run('2026-11-04', 3), '2026-11-05', [], true)).toBe('Logged for yesterday, Wednesday Nov 4. This morning’s check reads it.')
   })
 })
 
@@ -692,5 +698,26 @@ describe('errorWords', () => {
   it('says a rejected write in words', () => {
     expect(errorWords(new Error('quota exceeded'))).toBe('quota exceeded')
     expect(errorWords('')).toBe('no reason was given')
+  })
+})
+
+describe('a down period in the run logger (Batch E, PROGRAM-QUESTIONS 183, 188)', () => {
+  const P1 = { id: 'dp-2026-11-14', start: '2026-11-14', plannedEnd: '2026-11-20', declaredAt: '2026-11-14T13:00:00.000Z' }
+  it('a run logged into a held week sees the held target, and says why', () => {
+    const view = formView({ ...base, today: '2026-11-18', history: history({ downPeriods: [P1] }) })
+    expect(view.summary.target).toMatchObject({ target: 11, capped: true, reason: 'down period: held at last week’s 11 miles' })
+    expect(weekLine(view.summary, null)).toContain('down period: held at last week’s 11 miles')
+    expect(view.suggestion?.miles).toBe(3.25)
+    expect(formView({ ...base, today: '2026-11-18' }).summary.target.target).toBe(12)
+  })
+  it('the tempo waits while a period holds the band; the day after, it doesn’t', () => {
+    // Phase 3 entered in week 8: phase week 3 starts Mon Jan 4. A period from Sat Jan 2 holds Friday Jan 8 in phase week 2.
+    const p = { ...P1, id: 'dp-2027-01-02', start: '2027-01-02', plannedEnd: '2027-01-08' }
+    const clean = check('2027-01-08')
+    const s = settings({ currentPhase: 3, phaseEnteredWeek: 8 })
+    const held = formView({ ...base, today: '2027-01-08', settings: s, history: history({ downPeriods: [p], morningChecks: [clean] }) })
+    const free = formView({ ...base, today: '2027-01-08', settings: s, history: history({ morningChecks: [clean] }) })
+    expect(held.suggestion?.tempo).toBe(false)
+    expect(free.suggestion?.tempo).toBe(true)
   })
 })

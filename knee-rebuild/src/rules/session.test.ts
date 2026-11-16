@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SessionTemplate, type Slot } from '../schema/index.ts'
-import { phaseLogsBothSides, phaseRunsExercise, phaseWeekOf, slotsForPhaseWeek } from './session.ts'
+import { phaseLogsBothSides, phaseRunsExercise, phaseWeekOf, slotRunsInPhaseWeek, slotsForPhaseWeek } from './session.ts'
 
 function slot(id: string, order: number, phaseWeeks?: [number, number | null]): Slot {
   return {
@@ -42,6 +42,14 @@ describe('slotsForPhaseWeek', () => {
   it('keeps an open-ended band running however long the phase lasts', () => {
     expect(ids(5)).toEqual(['late', 'always'])
     expect(ids(9)).toEqual(['late', 'always'])
+  })
+  it('one slot at a time (slotRunsInPhaseWeek, which the Summary’s set count reads): both ends of a band included', () => {
+    expect(slotRunsInPhaseWeek({ phaseWeeks: [3, 4] }, 2)).toBe(false)
+    expect(slotRunsInPhaseWeek({ phaseWeeks: [3, 4] }, 3)).toBe(true)
+    expect(slotRunsInPhaseWeek({ phaseWeeks: [3, 4] }, 4)).toBe(true)
+    expect(slotRunsInPhaseWeek({ phaseWeeks: [3, 4] }, 5)).toBe(false)
+    expect(slotRunsInPhaseWeek({ phaseWeeks: [5, null] }, 40)).toBe(true)
+    expect(slotRunsInPhaseWeek({}, 1)).toBe(true)
   })
 })
 

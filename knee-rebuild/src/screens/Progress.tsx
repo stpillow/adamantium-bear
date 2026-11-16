@@ -1,28 +1,33 @@
 import { useMemo, useRef, useState, type RefObject } from 'react'
+import { useEngineMode } from '../app/mode.ts'
 import { navigate } from '../app/router.ts'
 import { PROGRAM } from '../app/session.ts'
 import { useToday } from '../app/today.ts'
 import { Button } from '../components/Button.tsx'
 import { NumberField } from '../components/NumberField.tsx'
 import { Screen } from '../components/Screen.tsx'
-import { useHistory, useHrSettings, useSettings, useVo2Readings } from '../db/hooks.ts'
+import { useHistory, useHrSettings, useKoosEntries, useSettings, useVo2Readings } from '../db/hooks.ts'
 import { deleteVo2Reading, saveVo2Reading, type History } from '../db/repo.ts'
-import type { IsoDate, Settings, Vo2Reading } from '../schema/index.ts'
+import type { IsoDate, KoosEntry, Settings, Vo2Reading } from '../schema/index.ts'
 import {
   LIST_LIMIT,
   exerciseView,
   loadSubtitle,
   pickedRow,
+  progressLead,
   progressView,
   symmetryEmptyWords,
   symmetryName,
   visibleRows,
   vo2Entry,
+  type AdherenceView,
   type CleanDaysView,
   type ExerciseRow,
   type ExerciseView,
   type MilesView,
   type SymmetryRef,
+  type KoosView,
+  type TagsView,
   type TrainingLoadView,
   type Vo2View,
 } from './Progress.helpers.ts'
@@ -47,8 +52,10 @@ export function Progress() {
   const history = useHistory()
   // The VO2 readings load with the history, so the section never says "No readings yet" before the read lands (metrics phase 3).
   const vo2Readings = useVo2Readings()
+  // The KOOS entries the same way (Batch A): they come in on their own, never through History.
+  const koosEntries = useKoosEntries()
 
-  if (settings === undefined || history === undefined || vo2Readings === undefined) {
+  if (settings === undefined || history === undefined || vo2Readings === undefined || koosEntries === undefined) {
     return (
       <Screen title={TITLE} lead="Opening storage…">
         <p className="text-body text-on-dark-dim">Reading the logged sessions, runs and morning checks from the phone.</p>
@@ -65,17 +72,21 @@ export function Progress() {
       </Screen>
     )
   }
-  return <ProgressBody today={today} settings={settings} history={history} vo2Readings={vo2Readings} />
+  return <ProgressBody today={today} settings={settings} history={history} vo2Readings={vo2Readings} koosEntries={koosEntries} />
 }
 
-function ProgressBody({ today, settings, history, vo2Readings }: { today: IsoDate; settings: Settings; history: History; vo2Readings: Vo2Reading[] }) {
+function ProgressBody({ today, settings, history, vo2Readings, koosEntries }: { today: IsoDate; settings: Settings; history: History; vo2Readings: Vo2Reading[]; koosEntries: KoosEntry[] }) {
   const [picked, setPicked] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const chartRef = useRef<HTMLDivElement | null>(null)
 
   // Shawn's max and resting HR (metrics phase 2): only the HR-load line reads them; undefined while loading reads as none.
   const hrSettings = useHrSettings()
-  const view = useMemo(() => progressView({ today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings }), [today, settings, history, hrSettings, vo2Readings])
+  const { mode } = useEngineMode()
+  const view = useMemo(
+    () => progressView({ mode, today, settings, history, program: PROGRAM, hrSettings: hrSettings ?? null, vo2Readings, koosEntries }),
+    [mode, today, settings, history, hrSettings, vo2Readings, koosEntries],
+  )
   const row = pickedRow(view.exercises, picked)
   const exercise = useMemo(
     () => (row ? exerciseView({ records: view.records, setLogs: history.setLogs, row, injuredSide: settings.injuredSide, catalog: PROGRAM.exercises }) : null),
@@ -90,31 +101,66 @@ function ProgressBody({ today, settings, history, vo2Readings }: { today: IsoDat
   }
 
   return (
-    <Screen title={TITLE} lead="What is logged on this phone, over time: clean days, loads, symmetry, miles, training load and VO2 max.">
-      <CleanDays clean={view.clean} />
+    <Screen title={TITLE} lead={progressLead(mode)}>
+      <CleanDays clean={view.clean} adherence={view.adherence} downPeriods={view.downPeriods} />
       <LoadSection rows={view.exercises} row={row} exercise={exercise} showAll={showAll} onShowAll={setShowAll} onPick={pick} chartRef={chartRef} />
       <SymmetrySection row={row} exercise={exercise} settings={settings} refs={view.refs} />
       <MilesSection miles={view.miles} />
       <TrainingLoadSection training={view.training} />
       <Vo2Section vo2={view.vo2} readings={vo2Readings} today={today} />
+      <KoosSection koos={view.koos} />
+      {view.tags ? <TagsSection tags={view.tags} /> : null}
     </Screen>
   )
 }
 
-/** 1. The stat: a Fraunces number with its unit, and the line that makes it mean something. */
-function CleanDays({ clean }: { clean: CleanDaysView }) {
+/**
+ * 1. The stat: a Fraunces number with its unit, and the line that makes it mean something. Under it
+ * (Batch B), each program week's sessions done of those scheduled, in words, newest first: a record
+ * beside the count, never a streak.
+ */
+function CleanDays({ clean, adherence, downPeriods }: { clean: CleanDaysView | null; adherence: AdherenceView; downPeriods: string[] }) {
+  // Tester mode (M-U3): no count of clean days, only the sessions done by week.
   return (
-    <section aria-label="Consecutive clean days" className={SECTION}>
-      <h2 className={HEADING}>Consecutive clean days</h2>
-      <p className="flex flex-col gap-1">
-        <span className="font-display text-stat text-on-dark">{clean.count}</span>
-        <span className="text-body text-on-dark-dim">
-          {/* A text token, not green: on this screen green-bright marks the injured side in the charts, and text never wears a data color. */}
-          {clean.unit ? <span className="text-on-dark">{clean.unit} </span> : null}
-          {clean.context}
-        </span>
-      </p>
-      {clean.note ? <p className="text-small text-on-dark-muted">{clean.note}</p> : null}
+    <section aria-label={clean ? 'Consecutive clean days' : 'Sessions done by week'} className={SECTION}>
+      <h2 className={HEADING}>{clean ? 'Consecutive clean days' : 'Sessions done by week'}</h2>
+      {clean ? (
+        <>
+          <p className="flex flex-col gap-1">
+            <span className="font-display text-stat text-on-dark">{clean.count}</span>
+            <span className="text-body text-on-dark-dim">
+              {/* A text token, not green: on this screen green-bright marks the injured side in the charts, and text never wears a data color. */}
+              {clean.unit ? <span className="text-on-dark">{clean.unit} </span> : null}
+              {clean.context}
+            </span>
+          </p>
+          {clean.note ? <p className="text-small text-on-dark-muted">{clean.note}</p> : null}
+        </>
+      ) : null}
+      {adherence.note ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-small text-on-dark-muted">{adherence.note}</p>
+          <ul aria-label="Sessions done by week" className="flex flex-col gap-1">
+            {adherence.lines.map((line) => (
+              <li key={line} className="text-body text-on-dark">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {downPeriods.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-small text-on-dark-muted">Down periods: progression paused, readings kept as read.</p>
+          <ul aria-label="Down periods" className="flex flex-col gap-1">
+            {downPeriods.map((line) => (
+              <li key={line} className="text-body text-on-dark">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -238,7 +284,7 @@ function MilesSection({ miles }: { miles: MilesView }) {
 
 /**
  * 5. Weekly training load (metrics phase 1): RPE × minutes for every session and run, by program
- * week, and the warning when the 7 days through yesterday run well above or below the weeks before.
+ * week, and the warning when the smoothed recent rate runs well above or below the longer one (Batch B: EWMA).
  * The warning is a word with an arrow, never a color, and plain text (no live region: the history
  * re-reads on every write, and a status line would announce again each time). Metrics phase 2 adds
  * this week's HR load (TRIMP) in words under the warning; the warning reads the RPE load alone, so
@@ -249,7 +295,8 @@ function TrainingLoadSection({ training }: { training: TrainingLoadView }) {
     <section aria-label="Weekly training load" className={SECTION}>
       <h2 className={HEADING}>Weekly training load</h2>
       <p className="text-small text-on-dark-muted">
-        RPE × minutes for every session and run, swaps included, by program week. A warning only: nothing here changes a prescription. HR load (TRIMP) is shown beside the training load; the
+        RPE × minutes for every session and run, swaps included, by program week. The comparison below is smoothed day by day, weighted toward yesterday. A warning only: nothing here
+        changes a prescription. HR load (TRIMP) is shown beside the training load; the
         warning reads the RPE load alone.
       </p>
       <p className="text-body text-on-dark">
@@ -317,6 +364,64 @@ function Vo2Section({ vo2, readings, today }: { vo2: Vo2View; readings: Vo2Readi
         {saving ? 'Saving…' : entry.saveLabel}
       </Button>
       {vo2.trend.length > 0 ? <Vo2TrendList rows={vo2.trend} /> : null}
+    </section>
+  )
+}
+
+/**
+ * 7. KOOS (Batch A): the five subscale trends in words and numbers, in the style of the VO2 and
+ * training-load sections. The scores show HERE ONLY, never on the Gates screen (Shawn, Nov 8),
+ * and they inform and change nothing; the form itself is its own screen, a tap away. The due
+ * words surface here too, the same line Today carries.
+ */
+function KoosSection({ koos }: { koos: KoosView }) {
+  return (
+    <section aria-label="KOOS" className={SECTION}>
+      <h2 className={HEADING}>KOOS</h2>
+      <p className="text-small text-on-dark-muted">
+        The knee in its own words, 42 questions over the last week, scored 0 to 100 per subscale (100 = no problems). It informs; nothing here changes a prescription or a gate.
+      </p>
+      {koos.due ? <p className="text-body text-on-dark">{koos.due}</p> : null}
+      {koos.rows.length > 0 ? (
+        <ul className="flex flex-col">
+          {koos.rows.map((row) => (
+            <li key={row.name} className="flex flex-col border-t border-on-dark-faint py-1 first:border-t-0">
+              <span className="text-body text-on-dark">{row.name}</span>
+              <span className="text-small text-on-dark-dim">{row.words}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-body text-on-dark-dim">{koos.empty}</p>
+      )}
+      <Button wide onClick={() => navigate({ name: 'koos' })}>
+        Open the KOOS form
+      </Button>
+    </section>
+  )
+}
+
+/**
+ * Morning tags (Batch D, PROGRAM-QUESTIONS 178): plain counts in words, after each tag and on the
+ * mornings without it. No score, no chart, no color; a count says what came after, never why.
+ */
+function TagsSection({ tags }: { tags: TagsView }) {
+  return (
+    <section aria-label="Morning tags" className={SECTION}>
+      <h2 className={HEADING}>Morning tags</h2>
+      <p className="text-small text-on-dark-muted">{tags.intro}</p>
+      {tags.empty ? (
+        <p className="text-body text-on-dark-dim">{tags.empty}</p>
+      ) : (
+        <ul className="flex flex-col">
+          {tags.rows.map((row) => (
+            <li key={row.tag} className="flex flex-col border-t border-on-dark-faint py-1 first:border-t-0">
+              <span className="text-body text-on-dark">{row.line}</span>
+              {row.without ? <span className="text-small text-on-dark-dim">{row.without}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }

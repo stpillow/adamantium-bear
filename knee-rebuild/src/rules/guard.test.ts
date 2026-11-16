@@ -28,6 +28,29 @@ describe('src/rules stays pure and tested', () => {
       for (const pattern of banned) expect(source, `${m} matches ${pattern}`).not.toMatch(pattern)
     }
   })
+  it('no rule module reads the phone’s time zone (M-U1): the zone is always an argument', () => {
+    const banned = [
+      /resolvedOptions\(/,
+      /supportedValuesOf/,
+      // The local-time getters and setters, and the formatters that read the phone's zone.
+      /\.(get|set)(FullYear|Month|Date|Day|Hours|Minutes)\(/,
+      /toLocale(Date|Time)?String\(/,
+      /toDateString|toTimeString|getTimezoneOffset/,
+      // The multi-argument constructor builds a local time.
+      /new Date\([^)]*,/,
+    ]
+    for (const m of modules) {
+      const source = sources[m] ?? ''
+      for (const pattern of banned) expect(source, `${m} matches ${pattern}`).not.toMatch(pattern)
+      // Only calendar.ts formats a date in a zone, and it is handed the zone.
+      if (!m.endsWith('/calendar.ts')) expect(source, `${m} builds its own Intl.DateTimeFormat`).not.toMatch(/Intl\.DateTimeFormat\(/)
+    }
+  })
+  it('todayIn takes the zone every time: no default parameter to fall back on', () => {
+    const calendar = sources['./calendar.ts'] ?? ''
+    expect(calendar).toMatch(/export function todayIn\(now: Date, timeZone: string\)/)
+    expect(calendar).not.toMatch(/function todayIn\([^)]*=/)
+  })
   it('rule modules only import from the schema or each other', () => {
     for (const m of modules) {
       const source = sources[m] ?? ''

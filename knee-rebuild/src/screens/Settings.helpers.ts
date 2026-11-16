@@ -1,8 +1,11 @@
 import { DAYS, DELOAD_WEEKS, addDays, dayOf, daysBetween, isDeloadWeek, isMonday, weekOf } from '../rules/calendar.ts'
 import { rebaseMoves, rebaseWeekNumber } from '../rules/moves.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { clearRedFlag, stopMessage, type RedFlagState } from '../rules/redFlags.ts'
-import { TABLE_WORDS, daysSinceExport, exportDay, type BackupSummary, type BackupTable, type SettingChange, type SettingsOnImport } from '../rules/backup.ts'
-import { HR_MAX_MAX, HR_MAX_MIN, HR_RESTING_MAX, HR_RESTING_MIN, IsoDate, REST_TIMER_MAX, REST_TIMER_MIN, type Day, type HrSettings, type IsoDateTime, type Phase, type RedFlag, type SessionMove, type Settings, type Side } from '../schema/index.ts'
+import { downPeriodWords, standingPeriod } from '../rules/downPeriod.ts'
+import { TABLE_WORDS, daysSinceExport, exportDay, type BackupSummary, type BackupTable, type SettingChange, type SettingsOnImport, type TimeZoneImport } from '../rules/backup.ts'
+import type { TimeZoneChange } from '../rules/calendar.ts'
+import { HR_MAX_MAX, HR_MAX_MIN, HR_RESTING_MAX, HR_RESTING_MIN, IsoDate, REST_TIMER_MAX, REST_TIMER_MIN, type Day, type DownPeriod, type HrSettings, type IsoDateTime, type Phase, type RedFlag, type SessionMove, type Settings, type Side } from '../schema/index.ts'
 
 /**
  * Pure helpers for the Settings screen: words for dates, the start-date check, the red-flag state
@@ -42,8 +45,21 @@ export function sideWords(side: Side): string {
  */
 export const DUMBBELLS_LINE = 'Dumbbells are set per gym in Where you train.'
 
-/** Under the Phase section, beside a way to the Gates screen: the phase is shown here, and advanced there. */
-export const PHASE_NOTE = 'Read-only here. The Gates screen advances the phase once every item of its gate passes and you confirm.'
+/**
+ * Under the Phase section, beside a way to the Gates screen: the phase is shown here, and advanced
+ * there. A tester's Gates evaluates nothing and has no Advance, so the phase stays (M-U3,
+ * PROGRAM-QUESTIONS 232).
+ */
+export function phaseNote(mode: EngineMode): string {
+  return mode === 'tester'
+    ? 'Read-only. On a tester account the phase stays where it is; the Gates screen shows its criteria as written.'
+    : 'Read-only here. The Gates screen advances the phase once every item of its gate passes and you confirm.'
+}
+
+/** Under Injured side, here and in first run: the healthy side's budget only where the engine sets one, never in tester mode (M-U3). */
+export function sideNote(mode: EngineMode): string {
+  return mode === 'tester' ? 'Unilateral slots log this side first.' : 'Unilateral slots log this side first; its reps set the healthy side’s budget.'
+}
 
 /** Rest in 15 s steps, from a quarter minute to ten minutes: the stepper's limits are the schema's, so the form and an import refuse the same values. */
 export const REST_STEP = 15
@@ -205,8 +221,15 @@ export function phaseWords(
 
 export type RedFlagView = { active: true; headline: string; since: string | null; items: string[] } | { active: false; cleared: string | null }
 
-/** The red-flag state in words, from the engine's stop message; when off, how it was last cleared. */
-export function redFlagView(state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView {
+/**
+ * The red-flag state in words, from the engine's stop message; when off, how it was last cleared.
+ * Null in tester mode (M-U3, PROGRAM-QUESTIONS 228): no red-flag state is kept or shown there, and a
+ * stored one (from an import) is ignored until the account runs in full.
+ */
+export function redFlagView(mode: 'full', state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView
+export function redFlagView(mode: EngineMode, state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView | null
+export function redFlagView(mode: EngineMode, state: RedFlagState, catalog: readonly RedFlag[]): RedFlagView | null {
+  if (mode === 'tester') return null
   const stop = stopMessage(state, catalog)
   if (stop) {
     return { active: true, headline: stop.headline, since: state.since ? `Flagged since ${dateWords(state.since)}.` : null, items: stop.items }
@@ -233,20 +256,22 @@ export function errorWords(error: unknown): string {
   return text.trim().length > 0 ? text.trim() : 'no reason was given'
 }
 
-/** How Reset all data ended: everything erased and the defaults seeded, nothing erased, or erased with the defaults not saved. */
-export type ResetOutcome = { kind: 'erased' } | { kind: 'not-erased'; error: unknown } | { kind: 'not-seeded'; error: unknown }
+/** How Reset all data ended (M-U1: nothing is seeded in its place): everything erased, or nothing. */
+export type ResetOutcome = { kind: 'erased' } | { kind: 'not-erased'; error: unknown }
 
-/** What a reset came to, one sentence, said in the Reset section where Yes was tapped; `problem` when it didn't go as asked. */
+/** What a reset came to, one sentence: on first run's screen once erased, in the Reset section where Yes was tapped when not; `problem` when it didn't go as asked. */
 export function resetWords(outcome: ResetOutcome): { text: string; problem: boolean } {
   switch (outcome.kind) {
     case 'erased':
-      return { text: 'Everything on this phone was erased. Settings are back to their defaults.', problem: false }
+      return { text: 'Everything on this phone was erased. The setup questions come next.', problem: false }
     case 'not-erased':
       return { text: `Nothing was erased (${errorWords(outcome.error)}); tap again to retry.`, problem: true }
-    case 'not-seeded':
-      return { text: `Everything was erased, but the default settings did not save (${errorWords(outcome.error)}); reload the app to seed them again.`, problem: true }
   }
 }
+
+/** The Reset confirm's words (M-U1: the time zone goes too, and first run comes next, PROGRAM-QUESTIONS 210). */
+export const RESET_CONFIRM =
+  'This erases every session, set, morning check, run, gate test, gym, Program edit and setting on this phone, the time zone included. There is no undo; export first to keep a copy. Then the app asks the setup questions again.'
 
 /** What writes the whole phone while the rest of Settings waits. */
 export type FormHold = 'import' | 'reset'
@@ -269,18 +294,18 @@ export function heldWords(hold: FormHold): { note: string; refusal: string } {
 /** The inline confirm before an import (M6 brief, section 2). */
 export const IMPORT_CONFIRM = 'Replace everything on this phone with this file?'
 
-/** "Last export: 9 days ago." from the stored stamp, counted in America/New_York days by the rule. */
-export function lastExportWords(lastExportedAt: IsoDateTime | undefined, today: IsoDate): string {
-  const days = daysSinceExport(lastExportedAt, today)
+/** "Last export: 9 days ago." from the stored stamp, counted in the user's time zone's days by the rule. */
+export function lastExportWords(lastExportedAt: IsoDateTime | undefined, today: IsoDate, timeZone: string): string {
+  const days = daysSinceExport(lastExportedAt, today, timeZone)
   if (days === null) return 'No export from this phone yet.'
   if (days === 0) return 'Last export: today.'
   if (days === 1) return 'Last export: yesterday.'
   return `Last export: ${days} days ago.`
 }
 
-/** "Monday Dec 21": the day a file was written, in New York; "Monday Dec 21, 2026" when that isn't this year (`today`'s). */
-export function exportedOnWords(exportedAt: IsoDateTime, today: IsoDate): string {
-  const day = exportDay(exportedAt)
+/** "Monday Dec 21": the day a file was written, in the user's time zone; "Monday Dec 21, 2026" when that isn't this year (`today`'s). */
+export function exportedOnWords(exportedAt: IsoDateTime, today: IsoDate, timeZone: string): string {
+  const day = exportDay(exportedAt, timeZone)
   return day.slice(0, 4) === today.slice(0, 4) ? dateWords(day) : `${dateWords(day)}, ${day.slice(0, 4)}`
 }
 
@@ -372,11 +397,13 @@ function settingChangeWords(change: SettingChange, phases: readonly Pick<Phase, 
  * hangs off that the file changes.
  */
 export function settingsOnImportWords(
+  mode: EngineMode,
   on: SettingsOnImport,
   catalog: readonly RedFlag[],
   phases: readonly Pick<Phase, 'number' | 'name'>[],
 ): { redFlag: string | null; changes: string[] } {
-  const flag = on.keptRedFlag
+  // Tester mode shows no red-flag state, so the import says nothing about one (M-U3).
+  const flag = mode === 'tester' ? null : on.keptRedFlag
   const stop = flag ? stopMessage(flag, catalog) : null
   let redFlag: string | null = null
   if (flag && stop) {
@@ -385,6 +412,21 @@ export function settingsOnImportWords(
     redFlag = `${set} stays on after the import${items}. It clears only here, with a note.`
   }
   return { redFlag, changes: on.changes.map((change) => settingChangeWords(change, phases)) }
+}
+
+/**
+ * The down period this phone has standing that an import keeps (src/rules/backup.ts
+ * `downPeriodsOnImport`, PROGRAM-QUESTIONS 189), said beside the red flag's line: an import never
+ * lifts a pause. Null when nothing stands, or the file carries the same row.
+ */
+export function keptDownPeriodWords(phone: readonly DownPeriod[], file: readonly DownPeriod[], today: IsoDate, mode: EngineMode = 'full'): string | null {
+  // Tester mode has no down periods to keep or say (M-U3, PROGRAM-QUESTIONS 231).
+  if (mode === 'tester') return null
+  const standing = standingPeriod(today, phone)
+  if (standing === null) return null
+  const same = file.find((f) => f.id === standing.id)
+  if (same && JSON.stringify(same) === JSON.stringify(standing)) return null
+  return `The down period on this phone, ${downPeriodWords(standing)}, stays after the import: an import never lifts a pause.`
 }
 
 /** A file from an older app, carried forward: said so, so a surprise in it has a reason. */
@@ -417,4 +459,109 @@ export function shareFailure(error: unknown): 'closed' | 'needs-tap' | 'failed' 
   if (name === 'AbortError') return 'closed'
   if (name === 'NotAllowedError') return 'needs-tap'
   return 'failed'
+}
+
+// ---------------------------------------------------------------------------------------------
+// The time zone (M-U1, PROGRAM-QUESTIONS 203 to 206). Which date is today in a zone, and what a
+// change of zone moves, are src/rules/calendar.ts's; these name them.
+
+/** "New York" for America/New_York, "Buenos Aires" for America/Argentina/Buenos_Aires; a name without a region as it is ("UTC"). */
+export function cityOf(zone: string): string {
+  return (zone.split('/').at(-1) ?? zone).replace(/_/g, ' ')
+}
+
+/** "Los Angeles time (America/Los_Angeles)"; "UTC" alone. */
+export function zoneWords(zone: string): string {
+  return zone.includes('/') ? `${cityOf(zone)} time (${zone})` : zone
+}
+
+/** "Los Angeles time", "UTC". */
+function shortZoneWords(zone: string): string {
+  return zone.includes('/') ? `${cityOf(zone)} time` : zone
+}
+
+export interface ZoneGroup {
+  region: string
+  zones: string[]
+}
+
+/**
+ * The picker's choices: every zone the phone lists, with the stored zone and the phone's own
+ * added (a browser may list neither, or nothing at all), each once, grouped by region
+ * (America, Europe…; a name with no region under Other, last) and sorted.
+ */
+export function zoneOptions(supported: readonly string[], current: string, device: string): ZoneGroup[] {
+  const all = [...new Set([...supported, current, device])].sort()
+  const groups = new Map<string, string[]>()
+  for (const zone of all) {
+    const region = zone.includes('/') ? (zone.split('/')[0] ?? 'Other') : 'Other'
+    groups.set(region, [...(groups.get(region) ?? []), zone])
+  }
+  return [...groups.entries()].sort(([a], [b]) => (a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b))).map(([region, zones]) => ({ region, zones }))
+}
+
+/**
+ * Settings' Time zone section in words: what dates are counted in and today there; the phone's own
+ * zone when it differs; an unreadable stored zone, and the button that keeps the zone dates are
+ * counted in (New York) over it. That button is the one way to pick New York when the phone is in
+ * New York too: there's no "Use" for the phone's own zone then, and the picker already shows it.
+ * Keeping it moves no date, so it saves without a confirm.
+ */
+export function timeZoneSectionWords(
+  setting: { zone: string; stored: 'none' | 'ok' | 'unreadable' },
+  device: string,
+  today: IsoDate,
+): { line: string; device: { note: string; button: string } | null; unreadable: string | null; keep: { button: string; done: string } | null } {
+  const unreadable = setting.stored === 'unreadable'
+  return {
+    line: `Dates are counted in ${zoneWords(setting.zone)}. Today there is ${dateWords(today)}.`,
+    device: device === setting.zone ? null : { note: `This phone’s clock is set to ${zoneWords(device)}.`, button: `Use ${shortZoneWords(device)}` },
+    unreadable: unreadable ? `The stored time zone isn’t one this phone knows, so dates are counted in ${shortZoneWords(setting.zone)} until you pick one.` : null,
+    keep: unreadable ? { button: `Use ${shortZoneWords(setting.zone)}`, done: `Saved: dates stay in ${shortZoneWords(setting.zone)}.` } : null,
+  }
+}
+
+/** How a date `days` away from today reads: tomorrow and yesterday for one day, the count for more (two zones whose offsets differ by over 24 hours). */
+function relativeDayWords(days: number): string {
+  if (days === 1) return 'tomorrow'
+  if (days === -1) return 'yesterday'
+  return days > 0 ? `${days} days ahead` : `${-days} days ago`
+}
+
+/** The inline confirm before a change of zone, line by line: what moves (only which date is today, near midnight) and that nothing logged does (PROGRAM-QUESTIONS 205). */
+export function timeZoneChangeWords(change: TimeZoneChange, from: string, to: string): string[] {
+  const lines = [`Dates will be counted in ${zoneWords(to)} instead of ${zoneWords(from)}.`]
+  if (change.shift === 0) {
+    lines.push(`Today stays ${dateWords(change.todayTo)}. Near midnight, the date will turn over at ${cityOf(to)}’s midnight instead of ${cityOf(from)}’s.`)
+  } else {
+    lines.push(`Right now that moves today from ${dateWords(change.todayFrom)} to ${dateWords(change.todayTo)}.`)
+    // Today's date then sits -shift days from the new today: ahead after a change west, behind after one east.
+    if (change.shift < 0) lines.push(`Anything logged today stays on ${dateWords(change.todayFrom)}, which then reads as ${relativeDayWords(-change.shift)}.`)
+    else {
+      const was = dateWords(change.todayFrom)
+      lines.push(`${was} then reads as ${relativeDayWords(-change.shift)}: its session, if not logged yet, is logged late from Week, and this morning’s check counts as ${was}’s; ${dateWords(change.todayTo)}’s check shows as not logged yet.`)
+    }
+  }
+  lines.push('Nothing logged moves: sessions, runs, morning checks and down periods keep the dates they were saved on, and weeks start on the same Mondays.')
+  return lines
+}
+
+/** What an import does to the zone, said before the confirm (src/rules/backup.ts `timeZoneImportChange`); on first run's screen, the zone the phone will count in. */
+export function timeZoneImportWords(change: TimeZoneImport, firstRun: boolean): string | null {
+  if (firstRun) {
+    // A zone this phone doesn't know is dropped: the file's dates weren't counted in the one that follows.
+    if (change.kind === 'unknown-in-file') return `The file counts dates in ${change.file}, which this phone doesn’t know, so dates will be counted in ${shortZoneWords(change.zone)}; Settings can change that.`
+    const zone = change.kind === 'change' ? change.file : change.zone
+    return `Dates will be counted in ${shortZoneWords(zone)}, as the file’s were; Settings can change that.`
+  }
+  switch (change.kind) {
+    case 'same':
+      return null
+    case 'change':
+      return `It would change the time zone from ${shortZoneWords(change.phone)} to ${shortZoneWords(change.file)}.`
+    case 'no-zone-in-file':
+      return `The file carries no time zone (an older version wrote it), so dates stay in ${shortZoneWords(change.zone)}.`
+    case 'unknown-in-file':
+      return `The file counts dates in ${change.file}, which this phone doesn’t know, so dates stay in ${shortZoneWords(change.zone)}.`
+  }
 }

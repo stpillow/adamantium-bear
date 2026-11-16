@@ -3,9 +3,10 @@ import { PROGRAM } from '../../app/session.ts'
 import { Button } from '../../components/Button.tsx'
 import { Stepper } from '../../components/Stepper.tsx'
 import { removeAddedSlot, saveAddedSlot } from '../../db/repo.ts'
-import { addableExercises, addedDefaults, addedFor, addedPrescriptionText, addedRepUnit, addedSlotId, addedSlotProblem, phaseExerciseIds } from '../../rules/addedSlots.ts'
+import { addableByPattern, addedDefaults, addedFor, addedPrescriptionText, addedRepUnit, addedSlotId, addedSlotProblem, phaseExerciseIds } from '../../rules/addedSlots.ts'
 import { ADDED_SETS_MAX, ADDED_SLOTS_MAX, type AddedSlot, type IsoDate } from '../../schema/index.ts'
 import { failedWords } from '../Locations.helpers.ts'
+import { patternWords } from '../Program.helpers.ts'
 import { HEADING, LABEL, Note, Problem, RowButton } from './parts.tsx'
 
 const CATALOG = new Map(PROGRAM.exercises.map((e) => [e.id, e]))
@@ -25,7 +26,7 @@ export function AddedExercises({ templateId, heading, added, today }: { template
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const phase = PROGRAM.templates.find((t) => t.id === templateId)?.phase ?? 1
-  const addable = useMemo(() => addableExercises(PROGRAM.exercises, PROGRAM.templates, phase), [phase])
+  const addable = useMemo(() => addableByPattern(PROGRAM.exercises, PROGRAM.templates, phase), [phase])
   const inPhase = useMemo(() => phaseExerciseIds(PROGRAM.templates, phase), [phase])
   const exercise = CATALOG.get(exerciseId)
   const unit = exercise ? addedRepUnit(exercise) : 'reps'
@@ -110,10 +111,14 @@ export function AddedExercises({ templateId, heading, added, today }: { template
             <span className="text-body text-on-dark-dim">Exercise</span>
             <select value={exerciseId} onChange={(e) => pick(e.target.value)} className="tap w-full rounded-sm bg-ink px-3 text-body text-on-dark">
               <option value="">Pick an exercise…</option>
-              {addable.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
+              {addable.map((g) => (
+                <optgroup key={g.pattern} label={patternWords(g.pattern)}>
+                  {g.exercises.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </label>

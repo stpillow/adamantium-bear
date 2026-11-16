@@ -83,7 +83,7 @@ describe('Back to program.md’s', () => {
 describe('Reset all data', () => {
   it('clears the edits with everything else', async () => {
     await saveProgramOverride(edit({ cues: ['Feet high'] }), program)
-    await resetAll(defaultSettings(program), program, '2026-11-20')
+    await resetAll()
     expect(await getProgramOverrides()).toEqual([])
   })
 })

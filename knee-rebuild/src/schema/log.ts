@@ -1,10 +1,13 @@
 import { z } from 'zod'
-import { Day, Effort, IsoDate, IsoDateTime, LoadUnit, Pain, ReadingResult, Rpe, RunType, SetSide, Side, StopReason, WholeRpe, WorkoutStatus } from './enums.ts'
+import { Day, Effort, IsoDate, IsoDateTime, TimeZone, LoadUnit, MorningTag, Pain, ReadingResult, Rpe, RunType, SetSide, Side, StopReason, WholeRpe, WorkoutStatus } from './enums.ts'
 import { EquipmentId, Slot } from './program.ts'
 
 const id = z.string().min(1)
 
-/** The gym every install starts at, and where a workout with no `locationId` happened (M4b). */
+/**
+ * The home gym's id, and where a workout with no `locationId` happened (M4b). Its name and
+ * equipment come from first run (M-U1); the id stays, since stored workouts point at it.
+ */
 export const PLANET_FITNESS_LOCATION_ID = 'planet-fitness'
 
 /** The two items program.md says to bring (its "Bring" row); a seed test keeps this in step with the list. */
@@ -166,7 +169,15 @@ export const SetLog = z.strictObject({
 })
 export type SetLog = z.infer<typeof SetLog>
 
-/** Four taps plus an optional note, the morning after a session. */
+/**
+ * Four taps plus an optional note, optional fixed tags; `loggedOn` only on a check for a past
+ * morning (Batch D). `date` is the morning the check describes. `loggedOn` is the day a check for an
+ * earlier morning was saved: written only by the late flow, always after `date`, never on a check
+ * saved the morning it describes, so every check stored before Batch D reads as on time
+ * (PROGRAM-QUESTIONS 174). Tags describe the day and night before; no rule that decides anything
+ * reads them (PROGRAM-QUESTIONS 177, 178). Absent means none: an empty list is refused, so there is
+ * one way to write "no tags".
+ */
 export const MorningCheck = z.strictObject({
   id,
   date: IsoDate,
@@ -182,6 +193,13 @@ export const MorningCheck = z.strictObject({
   /** Red flag ids ticked. Any entry puts the app in the red-flag state. */
   redFlags: z.array(id),
   notes: z.string().optional(),
+  /** The fixed tags ticked (Batch D), each once, in any order; absent when none was. */
+  tags: z.array(MorningTag).min(1).refine(uniqueIds, { message: 'each tag once' }).optional(),
+  /** The day a check for an earlier morning was saved (Batch D); absent on a check saved the morning it describes. */
+  loggedOn: IsoDate.optional(),
+}).refine((c) => c.loggedOn === undefined || c.loggedOn > c.date, {
+  message: 'a check logged late is logged after the morning it describes',
+  path: ['loggedOn'],
 })
 export type MorningCheck = z.infer<typeof MorningCheck>
 
@@ -243,6 +261,21 @@ export const HrSettings = z
   .refine((s) => s.maxHr === undefined || s.restingHr === undefined || s.restingHr < s.maxHr, { message: 'resting heart rate is under max', path: ['restingHr'] })
 export type HrSettings = z.infer<typeof HrSettings>
 
+/** The key of the one time zone row (M-U1). */
+export const TIME_ZONE_ID = 'time-zone'
+
+/**
+ * The zone dates are counted in (M-U1), in a one-row table of its own (src/db/db.ts, Dexie version
+ * 12), never on the settings row: older builds parse that row strictly on every read, so a new key
+ * there would brick a rollback (PROGRAM-QUESTIONS 132, 150, 203). No row means America/New_York.
+ * The zone is checked by shape here; whether this phone knows it is asked at use (`isKnownTimeZone`).
+ */
+export const TimeZoneSetting = z.strictObject({
+  id: z.literal(TIME_ZONE_ID),
+  zone: TimeZone,
+})
+export type TimeZoneSetting = z.infer<typeof TimeZoneSetting>
+
 /** A VO2 max reading's plausible bounds, in whole mL/kg/min: what the Progress entry takes, and all a stored row or a backup may hold (metrics phase 3). */
 export const VO2_MIN = 20
 export const VO2_MAX = 90
@@ -260,6 +293,114 @@ export const Vo2Reading = z.strictObject({
   vo2: z.number().int().min(VO2_MIN).max(VO2_MAX),
 })
 export type Vo2Reading = z.infer<typeof Vo2Reading>
+
+/** A KOOS item's answer: the ticked box, 0 to 4 left to right, as the published form scores it (Batch A). */
+export const KOOS_MIN = 0
+export const KOOS_MAX = 4
+
+/** One KOOS item: answered 0 to 4, or skipped (the published missing-data rule absorbs skips). */
+const koosItem = z.number().int().min(KOOS_MIN).max(KOOS_MAX).optional()
+
+/**
+ * One KOOS questionnaire entry (Batch A; PROGRAM-QUESTIONS 156 to 160): the validated 42-item
+ * form, answered over the last week, one entry per day keyed by its date in the `koosEntries`
+ * table (src/db/db.ts, Dexie version 9), so saving again the same day replaces. The fields are
+ * flat so the backup's fieldsUsed check sees every item: Pain `p1..p9`, Symptoms `sy1..sy7`
+ * (S1 to S5 and the two stiffness items), ADL `a1..a17`, Sport/Rec `sp1..sp5`, QOL `q1..q4`,
+ * each the ticked box 0 to 4. An item may be skipped; a subscale scores only with at least half
+ * its items answered (src/rules/koos.ts). Out of range is refused in words, never clamped
+ * (the 152/154 precedent). Scoring lives in src/rules/koos.ts, never here.
+ */
+export const KoosEntry = z.strictObject({
+  date: IsoDate,
+  p1: koosItem, p2: koosItem, p3: koosItem, p4: koosItem, p5: koosItem, p6: koosItem, p7: koosItem, p8: koosItem, p9: koosItem,
+  sy1: koosItem, sy2: koosItem, sy3: koosItem, sy4: koosItem, sy5: koosItem, sy6: koosItem, sy7: koosItem,
+  a1: koosItem, a2: koosItem, a3: koosItem, a4: koosItem, a5: koosItem, a6: koosItem, a7: koosItem, a8: koosItem, a9: koosItem,
+  a10: koosItem, a11: koosItem, a12: koosItem, a13: koosItem, a14: koosItem, a15: koosItem, a16: koosItem, a17: koosItem,
+  sp1: koosItem, sp2: koosItem, sp3: koosItem, sp4: koosItem, sp5: koosItem,
+  q1: koosItem, q2: koosItem, q3: koosItem, q4: koosItem,
+})
+export type KoosEntry = z.infer<typeof KoosEntry>
+
+/** An ACL-RSI item's answer: 0 to 10 on the published anchors, higher always reading readier (Batch A). */
+export const ACL_RSI_MIN = 0
+export const ACL_RSI_MAX = 10
+
+/** One ACL-RSI item: required — the published scale has no missing-data rule, so the form takes all 12. */
+const aclRsiItem = z.number().int().min(ACL_RSI_MIN).max(ACL_RSI_MAX)
+
+/**
+ * One ACL-RSI questionnaire entry (Batch A; PROGRAM-QUESTIONS 156): the 12-item scale
+ * (Webster, Feller & Lambros 2008), each item 0 to 10 on the published anchors — the negatively
+ * phrased items are anchored by the form itself so higher always reads readier; nothing is
+ * reverse-scored in code. One entry per day keyed by its date in the `aclRsiEntries` table
+ * (src/db/db.ts, Dexie version 9), so saving again the same day replaces. The overall score is
+ * mean × 10 (src/rules/aclRsi.ts), read ONLY by the gates rule: gate 3 requires the latest
+ * entry to reach 76 (src/rules/aclRsi.guard.test.ts pins the readers).
+ */
+export const AclRsiEntry = z.strictObject({
+  date: IsoDate,
+  i1: aclRsiItem, i2: aclRsiItem, i3: aclRsiItem, i4: aclRsiItem, i5: aclRsiItem, i6: aclRsiItem,
+  i7: aclRsiItem, i8: aclRsiItem, i9: aclRsiItem, i10: aclRsiItem, i11: aclRsiItem, i12: aclRsiItem,
+})
+export type AclRsiEntry = z.infer<typeof AclRsiEntry>
+
+/**
+ * A down period's length in days, counted from its start (Batch E, Shawn's Nov 8 decision 6): the
+ * seed's `operatingRules.downPeriod` (data/program.json) says the same, pinned by
+ * src/schema/program.test.ts, and src/rules/downPeriod.ts re-exports both.
+ */
+export const DOWN_PERIOD_MIN_DAYS = 3
+export const DOWN_PERIOD_MAX_DAYS = 14
+/** A down period's optional note runs 1 to this many characters once trimmed. */
+export const DOWN_PERIOD_NOTE_MAX = 120
+
+/** Whole days from one YYYY-MM-DD date to another, read on UTC days as src/rules/calendar.ts reads them. */
+function daysFrom(from: string, to: string): number {
+  const day = (date: string) => {
+    const [y, m, d] = date.split('-').map(Number)
+    return y === undefined || m === undefined || d === undefined ? Number.NaN : Date.UTC(y, m - 1, d) / 86_400_000
+  }
+  return day(to) - day(from)
+}
+
+/**
+ * One declared down period (Batch E; PROGRAM-QUESTIONS 181 to 189): "not feeling 100%" from illness
+ * or life stress, not the knee. Progression pauses from `start` through its last paused day (the
+ * day it was ended early, `endedOn`, or `plannedEnd`); readings stay real. One row per period in the
+ * `downPeriods` table (src/db/db.ts, Dexie version 11), keyed by id. `start` is always the day it
+ * was declared (no backdating, src/rules/downPeriod.ts); the span runs 3 to 14 days from it; an
+ * early end falls from the start to the day before the planned end (ending on the planned end is
+ * just its end). The note is one short line, as Shawn wrote it.
+ */
+export const DownPeriod = z
+  .strictObject({
+    id,
+    start: IsoDate,
+    plannedEnd: IsoDate,
+    endedOn: IsoDate.optional(),
+    declaredAt: IsoDateTime,
+    note: z
+      .string()
+      .trim()
+      .min(1)
+      .max(DOWN_PERIOD_NOTE_MAX)
+      .refine((text) => !/\p{Cc}/u.test(text), 'a note is one line of plain text')
+      .refine(showsText, 'a note shows a letter, digit or symbol')
+      .optional(),
+  })
+  .refine(
+    (p) => {
+      const days = daysFrom(p.start, p.plannedEnd) + 1
+      return days >= DOWN_PERIOD_MIN_DAYS && days <= DOWN_PERIOD_MAX_DAYS
+    },
+    { message: `a down period runs ${DOWN_PERIOD_MIN_DAYS} to ${DOWN_PERIOD_MAX_DAYS} days from its start`, path: ['plannedEnd'] },
+  )
+  .refine((p) => p.endedOn === undefined || (p.endedOn >= p.start && p.endedOn < p.plannedEnd), {
+    message: 'a down period ends early on a day from its start to the day before its planned end',
+    path: ['endedOn'],
+  })
+export type DownPeriod = z.infer<typeof DownPeriod>
 
 /** A gate test entry. Hop tests store three trials per side and keep the best. */
 export const GateTest = z.strictObject({

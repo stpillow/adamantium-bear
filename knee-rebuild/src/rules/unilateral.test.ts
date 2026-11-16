@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SetLog } from '../schema/index.ts'
-import { bestOfTrials, healthySideTargets, meetsSymmetry, symmetryPercent } from './unilateral.ts'
+import { bestOfTrials, fastestOfTrials, healthySideTargets, meetsSymmetry, meetsTimedSymmetry, symmetryPercent, timedSymmetryPercent } from './unilateral.ts'
 
 const injuredSet = (setNumber: number, reps: number): SetLog => ({
   id: `i${setNumber}`, workoutId: 'w1', slotId: 'p2b-1', exerciseId: 'bulgarian-split-squat', setNumber, side: 'right', load: 20, loadUnit: 'lb', reps, stopped: false,
@@ -53,5 +53,39 @@ describe('symmetry', () => {
     expect(symmetryPercent(0, 62)).toBe(0)
     expect(meetsSymmetry(0, 62, 0.9)).toBe(false)
     expect(symmetryPercent(0, 0)).toBeNull()
+  })
+})
+
+describe('timed symmetry (the 6-meter timed hop, Batch A: PROGRAM-QUESTIONS 157)', () => {
+  it('keeps the fastest positive trial: a time of 0 is not a time, and no positive trial is null', () => {
+    expect(fastestOfTrials([2.3, 2.1, 2.5])).toBe(2.1)
+    expect(fastestOfTrials([2.3, 2.1, 0])).toBe(2.1)
+    expect(fastestOfTrials([0])).toBeNull()
+    expect(fastestOfTrials([0, 0, 0])).toBeNull()
+    expect(fastestOfTrials([])).toBeNull()
+    expect(fastestOfTrials([-1, 2.4])).toBe(2.4)
+  })
+  it('inverts the ratio: other ÷ injured, so a slower injured side reads under 100%', () => {
+    // Injured 2.3 s against the other side's 2.1 s: 2.1 / 2.3 = 91.3%, passes the 90% line.
+    expect(timedSymmetryPercent(2.3, 2.1)).toBe(91.3)
+    expect(meetsTimedSymmetry(2.3, 2.1, 0.9)).toBe(true)
+    // A faster injured side reads over 100%.
+    expect(timedSymmetryPercent(2.1, 2.3)).toBe(109.5)
+    expect(meetsTimedSymmetry(2.1, 2.3, 0.9)).toBe(true)
+    // Equal times read exactly 100%.
+    expect(timedSymmetryPercent(2.2, 2.2)).toBe(100)
+  })
+  it('decides on the same floor-rounded tenths the words show, so a ratio just under the line never reads the line', () => {
+    // 2.078 / 2.31 = 0.89956…: rounded to the nearest it would read 90% and pass (the 188/209 discipline inverted).
+    expect(timedSymmetryPercent(2.31, 2.078)).toBe(89.9)
+    expect(meetsTimedSymmetry(2.31, 2.078, 0.9)).toBe(false)
+    // Exactly on the line passes: 1.8 / 2 = 90%.
+    expect(timedSymmetryPercent(2, 1.8)).toBe(90)
+    expect(meetsTimedSymmetry(2, 1.8, 0.9)).toBe(true)
+  })
+  it('cannot be computed without a positive time on each side', () => {
+    expect(timedSymmetryPercent(0, 2.1)).toBeNull()
+    expect(meetsTimedSymmetry(0, 2.1, 0.9)).toBe(false)
+    expect(timedSymmetryPercent(2.1, 0)).toBe(0)
   })
 })

@@ -31,6 +31,16 @@ describe('effectiveSlot', () => {
   it('a loaded slot swapped to bodyweight work holds its reps fixed', () => {
     expect(effectiveSlot(slot({}), ex({ id: 'band', loadType: 'band', loadUnit: 'none', increment: 0 })).progressionRule).toBe('fixed')
   })
+  it('a both-sides slot swapped to work program.md writes per side carries the side words (the farmer’s hold to the side plank)', () => {
+    const hold = slot({ exerciseId: 'farmers-hold', repUnit: 'seconds', repsMin: 30, repsMax: 45 })
+    expect(hold.perSideLabel).toBeUndefined()
+    expect(effectiveSlot(hold, ex({ id: 'side-plank', pattern: 'core', loadType: 'time', loadUnit: 's', increment: 5, perSideLabel: 'each side' }))).toMatchObject({ repUnit: 'seconds', perSideLabel: 'each side' })
+    const crunch = slot({ exerciseId: 'cable-crunch', repsMin: 10, repsMax: 15 })
+    expect(effectiveSlot(crunch, ex({ id: 'pallof-press', pattern: 'core', perSideLabel: 'each side' })).perSideLabel).toBe('each side')
+    expect(effectiveSlot(crunch, ex({ id: 'dead-bug', pattern: 'core', loadType: 'bodyweight', loadUnit: 'none', increment: 0, perSideLabel: 'each side' })).perSideLabel).toBe('each side')
+    // A substitute program.md writes for both sides at once adds none.
+    expect(effectiveSlot(crunch, ex({ id: 'hanging-knee-raise', pattern: 'core' })).perSideLabel).toBeUndefined()
+  })
   it('a staged balance slot keeps the stage rule on another staged exercise', () => {
     const bal = slot({ exerciseId: 'balance-mat-bosu', progressionRule: 'stage', repUnit: 'seconds', repsMin: 30, repsMax: 30 })
     expect(effectiveSlot(bal, ex({ id: 'single-leg-balance', loadType: 'time', loadUnit: 's', increment: 5, stages: ['a', 'b'] }))).toMatchObject({ progressionRule: 'stage', repUnit: 'seconds', repsMin: 30 })

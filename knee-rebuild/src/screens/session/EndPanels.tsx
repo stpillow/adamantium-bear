@@ -3,7 +3,8 @@ import { Button } from '../../components/Button.tsx'
 import { PAIN_SCALE, RPE_1_10, ScalePicker } from '../../components/ScalePicker.tsx'
 import { Stepper } from '../../components/Stepper.tsx'
 import { DURATION_MAX, DURATION_MIN } from '../../schema/index.ts'
-import { SESSION_RPE_ANCHORS, minutesNote, minutesOpening, sessionRpeNote, type SessionTiming } from './EndPanels.helpers.ts'
+import type { EngineMode } from '../../rules/engineMode.ts'
+import { SESSION_RPE_ANCHORS, discardWords, endWords, minutesNote, minutesOpening, sessionRpeNote, type SessionTiming } from './EndPanels.helpers.ts'
 
 /** A write the panel asked for that failed, in a sentence: the panel replaces the card, so it says it. */
 function NotSaved({ error }: { error: string | null }) {
@@ -41,6 +42,7 @@ export function SessionRpeField({ value, onChange, sets }: { value: number | nul
 
 /** Finish, inline: what the gym changed (`notHere`, in words), what wasn't logged, max pain during the session, the session's RPE and minutes, then the write. */
 export function FinishPanel({
+  mode,
   notHere,
   notLogged,
   loggedCount,
@@ -52,6 +54,7 @@ export function FinishPanel({
   onFinish,
   onBack,
 }: {
+  mode: EngineMode
   notHere: string | null
   /** `notLoggedWords`' sentence: what is still open, or that every required set is logged. */
   notLogged: string
@@ -74,7 +77,7 @@ export function FinishPanel({
     return (
       <section aria-label="Finish session" className="flex flex-col gap-4 rounded-md bg-navy-lift p-4">
         <h2 className="font-sans text-h3 font-semibold text-on-dark">Nothing is logged yet</h2>
-        <p className="text-body text-on-dark-dim">Finishing now discards this session: a session with no sets didn&apos;t happen, so it reads nothing and caps nothing. Today will offer Start again.</p>
+        <p className="text-body text-on-dark-dim">{discardWords(mode)}</p>
         <Button wide disabled={busy} onClick={() => onFinish(null, null, null)}>
           Discard this session
         </Button>
@@ -106,6 +109,7 @@ export function FinishPanel({
 
 /** End without finishing, inline: says what is kept, asks the minutes it ran (the same stepper as Finish), then marks the workout abandoned. */
 export function EndPanel({
+  mode,
   loggedCount,
   timing,
   late,
@@ -114,6 +118,7 @@ export function EndPanel({
   onEnd,
   onBack,
 }: {
+  mode: EngineMode
   loggedCount: number
   timing: SessionTiming
   late: boolean
@@ -129,9 +134,7 @@ export function EndPanel({
     <section aria-label="End without finishing" className="flex flex-col gap-4 rounded-md bg-navy-lift p-4">
       <h2 className="font-sans text-h3 font-semibold text-on-dark">End without finishing</h2>
       <p className="text-body text-on-dark-dim">
-        {loggedCount === 0
-          ? 'Nothing was logged, so the session is discarded: it reads nothing and caps nothing. Today will offer Start again.'
-          : `Keeps the ${loggedCount} ${loggedCount === 1 ? 'set' : 'sets'} logged; they still count toward the next prescriptions. Start on Today reopens this same session.`}
+        {endWords(mode, loggedCount)}
       </p>
       {loggedCount > 0 ? <MinutesField value={minutes} onChange={setMinutes} note={minutesNote(preset, late)} /> : null}
       <Button wide disabled={busy} onClick={() => onEnd(loggedCount === 0 ? null : minutes)}>

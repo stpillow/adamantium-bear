@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
+import { onboardAsShawn } from './firstRun.ts'
 import { serveDist, type StaticServer } from './staticServer.ts'
 
 /*
@@ -34,6 +35,9 @@ const SCREENS: { hash: string; title: string }[] = [
   { hash: '#/next-update', title: 'For the next program update' },
   { hash: '#/program', title: 'Program' },
   { hash: '#/settings', title: 'Settings' },
+  // First run, once the phone is set up: a stale link lands on Today (M-U1).
+  { hash: '#/welcome', title: 'Today' },
+  { hash: '#/welcome/side', title: 'Today' },
 ]
 
 const TABS = ['Today', 'Week', 'Progress', 'Gates', 'More'] as const
@@ -64,9 +68,10 @@ async function rendered(page: Page, title: string): Promise<void> {
   await expect(page.getByText('Opening storage…')).toHaveCount(0)
 }
 
-/** First visit, then a reload: the worker installed (precache done) is controlling the page. */
+/** First visit (set up through first run, as Shawn), then a reload: the worker installed (precache done) is controlling the page. */
 async function controlled(page: Page, url: string): Promise<string> {
   await page.goto(`${url}/`)
+  await onboardAsShawn(page)
   await rendered(page, 'Today')
   await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready
@@ -81,6 +86,9 @@ async function controlled(page: Page, url: string): Promise<string> {
 test('the manifest is installable: name, standalone, theme color, icons 192, 512 and maskable at their stated sizes, no installability errors', async ({ page }) => {
   server = await serveDist(DIST, VERCEL_JSON)
   await page.goto(`${server.url}/`)
+  // A fresh phone opens on first run, under vercel.json's policy with nothing to complain of (afterEach); then Today.
+  await rendered(page, 'Set up Knee Rebuild')
+  await onboardAsShawn(page)
   await rendered(page, 'Today')
 
   const href = await page.locator('link[rel="manifest"]').getAttribute('href')
@@ -180,6 +188,12 @@ test('the service worker controls the page, and every screen renders offline aft
   await expect(images.first()).toBeVisible()
   // Every chart decoded: a broken one is complete with no width, and the poll runs out.
   await expect.poll(() => images.evaluateAll((all) => all.every((img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0))).toBe(true)
+
+  // The Evidence view, offline: the citations are bundled, so the studies list with no network (Batch F).
+  await page.getByRole('radio', { name: /Evidence/ }).click()
+  const phaseOne = page.getByRole('region', { name: 'Phase 1 · Foundation' })
+  await phaseOne.getByRole('button', { name: 'Show 5 studies' }).click()
+  await expect(phaseOne.getByRole('heading', { name: /^Shedding light on the non-operative treatment/, level: 4 })).toBeVisible()
 
   // The three vendored families came out of the cache: titles, body and labels in their own faces.
   const faces = await page.evaluate(async () => {

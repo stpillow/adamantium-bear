@@ -1,11 +1,13 @@
 import { PROGRAM, currentTemplate } from '../app/session.ts'
+import type { EngineMode } from '../rules/engineMode.ts'
 import { weekOf } from '../rules/calendar.ts'
+import { bandWeek } from '../rules/downPeriod.ts'
 import { forNextProgramUpdate, type Available, type ChecklistGroup, type ChecklistItem, type CoverageMove, type ExerciseLookup, type RunSwapType } from '../rules/equipment.ts'
 import { phaseWeekOf } from '../rules/session.ts'
 import { RACK_MAX_LB, RACK_STEP_LB, rackValue } from '../rules/locations.ts'
 import { applyToTemplate, overridesBySlot } from '../rules/overrides.ts'
 import { ifNotHere, nameShows, nameTakenBy, newOnList, phaseCoverage, type SubstitutionRow, type TypedOutcome } from '../rules/whereYouTrain.ts'
-import { EXTRA_TEXT_MAX, Location, type Equipment, type EquipmentId, type Exercise, type IsoDate, type ProgramOverride, type Requirement, type SessionTemplate, type Settings } from '../schema/index.ts'
+import { EXTRA_TEXT_MAX, Location, type DownPeriod, type Equipment, type EquipmentId, type Exercise, type IsoDate, type ProgramOverride, type Requirement, type SessionTemplate, type Settings } from '../schema/index.ts'
 
 /*
  * The location editor (`#/location/:id`, `#/location/new`, M4b design section 5): its choices and
@@ -69,11 +71,12 @@ export const DEFAULT_START: Location['startedFrom'] = 'planet-fitness'
 
 /**
  * What a new gym starts with, said before it is made. Started from Planet Fitness's list, it gets
- * program.md's list, not Shawn's club: the home gym's 45° leg press is its own (PROGRAM-QUESTIONS 71).
+ * program.md's list and nothing else (no 45° leg press assumed, PROGRAM-QUESTIONS 71); the words
+ * name no one's club (M-U1, PROGRAM-QUESTIONS 211).
  */
 export function startWords(startedFrom: Location['startedFrom']): string {
   return startedFrom === 'planet-fitness'
-    ? 'Everything on program.md’s Planet Fitness list is marked here to start; your own club’s extras, like its 45° leg press, aren’t copied. Untick what this gym lacks.'
+    ? 'Everything on program.md’s Planet Fitness list is marked here to start, and nothing else is. Untick what this gym lacks; tick what it adds.'
     : 'Nothing is marked here to start; tick what this gym has.'
 }
 
@@ -102,24 +105,27 @@ export function rackChoiceWords(lb: number): string {
 }
 
 /** The line under the rack. */
-export function rackNote(lb: number): string {
-  return lb === 0
-    ? 'No dumbbells: slots that need them move to the next exercise on their list that runs here.'
-    : `The heaviest dumbbell is ${lb} lb. A load past it moves the slot, or with nothing to move to, is rack-capped and won’t count as clean.`
+export function rackNote(lb: number, mode: EngineMode = 'full'): string {
+  if (lb === 0) return 'No dumbbells: slots that need them move to the next exercise on their list that runs here.'
+  // Tester mode (M-U3): nothing is read, so a capped set is only capped.
+  if (mode === 'tester') return `The heaviest dumbbell is ${lb} lb; the load field stops there.`
+  return `The heaviest dumbbell is ${lb} lb. A load past it moves the slot, or with nothing to move to, is rack-capped and won’t count as clean.`
 }
 
 // --- Checklist ----------------------------------------------------------------
 
 const SWAP_WORDS: Record<RunSwapType, string> = { 'elliptical-swap': 'the Hold-day elliptical swap', 'rower-swap': 'the Hold-day rower swap' }
+/** Tester mode's names for the swaps: there is no Hold day without a reading. */
+const WRITTEN_SWAP_WORDS: Record<RunSwapType, string> = { 'elliptical-swap': 'the elliptical swap', 'rower-swap': 'the rower swap' }
 
 /**
  * "Used by: Smith machine box squat; Smith machine hip thrust", plus a run swap or the lift warm-up
  * where the item is one. Semicolons, since program.md's names carry their own commas ("Leg press,
  * both legs"; "Copenhagen plank, short lever").
  */
-export function usedByWords(entry: Pick<ChecklistItem, 'exerciseIds' | 'runSwap' | 'warmUp'>, byId: ExerciseLookup): string {
+export function usedByWords(entry: Pick<ChecklistItem, 'exerciseIds' | 'runSwap' | 'warmUp'>, byId: ExerciseLookup, mode: EngineMode = 'full'): string {
   const names = [...new Set(entry.exerciseIds.map((id) => byId.get(id)?.name ?? id))]
-  if (entry.runSwap) names.push(SWAP_WORDS[entry.runSwap])
+  if (entry.runSwap) names.push((mode === 'tester' ? WRITTEN_SWAP_WORDS : SWAP_WORDS)[entry.runSwap])
   if (entry.warmUp) names.push('the lift warm-up')
   return `Used by: ${names.join('; ')}`
 }
@@ -151,6 +157,7 @@ export function checklistSections(input: {
   byId: ExerciseLookup
   vocabulary: readonly Pick<Equipment, 'id' | 'name' | 'aliases'>[]
   table: readonly SubstitutionRow[]
+  mode?: EngineMode
 }): ChecklistSection[] {
   return input.checklist.map((group) => ({
     group: group.group,
@@ -159,7 +166,7 @@ export function checklistSections(input: {
       const row = ifNotHere(item.id, input.vocabulary, input.table)
       const mark = input.location.markedOff.find((m) => m.id === item.id)
       const notes = [
-        usedByWords(entry, input.byId),
+        usedByWords(entry, input.byId, input.mode ?? 'full'),
         ...(row ? [`If not here: ${row.useInstead}`] : []),
         ...(newOnList(item, input.location) ? ['New on the program’s list since this gym was made.'] : []),
         ...(mark ? [`Marked not here since ${shortDate(mark.on)}; Here clears the mark.`] : []),
@@ -237,9 +244,17 @@ export const KEEP_AS_TYPED = 'Neither: keep as typed'
 
 // --- What this changes --------------------------------------------------------
 
-/** The week of the phase "What this changes" reads banded slots by: today's, as Today and the plan read it (from week 1 before the start). */
-export function coverageWeek(settings: Pick<Settings, 'startDate' | 'phaseEnteredWeek'>, today: IsoDate): number {
-  return phaseWeekOf(Math.max(weekOf(today, settings.startDate), settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+/**
+ * The week of the phase "What this changes" and the Program screen read banded slots by: today's, as
+ * Today and the plan read it (from week 1 before the start), so held where a down period holds the
+ * bands (`bandWeek`, PROGRAM-QUESTIONS 188). Tester mode (M-U3, PROGRAM-QUESTIONS 231): the
+ * calendar's, as a tester's Today, Preview, Program and runner read it; a stored period holds no
+ * band, and the engine is not asked.
+ */
+export function coverageWeek(settings: Pick<Settings, 'startDate' | 'phaseEnteredWeek'>, today: IsoDate, downPeriods: readonly DownPeriod[], mode: EngineMode): number {
+  const calendar = phaseWeekOf(Math.max(weekOf(today, settings.startDate), settings.phaseEnteredWeek), settings.phaseEnteredWeek)
+  if (mode === 'tester') return calendar
+  return bandWeek({ date: today, phaseWeek: calendar, startDate: settings.startDate, phaseEnteredWeek: settings.phaseEnteredWeek, periods: downPeriods })
 }
 
 /** The current phase's sessions, A then B then C; none in Phase 4, whose sessions aren't written. */
