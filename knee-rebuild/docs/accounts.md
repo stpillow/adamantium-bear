@@ -37,9 +37,14 @@ Built Nov 9, 2026 (M-U2; docs/multiuser-and-release-plan.md section 7 item 2; PR
 
 Every value marked **(Sensitive)** is write-only in Vercel once saved. **Save each one in your password manager before you paste it.**
 
+**Move the address first (M-D1).**
+- Every URL below is knee.shawnpillow.com, and every phone context below is one installed from it.
+- So do docs/domain-and-ios-plan.md section 2, steps 2 to 4, before step 0 here.
+- Turning accounts on before the move means signing in twice in every context, once per address.
+
 0. **Ship the release first.** The release that contains M-U2 must be live on production (dev → main, on your word).
-   - Check that https://knee-rebuild.vercel.app/api/auth?action=me answers `{"configured":false}`.
-   - **Then bring both contexts onto the new version.** The app updates on prompt, never by itself, so a context still on the old version keeps running it: it has no Account section, and once accounts are on its Strava screen misreports the connection. On the iPhone, open knee-rebuild.vercel.app **in Safari** and then **open the home-screen app**. In each, wait for "A new version is ready. It will not reload on its own." at the top and tap **Reload now**. If no prompt shows, close that context fully, reopen it and look again.
+   - Check that https://knee.shawnpillow.com/api/auth?action=me answers `{"configured":false}`.
+   - **Then bring both contexts onto the new version.** The app updates on prompt, never by itself, so a context still on the old version keeps running it: it has no Account section, and once accounts are on its Strava screen misreports the connection. On the iPhone, open knee.shawnpillow.com **in Safari** and then **open the home-screen app**. In each, wait for "A new version is ready. It will not reload on its own." at the top and tap **Reload now**. If no prompt shows, close that context fully, reopen it and look again.
    - How to tell: while accounts are off, the M-U2 version looks exactly like the one before it, so there is no visible sign yet; accepting the prompt in each context is the step. From step 6 there is one: Settings shows an **Account** section. A context whose Settings has none after step 6 is still on the old version: accept the prompt there before step 7.
    - Nothing else changes for you until step 6.
 1. **Add Neon.** In Vercel, open Storage, then the Marketplace, add **Neon** on the free plan, and connect it to the `knee-rebuild` project.
@@ -63,13 +68,13 @@ Every value marked **(Sensitive)** is write-only in Vercel once saved. **Save ea
    - Then run `npm run accounts -- migrate`. It should say "Tables are up to date."
    - The function would also create the tables on first use, but doing it now avoids a cold-start race at switch-on.
 6. **The switch.** Set `AUTH_COOKIE_KEY` = the second value from step 2 (Production, Sensitive), then **redeploy production**.
-   - **Check:** https://knee-rebuild.vercel.app/api/auth?action=me should now answer `{"configured":true,"signedIn":false}`.
+   - **Check:** https://knee.shawnpillow.com/api/auth?action=me should now answer `{"configured":true,"signedIn":false}`.
      - `{"configured":false}`: the Neon variable isn't called `DATABASE_URL`, and the gate is silently off. Stop and tell Claude.
      - `"problem":"setup"`: a secret is short or has whitespace around it, or the generation isn't a whole number.
    - From this moment, Import from Strava on every phone needs a signed-in account. Do step 7 straight away, phone in hand.
 7. **Sign in, twice.**
    - Each context must show Settings, Account first (step 0). If one doesn't, accept "A new version is ready" there before going on.
-   - On the iPhone, open knee-rebuild.vercel.app **in Safari**. Go to Settings, Account, type the bootstrap code and tap Redeem. It should say "Signed in as Shawn, the admin."
+   - On the iPhone, open knee.shawnpillow.com **in Safari**. Go to Settings, Account, type the bootstrap code and tap Redeem. It should say "Signed in as Shawn, the admin."
    - Then **open the home-screen app** and do the same, because it has its own cookie jar.
    - Strava's existing connection survives in each context.
    - **Tester mode (M-U3).** Redeem your admin code right away in Safari and in the home-screen app. Until you do, each shows the program as written (tester mode): no loads, no readings, no gate verdict, no red-flag stop, and a line under Today's date says so. Nothing logged is lost, and the next screen after the redeem is back to normal. The same applies after a key-generation bump (step 12), a revocation or a stale cookie: sign in again in each context.

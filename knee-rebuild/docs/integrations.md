@@ -14,7 +14,10 @@ Written Nov 6, 2026, from a research pass over the vendors' developer docs and a
 ## Setting up Strava (Shawn, once)
 
 1. **Strava subscription.** Since June 2026 a Strava subscription is required to own a Standard-tier API app (about $11.99/month or $79.99/year in the US).
-2. **Create the API app** at strava.com/settings/api. Authorization Callback Domain: `knee-rebuild.vercel.app`. A preview deployment has its own host, so connect from production, or add the preview host while testing.
+2. **Create the API app** at strava.com/settings/api.
+   - Authorization Callback Domain: `knee.shawnpillow.com`, production's address since M-D1 (docs/domain-and-ios-plan.md).
+   - Strava's `redirect_uri` "must be within the callback domain", so a connect started from `knee-rebuild.vercel.app` (the old address, kept only while phones move across) or from a preview host is refused.
+   - Connect from production, or add the preview host while testing.
 3. **Vercel settings** for the `knee-rebuild` project (Settings → Environment Variables, Production and Preview):
    - `STRAVA_CLIENT_ID`: from the API app page
    - `STRAVA_CLIENT_SECRET`: from the API app page

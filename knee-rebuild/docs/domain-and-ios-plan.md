@@ -1,6 +1,12 @@
 # A custom domain and an iOS app: the plan, and what in the code stands in the way
 
-Written Nov 20, 2026, from a review of `dev` at `c4508db` (the same tree as `main`'s Nov 16 release), a check of production, and the vendors' own pages where they could be read. Nothing here is built. Decisions waiting on Shawn are in section 6. Claims this round could not confirm are marked **unverified**, as in the other plans.
+Written Nov 20, 2026, from a review of `dev` at `c4508db` (the same tree as `main`'s Nov 16 release), a check of production, and the vendors' own pages where they could be read. Decisions waiting on Shawn are in section 6. Claims this round could not confirm are marked **unverified**, as in the other plans.
+
+**Status, Nov 20:**
+- Shawn chose **knee.shawnpillow.com**.
+- M-D1's code and docs are built: the moved notice and PROGRAM-QUESTIONS 238 to 240.
+- Its Vercel and DNS steps, the check on the new address and the release are not done yet (PLAN.md's M-D1 block).
+- Nothing for iOS is built.
 
 ## 1. The short answer
 
@@ -38,9 +44,15 @@ A new domain is a new, empty app on the phone. It's a house move: the post offic
 
 ### Steps, in order
 
-1. **Pick the name** (section 6). A subdomain of a domain Shawn already owns (`knee.<domain>`) needs one CNAME, no apex records, and leaves the apex free.
-2. **Vercel.** Open the `knee-rebuild` project (the one deploying from adamantium-bear's `main`), then Settings, Domains, and add the name. Then:
-   - Add the DNS record Vercel shows at the registrar. The certificate issues on its own.
+1. **Pick the name.** **Chosen Nov 20: `knee.shawnpillow.com`.** A subdomain needs one CNAME, no apex records, and leaves the apex free.
+   - shawnpillow.com's DNS is served by WordPress.com (`ns1` to `ns3.wordpress.com`).
+   - The apex and `www` point at Squarespace.
+   - A `*` wildcard sends every other subdomain, `knee` included, to the apex. An explicit `knee` record overrides the wildcard for that name only.
+   - No CAA record limits who may issue a certificate. All read from public DNS on Nov 20.
+2. **Vercel.** Open the `knee-rebuild` project (the one deploying from adamantium-bear's `main`), then Settings, Domains, and add `knee.shawnpillow.com` for Production. Then:
+   - **DNS at WordPress.com:** in shawnpillow.com's DNS records, add a CNAME with host `knee`, pointing at the target Vercel shows. The certificate issues on its own once the record resolves.
+   - **Ownership check:** if Vercel asks for a TXT record to prove the domain (it does when the domain is already in use in another Vercel account), add that too.
+   - The Vercel connector in Claude's sessions can't see this project, so these clicks are Shawn's.
    - **Don't set a redirect on `knee-rebuild.vercel.app` yet** (step 7).
 3. **Check the new host before touching the phone:**
    - `https://<domain>/api/auth?action=me` should answer `{"configured":false}`.
@@ -151,7 +163,7 @@ Already right, and worth keeping:
 
 ## 6. Decisions for Shawn
 
-1. **The name.** Which domain, and apex or subdomain? A subdomain is recommended.
+1. **The name.** **Answered Nov 20: knee.shawnpillow.com.**
 2. **Who the native app is for.**
    - Shawn only (internal TestFlight).
    - Shawn and up to 10 testers (external TestFlight, after Beta App Review). **Recommended, and after the professional conversation.**
@@ -166,7 +178,7 @@ Already right, and worth keeping:
 
 Each item is its own PR to `dev`, after Shawn's go.
 
-1. **M-D1 Custom domain.**
+1. **M-D1 Custom domain.** Code and docs built Nov 20; the rest is in PLAN.md's M-D1 block.
    - **Shawn:** the domain, DNS, and Vercel's Domains page.
    - **Claude:**
      - the docs sweep (`docs/accounts.md`, `docs/integrations.md`, PROMPT section 2's Deployment row, PLAN.md decision 6);

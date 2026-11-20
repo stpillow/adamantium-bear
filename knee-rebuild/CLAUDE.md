@@ -37,7 +37,7 @@ npm run evidence     # monthly digest: re-runs saved searches, verifies entries;
 npm run accounts -- <code|migrate|mint|list|revoke|recode|bootstrap|unblock>   # dev-time account admin against Neon, reads .env.accounts (docs/accounts.md)
 ```
 
-Deploy: Vercel project `knee-rebuild` (SPDC team), root directory `knee-rebuild/`, framework Vite. Every push gets a preview deploy; `main` is production. Builds are skipped when this folder didn't change.
+Deploy: Vercel project `knee-rebuild` (SPDC team), root directory `knee-rebuild/`, framework Vite. Every push gets a preview deploy; `main` is production, at https://knee.shawnpillow.com since M-D1. `knee-rebuild.vercel.app` still serves and shows the moved notice (`src/rules/host.ts`; docs/domain-and-ios-plan.md). A phone's log is per address, so a move is Export JSON on the old one and the import on the new one's first screen. Builds are skipped when this folder didn't change.
 
 ## Folder layout
 
