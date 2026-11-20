@@ -231,12 +231,33 @@ Done when a tester account (or a signed-out or unconfirmed phone) gets the progr
 - [x] Docs: PROMPT sections 3, 5 and 7, CLAUDE.md, docs/accounts.md (redeem the admin code in each context after turning accounts on; previews a release precondition), the multi-user plan, PROGRAM-QUESTIONS 223 to 235
 - [x] Adversarial review: three lenses (leaks, mode states, wording and tests), two skeptics per finding; six confirmed and fixed test-first, the serious one a red flag ticked in tester mode never reaching the full-mode stop when the same phone later ran full (now folded in for today's checks, 236); also the location editor's held band, a mode flip keeping an engine-prefilled draft, and three tester-facing notes. Claude rechecked the rejections: the guard's blind spot is closed (a planted yesterdayReadings call in Today.tsx now fails it); the turn-accounts-off lockout is documented with its recovery (237). Fixed along the way: two flaky api tests (a two-character token found by chance in sealed text; tampering that overwrote the last two characters). Full-mode snapshot unchanged, run with CI=1; the tester's session card checked at 390 px
 
+### M-D1 · the custom domain (docs/domain-and-ios-plan.md section 7 item 1)
+Done when production answers at https://knee.shawnpillow.com, Shawn's log lives there, and `knee-rebuild.vercel.app` tells any phone still on it how to carry its log across. Not done here: the redirect off the old address (section 2 step 7), and everything for iOS (M-N1 to M-N4).
+
+- [x] `src/rules/host.ts`: the old address, and only it, says the app moved (238)
+- [x] The moved notice (`src/screens/MovedNotice.tsx`, words in `MovedNotice.helpers.ts`):
+  - a set-up phone gets the four steps, Export JSON and the link;
+  - first run is sent to set up on the new address;
+  - never above a session (239).
+  - `e2e/moved.spec.ts` serves the build as the old host. The notice was checked at 390 px.
+- [x] Docs:
+  - docs/accounts.md (move the address before turning accounts on; every URL the new one);
+  - docs/integrations.md (Strava's callback domain);
+  - PROMPT section 2's Deployment row, CLAUDE.md, the plan;
+  - PROGRAM-QUESTIONS 238 to 240.
+- [ ] Shawn: Vercel, `knee-rebuild`, Settings, Domains, add `knee.shawnpillow.com` (Production). Then, in shawnpillow.com's DNS at WordPress.com, a CNAME for `knee` to the target Vercel shows. It overrides the `*` wildcard that sends every subdomain to the Squarespace site.
+- [ ] The new address checked (section 2 step 3): `/api/auth?action=me` and `/api/strava?action=status` answer JSON, the page and manifest load over HTTPS, the HSTS header read
+- [ ] Release `dev` → `main` on Shawn's word, only after that check (240)
+- [ ] Shawn's log moved: Export JSON on the old home-screen app, Add to Home Screen from knee.shawnpillow.com in Safari, import on its first screen. The old icon is deleted after the new one logs a session
+- [ ] Adversarial review before merge (docs/review-plan.md)
+
 **Definition of done for v1:** Shawn runs week 1 of the program entirely from the app, on his phone, with morning check-ins deciding the loads for week 2.
 
 ## Decisions log
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-11-20 | Production moves to knee.shawnpillow.com (flips section 9's answer 6, "Vercel URL for now"). The old address keeps serving with a moved notice and no redirect until every phone has carried its log across; the release carrying the notice waits for the new address to answer (PROGRAM-QUESTIONS 238 to 240) | Shawn's word, Nov 20, after docs/domain-and-ios-plan.md: production then had accounts off, Strava not set up and no tester installed, so the move was one Export and Import. The domain is also the first step toward an iOS app (section 7) |
 | 2026-11-10 | M-U3 built: tester mode removes the prescription engine for tester accounts rather than disclaiming it. The mode is derived from the phone's kept `me` answer (accounts off or admin: full; tester or signed out: tester; no answer: full only with sets logged before Nov 10, 2026, otherwise tester until one successful check; a `configured:false` never replaces a kept `configured:true`). Slots show program.md's written text, loads are typed, nothing is read, gates are read-only text, flags are the tester's own note; `me` is now asked at launch and on reconnect. No storage or server change | Shawn's Nov 8 decision (testers test the software, not the program); the medical-device line in section 5 of the multi-user plan; PROGRAM-QUESTIONS 223 to 235 |
 | 2026-11-09 | M-U2 built: invite codes (75 bits plus a check symbol, stored as HMAC), a 400-day sealed Strict session cookie, AUTH_KEY_GENERATION and revoked_at revocation, the /api gate on when DATABASE_URL and AUTH_COOKIE_KEY are set (fail closed when half set), the bootstrap env code, `npm run accounts`; off by default, so production behaves as today | Shawn's Nov 8 decisions; PROGRAM-QUESTIONS 213 to 222 |
 | 2026-11-09 | M-U1 built: the time zone is a per-user setting (IANA name, America/New_York by default) in its own one-row `timeZoneSettings` table (Dexie v12 additive, backup schema 12 with an 11→12 step), never on the settings row; a phone with no settings row gets first-run setup at `#/welcome` (injured side with no default, a Monday start defaulting to the coming one, home gym with rack, equipment and bag, time zone from the phone) or imports a backup from its first screen; Reset all data returns to it; nothing Shawn-specific is seeded; phase 6's `crossTraining` moves to Dexie v13 | Shawn's Nov 8 multi-user decisions (docs/multiuser-and-release-plan.md section 7, amendment 3). A settings row means set up, so Shawn's phone opens on Today with identical dates; a v11 rollback counts in New York (accepted, PROGRAM-QUESTIONS 203); the readings marked confirm in 204 and 207 to 210 |
@@ -319,6 +340,6 @@ Answered Oct 31, 2026. Recorded in the Decisions log.
 3. Dumbbells; leg press; rower? **Dumbbells to 80 lb; both seated and 45° leg press; rower yes (confirmed).**
 4. Pain once per exercise or per set? **Once per exercise; per set available in Settings.**
 5. Monday MBR fixed on Mondays? **Yes, always.**
-6. Custom domain or Vercel URL? **Vercel URL for now.**
+6. Custom domain or Vercel URL? **Vercel URL for now.** Flipped Nov 20: **knee.shawnpillow.com** (M-D1).
 7. spdc-design? **Yes, use it (confirmed); already wired into the scaffold.**
 8. Rest timer? **60 s for every slot.**

@@ -465,3 +465,28 @@ Not program questions: the readings this build took on accounts, recorded here a
 
 
 237. **Accounts turned off while a phone is signed out** (`replacesKept` in `src/app/account.ts`; docs/accounts.md step 14). Found in the M-U3 review, rejected by its skeptics, kept by Claude as a documented edge. A kept `configured:true` answer is never replaced by `configured:false`, so a preview or a missing variable can't flip a tester to the full engine. The cost: a phone whose kept answer is "accounts on, signed out" when accounts are turned off stays in tester mode, with no way to sign in. Reading taken, the conservative one: keep the rule; step 14 now says to sign in as admin in both contexts first, and names the recovery (Export JSON, Reset, import: the imported sets from before Nov 10, 2026 restore full mode under 224). *Confirm*: whether a deliberate "accounts are off for good" signal from the server (a separate variable) is worth adding.
+
+## M-D1: the custom domain (Nov 20)
+
+238. **Which addresses say the app has moved** (`src/rules/host.ts`). Production moves to knee.shawnpillow.com. Only `knee-rebuild.vercel.app` gets the moved notice, after lowercasing and dropping a trailing dot. Every other host says nothing:
+- Previews: their per-branch hosts hold test data.
+- Vercel's longer production aliases (the team-scoped and `git-main` names): nobody installed from them.
+- `localhost`, and the new address itself.
+
+Reading taken: an exact list, not "any `*.vercel.app`", so a preview never tells a phone to move a test log onto Shawn's address. **confirm**
+
+239. **What the notice says, and where** (`src/screens/MovedNotice.tsx`, `MovedNotice.helpers.ts`).
+- **A set-up phone** gets the move in four steps behind "How to move", Export JSON (Settings' Export section, as Today's export line opens it), and a link to the new address.
+- **A phone still in first run** has nothing to carry, so it is told to set up on the new address instead, with no Export.
+- **No session in progress ever gets it above the runner** (the gym rule: logging stays under 10 seconds without reading).
+- **It can't be dismissed.** It stays until the old icon is deleted, which is the point.
+- **Words, not color.**
+- The fourth step says to log only in the new app: each phone is the single writer of its log, and two copies have no merge.
+- Reading taken: the steps name Safari and Add to Home Screen because the installed app and Safari keep separate storage, so the new install has to start in Safari.
+- The link opens in a new context. Whether iOS hands it to Safari or to an in-app view from a home-screen app is **unverified**; the steps say Safari either way. **confirm**
+
+240. **When the notice ships.** The notice reaches phones only through a release (`dev` → `main`), and it points at knee.shawnpillow.com, so the release that carries it waits until that address answers:
+- `/api/auth?action=me` and `/api/strava?action=status` answer JSON;
+- the page and the manifest load over HTTPS.
+
+Those are docs/domain-and-ios-plan.md section 2 step 3. Before then it would send a phone to a dead address. `knee-rebuild.vercel.app` keeps serving, with no redirect, until every phone has carried its log across (step 7). **confirm**
