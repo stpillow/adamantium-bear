@@ -23,6 +23,7 @@ import { Locations } from './screens/Locations.tsx'
 import { MorningCheck } from './screens/MorningCheck.tsx'
 import { withTodaysFlags } from './screens/MorningCheck.helpers.ts'
 import { More } from './screens/More.tsx'
+import { MovedNotice } from './screens/MovedNotice.tsx'
 import { NextUpdate } from './screens/NextUpdate.tsx'
 import { Strava } from './screens/Strava.tsx'
 import { Program } from './screens/Program.tsx'
@@ -56,6 +57,8 @@ export function App() {
           </Button>
         </div>
       ) : null}
+      {/* Only on the address the app moved off (M-D1): outside the boundary, like the prompt, so a screen that throws still shows the way across. */}
+      <MovedNotice />
       <ErrorBoundary screen={null}>
         <Shell updateReady={needRefresh} />
       </ErrorBoundary>
